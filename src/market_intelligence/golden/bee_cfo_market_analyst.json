@@ -1,0 +1,47 @@
+{
+  "contract_revision": "bee-cfo-1",
+  "cases": [
+    {
+      "id": "relevant-official",
+      "kind": "relevant",
+      "expected": "keep",
+      "title": "بانک مرکزی چارچوب جدید پرداخت را ابلاغ کرد",
+      "text": "بانک مرکزی دستورالعمل جدید خدمات پرداخت و الزامات اجرایی را منتشر کرد.",
+      "source_authority": "official"
+    },
+    {
+      "id": "irrelevant-generic",
+      "kind": "irrelevant",
+      "expected": "reject",
+      "title": "پرداخت جایزه مسابقه ورزشی",
+      "text": "این خبر درباره اهدای جایزه یک رویداد ورزشی است و موضوع مالی بازار ندارد.",
+      "source_authority": "news"
+    },
+    {
+      "id": "conflicting-narratives",
+      "kind": "conflict",
+      "expected": "retain_both_and_flag",
+      "titles": [
+        "دستورالعمل جدید بانک مرکزی ابلاغ شد",
+        "بانک‌ها درباره جزئیات دستورالعمل ابهام دارند"
+      ],
+      "source_authority": ["official", "news"]
+    },
+    {
+      "id": "stale-source",
+      "kind": "stale",
+      "expected": "exclude_from_fresh_report",
+      "freshness_hours": 24
+    },
+    {
+      "id": "source-failure",
+      "kind": "source_failure",
+      "expected": "continue_peers_and_label_failure"
+    },
+    {
+      "id": "forecast-contract",
+      "kind": "forecast",
+      "expected": "three_probabilities_sum_to_one_with_horizon_trigger_invalidation"
+    }
+  ]
+}

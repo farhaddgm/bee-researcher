@@ -1,0 +1,117 @@
+name: bee-researcher-candidate
+
+services:
+  postgres:
+    image: postgres@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?candidate database name is required}
+      POSTGRES_USER: ${POSTGRES_USER:?candidate database user is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?candidate database password is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 256mb
+
+  redis:
+    image: redis@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?candidate Redis password is required}
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --requirepass
+      - ${REDIS_PASSWORD:?candidate Redis password is required}
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  market-intelligence:
+    build:
+      context: ./src/market_intelligence
+    image: bee-researcher-candidate:source
+    env_file:
+      - .env
+    environment:
+      MARKET_INTELLIGENCE_POSTGRES_DB: ${POSTGRES_DB:?candidate database name is required}
+      MARKET_INTELLIGENCE_POSTGRES_USER: ${POSTGRES_USER:?candidate database user is required}
+      MARKET_INTELLIGENCE_POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?candidate database password is required}
+      MARKET_INTELLIGENCE_POSTGRES_HOST: postgres
+      MARKET_INTELLIGENCE_POSTGRES_PORT: 5432
+      MARKET_INTELLIGENCE_REDIS_PASSWORD: ${REDIS_PASSWORD:?candidate Redis password is required}
+      MARKET_INTELLIGENCE_REDIS_HOST: redis
+      MARKET_INTELLIGENCE_REDIS_PORT: 6379
+      MARKET_INTELLIGENCE_REDIS_DATABASE: 2
+      MARKET_INTELLIGENCE_ENVIRONMENT: staging
+      MARKET_INTELLIGENCE_DOMAIN: 127.0.0.1
+      MARKET_INTELLIGENCE_LEGACY_DOMAIN: ""
+      MARKET_INTELLIGENCE_SCHEDULER_ENABLED: "false"
+      MARKET_INTELLIGENCE_AUTO_PUBLISH: "false"
+      MARKET_INTELLIGENCE_TELEGRAM_POLLING_ENABLED: "false"
+      MARKET_INTELLIGENCE_EXTERNAL_ANALYSIS_APPROVED: "false"
+      MARKET_INTELLIGENCE_OPENAI_API_KEY: ""
+      MARKET_INTELLIGENCE_TELEGRAM_BOT_TOKEN: ""
+      MARKET_INTELLIGENCE_TELEGRAM_SOURCE_BOT_TOKEN: ""
+      MARKET_INTELLIGENCE_INSTAGRAM_SOURCE_ACCESS_TOKEN: ""
+      MARKET_INTELLIGENCE_X_SOURCE_BEARER_TOKEN: ""
+      MARKET_INTELLIGENCE_WHATSAPP_ENABLED: "false"
+      MARKET_INTELLIGENCE_ADMIN_COOKIE_SECURE: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - private
+    ports:
+      - "127.0.0.1:18010:8010"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "10002:10002"
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+
+networks:
+  private:
+    name: bee-researcher-candidate-private
+
+volumes:
+  postgres-data:
+    name: bee-researcher-candidate-postgres-data
+  redis-data:
+    name: bee-researcher-candidate-redis-data
