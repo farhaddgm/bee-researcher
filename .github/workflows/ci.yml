@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Researcher
+        run: docker build --tag bee-researcher-ci src/market_intelligence
+      - name: Run unit tests without network or runtime secrets
+        run: |
+          docker run --rm --network none --read-only --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+            -e MARKET_INTELLIGENCE_ENVIRONMENT=test \
+            -e MARKET_INTELLIGENCE_POSTGRES_DB=ci_test \
+            -e MARKET_INTELLIGENCE_POSTGRES_USER=ci_test \
+            -e MARKET_INTELLIGENCE_POSTGRES_PASSWORD=ci-postgres-placeholder-0123456789 \
+            -e MARKET_INTELLIGENCE_REDIS_PASSWORD=ci-redis-placeholder-0123456789 \
+            bee-researcher-ci python -m unittest discover -s tests -q
