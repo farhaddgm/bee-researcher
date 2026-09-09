@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+blocked=0
+while IFS= read -r path; do
+  case "$path" in
+    .env|.env.*|*.pem|*.key|*.p12|*.pfx|secrets/*)
+      printf 'commit blocked: protected file staged: %s\n' "$path" >&2
+      blocked=1
+      ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+
+if (( blocked )); then
+  exit 1
+fi
+
+if ! git diff --cached --check; then
+  printf 'commit blocked: resolve whitespace errors before committing.\n' >&2
+  exit 1
+fi
