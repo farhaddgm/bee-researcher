@@ -411,15 +411,25 @@ async def client_error_report(
     action = safe_token(payload.get("action")) if kind == "action" else ""
     phase = safe_token(payload.get("phase")) if kind == "action" else ""
     outcome = safe_token(payload.get("outcome")) if kind == "action" else ""
+    route = safe_token(payload.get("route"), 96) if kind == "action" else ""
+    status = payload.get("status") if kind == "action" else None
+    duration = payload.get("duration_ms") if kind == "action" else None
+    if not isinstance(status, int) or status < 0 or status > 999:
+        status = 0
+    if not isinstance(duration, int) or duration < 0 or duration > 120_000:
+        duration = 0
     # This is client-side telemetry rather than a server fault.  Keep it out of
     # the warning stream so expected browser reports do not mask real incidents.
     if kind == "action":
         logger.info(
-            "authenticated_client_error kind=action view=%s action=%s phase=%s outcome=%s",
+            "authenticated_client_error kind=action view=%s action=%s phase=%s outcome=%s route=%s status=%d duration_ms=%d",
             view,
             action,
             phase,
             outcome,
+            route,
+            status,
+            duration,
         )
     else:
         logger.info("authenticated_client_error kind=%s view=%s", kind, view)

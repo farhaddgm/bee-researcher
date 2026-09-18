@@ -874,6 +874,21 @@ class MainTest(unittest.TestCase):
                 json={"kind": "window", "view": "sources"},
             )
         self.assertEqual(204, response.status_code)
+        with patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4()))):
+            action_response = TestClient(app).post(
+                "/admin/api/security/client-error",
+                json={
+                    "kind": "action",
+                    "view": "topics",
+                    "action": "catalog_topic",
+                    "phase": "request",
+                    "outcome": "error",
+                    "route": "/admin/api/assistants/123/sources",
+                    "status": 500,
+                    "duration_ms": 321,
+                },
+            )
+        self.assertEqual(204, action_response.status_code)
         body = TestClient(app).get("/admin").text
         self.assertIn("/admin/api/security/client-error", body)
         self.assertNotIn("/health?client_error=", body)
@@ -894,8 +909,10 @@ class MainTest(unittest.TestCase):
         self.assertIn("void ensureWorkspace().then(ready=>", body)
         self.assertIn("const replay=doc.getElementById(button.id);", body)
         self.assertIn("replay.dataset.workspaceReplay='1';", body)
-        self.assertIn("const actionTrace=(action,phase,outcome)=>", body)
-        self.assertIn("reportOverviewClientError('action',{action,phase,outcome})", body)
+        self.assertIn("const actionTrace=(action,phase,outcome,details={})=>", body)
+        self.assertIn("window.__researchBeeTraceRequest=", body)
+        self.assertIn("actionTrace(actionName,'timeout','error'", body)
+        self.assertIn("reportOverviewClientError('action',{action:actionName,phase:phaseName,outcome:result", body)
         self.assertIn("const handleCatalogCreate=async event=>", body)
         self.assertIn("if(!(await ensureWorkspace()))", body)
         self.assertIn("origin?.closest?.('[data-catalog-create]')", body)
