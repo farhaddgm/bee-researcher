@@ -224,7 +224,7 @@ ADMIN_HTML = r'''<!doctype html>
     // exception message, stack trace, query text or news content; they can
     // include customer data.  This also keeps the health endpoint strictly
     // for health checks instead of using it as a telemetry sink.
-    const reportOverviewClientError=label=>{try{if(document.getElementById('app')?.classList.contains('hidden'))return;const kind=label==='promise'?'promise':'window',view=document.querySelector('.view.active')?.id?.replace(/^view-/,'')||'unknown',prefix='research_bee_admin_csrf=',cookie=document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith(prefix)),csrf=cookie?decodeURIComponent(cookie.slice(prefix.length)):'';if(!csrf)return;fetch('/admin/api/security/client-error',{method:'POST',credentials:'include',keepalive:true,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({kind,view})}).catch(()=>{})}catch(_){}};window.addEventListener('error',()=>reportOverviewClientError('window'));window.addEventListener('unhandledrejection',()=>reportOverviewClientError('promise'));
+    const reportOverviewClientError=(label,metadata={})=>{try{if(document.getElementById('app')?.classList.contains('hidden'))return;const actionLabel=String(metadata.action||label||'unknown').replace(/[^A-Za-z0-9_.:-]/g,'').slice(0,64)||'unknown',kind=label==='promise'?'promise':label==='action'?'action':'window',view=document.querySelector('.view.active')?.id?.replace(/^view-/,'')||'unknown',prefix='research_bee_admin_csrf=',cookie=document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith(prefix)),csrf=cookie?decodeURIComponent(cookie.slice(prefix.length)):'';if(!csrf)return;const body={kind,view};if(kind==='action'){body.action=actionLabel;body.phase=String(metadata.phase||'unknown').replace(/[^A-Za-z0-9_.:-]/g,'').slice(0,64)||'unknown';body.outcome=String(metadata.outcome||'error').replace(/[^A-Za-z0-9_.:-]/g,'').slice(0,32)||'error'}fetch('/admin/api/security/client-error',{method:'POST',credentials:'include',keepalive:true,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)}).catch(()=>{})}catch(_){}};window.addEventListener('error',()=>reportOverviewClientError('window'));window.addEventListener('unhandledrejection',()=>reportOverviewClientError('promise'));
     (function(){
       const fa='۰۱۲۳۴۵۶۷۸۹',toFa=value=>String(value).replace(/\d/g,d=>fa[d]);
       const getJSON=async url=>{const response=await fetch(url,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error(url+' '+response.status);return response.json()};
@@ -3757,6 +3757,7 @@ ADMIN_HTML = r'''<!doctype html>
       // then replay the original click.  This keeps every action deterministic
       // instead of making a button appear inert during the initial paint.
       const workspaceGateIds=new Set(['addSourceBtn','addTopicBtn','sourceProbeBtn','healthProbeBtn','runPipelineBtn','operationsRunBtn','saveScheduleBtn','saveLimitsBtn','saveCollectionSettingsBtn','feedbackReportBtn','feedbackLearningBtn','feedbackRollbackBtn','knowledgeEditBtn','privacySaveBtn','privacyExportBtn','templateBuilderBtn']);
+      const actionTrace=(action,phase,outcome)=>{try{const trace=Array.isArray(window.__researchBeeActionTrace)?window.__researchBeeActionTrace:[];trace.push({action:String(action||'unknown'),phase:String(phase||'unknown'),outcome:String(outcome||'ok'),at:Date.now(),view:doc.querySelector('.view.active')?.id?.replace(/^view-/,'')||'unknown'});while(trace.length>50)trace.shift();window.__researchBeeActionTrace=trace;if(outcome==='error')reportOverviewClientError('action',{action,phase,outcome})}catch(_){}};
       const workspaceReady=()=>{const selected=String(state.assistantId||'').trim(),known=(state.assistants||[]).some(item=>String(item?.id||'')===selected);return Boolean(selected&&known)};
       const handleWorkspaceGate=event=>{
         const origin=event.target instanceof Element?event.target:event.target?.parentElement;
@@ -3765,11 +3766,17 @@ ADMIN_HTML = r'''<!doctype html>
         if(button.dataset.workspaceReplay==='1'){delete button.dataset.workspaceReplay;return}
         event.preventDefault();event.stopImmediatePropagation();
         if(button.dataset.workspaceGateBusy==='1')return;
+        actionTrace(button.id,'click','waiting');
         button.dataset.workspaceGateBusy='1';button.disabled=true;button.setAttribute('aria-busy','true');
         void ensureWorkspace().then(ready=>{
-          if(!ready){toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return}
-          button.dataset.workspaceReplay='1';button.disabled=false;button.removeAttribute('aria-busy');button.click();
-        }).catch(error=>{const detail=typeof window.friendlyError==='function'?window.friendlyError(error?.message||String(error||'')):String(error?.message||error||'');toast(detail||(state.language==='en'?'The selected assistant could not be loaded. Please try again.':'دستیار انتخاب‌شده بارگذاری نشد؛ دوباره تلاش کنین.'),true);try{reportOverviewClientError('workspace_gate')}catch(_){}}).finally(()=>{button.disabled=false;button.dataset.workspaceGateBusy='0';button.removeAttribute('aria-busy')})
+          if(!ready){actionTrace(button.id,'workspace','error');toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return}
+          // loadAll may replace page-head controls while the workspace is being
+          // resolved. Always replay on the live DOM node, never on a detached
+          // reference captured before the asynchronous refresh.
+          const replay=doc.getElementById(button.id);
+          if(!replay){actionTrace(button.id,'replay_target','error');throw Error('workspace_action_target_missing')}
+          replay.dataset.workspaceReplay='1';replay.disabled=false;replay.removeAttribute('aria-busy');actionTrace(button.id,'replay','ok');replay.click();
+        }).catch(error=>{const detail=typeof window.friendlyError==='function'?window.friendlyError(error?.message||String(error||'')):String(error?.message||error||'');actionTrace(button.id,'workspace','error');toast(detail||(state.language==='en'?'The selected assistant could not be loaded. Please try again.':'دستیار انتخاب‌شده بارگذاری نشد؛ دوباره تلاش کنین.'),true)}).finally(()=>{button.disabled=false;button.dataset.workspaceGateBusy='0';button.removeAttribute('aria-busy')})
       };
       doc.addEventListener('click',handleWorkspaceGate,true);
       const handleCatalogCreate=async event=>{
@@ -3780,10 +3787,11 @@ ADMIN_HTML = r'''<!doctype html>
         // cancel, duplicate, or silently swallow this interaction.
         event.preventDefault();event.stopImmediatePropagation();
         if(button.dataset.catalogCreateBusy==='1')return;
+        actionTrace('catalog_'+button.dataset.catalogCreate,'click','waiting');
         button.dataset.catalogCreateBusy='1';
         try{
           if(!(await ensureWorkspace())){
-            toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return
+            actionTrace('catalog_'+button.dataset.catalogCreate,'workspace','error');toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return
           }
           if(!resolveCatalogWorkspace())throw Error(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.');
           const fnName=catalogHandlers[button.dataset.catalogCreate],fn=window[fnName];
@@ -3791,10 +3799,11 @@ ADMIN_HTML = r'''<!doctype html>
           await Promise.resolve(fn.call(button,event));
           const modalRoot=doc.getElementById('modalRoot');
           if(!modalRoot||modalRoot.classList.contains('hidden'))throw Error(state.language==='en'?'The form could not be opened. Please try again.':'فرم باز نشد؛ دوباره تلاش کنین.')
+          actionTrace('catalog_'+button.dataset.catalogCreate,'modal','ok');
         }catch(error){
           const detail=typeof window.friendlyError==='function'?window.friendlyError(error?.message||String(error||'')):String(error?.message||error||'');
           toast(detail||(state.language==='en'?'The form could not be opened. Please try again.':'فرم باز نشد؛ دوباره تلاش کنین.'),true);
-          try{reportOverviewClientError('catalog_action')}catch(_){}
+          actionTrace('catalog_'+button.dataset.catalogCreate,'handler','error');
         }finally{button.dataset.catalogCreateBusy='0'}
       };
       doc.addEventListener('click',handleCatalogCreate,true);

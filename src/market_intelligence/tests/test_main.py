@@ -224,7 +224,7 @@ class MainTest(unittest.TestCase):
     def test_client_error_telemetry_does_not_embed_exception_text(self):
         body = TestClient(app).get("/admin").text
         self.assertIn("/admin/api/security/client-error", body)
-        self.assertIn("JSON.stringify({kind,view})", body)
+        self.assertIn("const body={kind,view}", body)
         self.assertNotIn("error&&error.message", body)
         self.assertNotIn("slice(0,240)", body)
 
@@ -892,7 +892,10 @@ class MainTest(unittest.TestCase):
         self.assertIn("const workspaceGateIds=new Set(", body)
         self.assertIn("const handleWorkspaceGate=event=>", body)
         self.assertIn("void ensureWorkspace().then(ready=>", body)
-        self.assertIn("button.dataset.workspaceReplay='1';", body)
+        self.assertIn("const replay=doc.getElementById(button.id);", body)
+        self.assertIn("replay.dataset.workspaceReplay='1';", body)
+        self.assertIn("const actionTrace=(action,phase,outcome)=>", body)
+        self.assertIn("reportOverviewClientError('action',{action,phase,outcome})", body)
         self.assertIn("const handleCatalogCreate=async event=>", body)
         self.assertIn("if(!(await ensureWorkspace()))", body)
         self.assertIn("origin?.closest?.('[data-catalog-create]')", body)

@@ -402,11 +402,27 @@ async def client_error_report(
         return Response(status_code=400)
     kind = str(payload.get("kind") or "unknown")[:32]
     view = str(payload.get("view") or "unknown")[:80]
-    if kind not in {"window", "promise", "unknown"}:
+    if kind not in {"window", "promise", "action", "unknown"}:
         kind = "unknown"
+    def safe_token(value: object, limit: int = 64) -> str:
+        token = str(value or "")[:limit]
+        return token if re.fullmatch(r"[A-Za-z0-9_.:-]+", token or "") else "unknown"
+
+    action = safe_token(payload.get("action")) if kind == "action" else ""
+    phase = safe_token(payload.get("phase")) if kind == "action" else ""
+    outcome = safe_token(payload.get("outcome")) if kind == "action" else ""
     # This is client-side telemetry rather than a server fault.  Keep it out of
     # the warning stream so expected browser reports do not mask real incidents.
-    logger.info("authenticated_client_error kind=%s view=%s", kind, view)
+    if kind == "action":
+        logger.info(
+            "authenticated_client_error kind=action view=%s action=%s phase=%s outcome=%s",
+            view,
+            action,
+            phase,
+            outcome,
+        )
+    else:
+        logger.info("authenticated_client_error kind=%s view=%s", kind, view)
     return Response(status_code=204)
 
 
