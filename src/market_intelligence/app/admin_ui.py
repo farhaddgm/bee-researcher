@@ -3751,7 +3751,28 @@ ADMIN_HTML = r'''<!doctype html>
         if(!assistantId)return false;
         state.assistantId=assistantId;localStorage.setItem('research_bee_workspace',assistantId);return true
       };
-      const handleCatalogCreate=event=>{
+      // Workspace-dependent controls used to return early when the first
+      // render exposed a button before /admin/api/assistants had finished.
+      // Gate those controls once, reload the authorized workspace if needed,
+      // then replay the original click.  This keeps every action deterministic
+      // instead of making a button appear inert during the initial paint.
+      const workspaceGateIds=new Set(['addSourceBtn','addTopicBtn','sourceProbeBtn','healthProbeBtn','runPipelineBtn','operationsRunBtn','saveScheduleBtn','saveLimitsBtn','saveCollectionSettingsBtn','feedbackReportBtn','feedbackLearningBtn','feedbackRollbackBtn','knowledgeEditBtn','privacySaveBtn','privacyExportBtn','templateBuilderBtn']);
+      const workspaceReady=()=>{const selected=String(state.assistantId||'').trim(),known=(state.assistants||[]).some(item=>String(item?.id||'')===selected);return Boolean(selected&&known)};
+      const handleWorkspaceGate=event=>{
+        const origin=event.target instanceof Element?event.target:event.target?.parentElement;
+        const button=origin?.closest?.('button');
+        if(!button||!doc.contains(button)||!workspaceGateIds.has(button.id)||workspaceReady())return;
+        if(button.dataset.workspaceReplay==='1'){delete button.dataset.workspaceReplay;return}
+        event.preventDefault();event.stopImmediatePropagation();
+        if(button.dataset.workspaceGateBusy==='1')return;
+        button.dataset.workspaceGateBusy='1';button.disabled=true;button.setAttribute('aria-busy','true');
+        void ensureWorkspace().then(ready=>{
+          if(!ready){toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return}
+          button.dataset.workspaceReplay='1';button.disabled=false;button.removeAttribute('aria-busy');button.click();
+        }).catch(error=>{const detail=typeof window.friendlyError==='function'?window.friendlyError(error?.message||String(error||'')):String(error?.message||error||'');toast(detail||(state.language==='en'?'The selected assistant could not be loaded. Please try again.':'دستیار انتخاب‌شده بارگذاری نشد؛ دوباره تلاش کنین.'),true);try{reportOverviewClientError('workspace_gate')}catch(_){}}).finally(()=>{button.disabled=false;button.dataset.workspaceGateBusy='0';button.removeAttribute('aria-busy')})
+      };
+      doc.addEventListener('click',handleWorkspaceGate,true);
+      const handleCatalogCreate=async event=>{
         const origin=event.target instanceof Element?event.target:event.target?.parentElement;
         const button=origin?.closest?.('[data-catalog-create]');
         if(!button||!doc.contains(button))return;
@@ -3761,12 +3782,13 @@ ADMIN_HTML = r'''<!doctype html>
         if(button.dataset.catalogCreateBusy==='1')return;
         button.dataset.catalogCreateBusy='1';
         try{
-          if(!resolveCatalogWorkspace()){
+          if(!(await ensureWorkspace())){
             toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return
           }
+          if(!resolveCatalogWorkspace())throw Error(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.');
           const fnName=catalogHandlers[button.dataset.catalogCreate],fn=window[fnName];
           if(typeof fn!=='function')throw Error(state.language==='en'?'This action is temporarily unavailable.':'این عملیات موقتاً در دسترس نیست.');
-          fn.call(button,event);
+          await Promise.resolve(fn.call(button,event));
           const modalRoot=doc.getElementById('modalRoot');
           if(!modalRoot||modalRoot.classList.contains('hidden'))throw Error(state.language==='en'?'The form could not be opened. Please try again.':'فرم باز نشد؛ دوباره تلاش کنین.')
         }catch(error){

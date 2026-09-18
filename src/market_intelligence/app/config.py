@@ -15,7 +15,7 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 
 class Settings(BaseSettings):
     app_name: str = "Bee Researcher"
-    version: str = "3.30.5"
+    version: str = "3.30.6"
     environment: str = "production"
     # Public host names are used only to validate same-origin requests behind
     # the reverse proxy. They are not credentials and may be omitted locally.
