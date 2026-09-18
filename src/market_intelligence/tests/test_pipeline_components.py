@@ -511,6 +511,13 @@ class DeliveryAndSchedulerTest(unittest.TestCase):
         self.assertIn("collection_analysis", source)
         self.assertIn("created_after=collection_anchor", source)
 
+    def test_scheduler_emits_structured_operational_events(self):
+        source = inspect.getsource(__import__("app.runtime", fromlist=["scheduler_loop"]).scheduler_loop)
+        helper = inspect.getsource(__import__("app.runtime", fromlist=["_log_runtime_event"])._log_runtime_event)
+        self.assertIn("_log_runtime_event", source)
+        self.assertIn('"event": event', helper)
+        self.assertIn("ensure_ascii=False", helper)
+
     def test_collection_defaults_to_three_daily_windows(self):
         slots = default_collection_schedule_slots()
         self.assertEqual(21, len(slots))

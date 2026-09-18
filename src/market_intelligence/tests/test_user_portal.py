@@ -59,6 +59,25 @@ class UserPortalContractTest(unittest.TestCase):
         self.assertNotIn("Page ${state.page} of ${totalPages}", response.text)
         self.assertIn("plainText", response.text)
 
+    def test_portal_login_uses_the_same_authentication_composition_as_admin(self):
+        body = self.client.get("/user").text
+        self.assertIn('<html lang="en" dir="ltr" data-theme="honey"', body)
+        self.assertIn('rel="preload" as="image" href="/assets/bee-researcher-grey.svg"', body)
+        self.assertIn('rel="preload" as="font" href="/assets/Vazirmatn-Regular.woff2"', body)
+        self.assertNotIn("cdn.jsdelivr.net/gh/rastikerdar", body)
+        self.assertIn('id="login" class="login-shell"', body)
+        self.assertIn('<section class="login-card"', body)
+        self.assertIn('class="logo"><img class="brand-logo"', body)
+        self.assertIn('id="usernameError" class="field-error"', body)
+        self.assertIn('id="passwordError" class="field-error"', body)
+        self.assertIn('id="loginButton" class="btn primary login-submit"', body)
+        self.assertIn('id="loginLanguage" class="language-choice"', body)
+        self.assertIn('id="loginLanguageSelect" class="language-select"', body)
+        self.assertIn("Authentication is deliberately a shared visual contract", body)
+        self.assertIn("html[data-theme=\"honey\"] .login-shell", body)
+        self.assertIn('const loginCopy={', body)
+        self.assertIn("function setLoginLocale", body)
+
     def test_priority_queue_and_deep_reading_tools_are_present(self):
         body = self.client.get("/user").text
         self.assertIn('value="priority"', body)

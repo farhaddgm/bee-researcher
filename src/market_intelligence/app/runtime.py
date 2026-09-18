@@ -49,6 +49,19 @@ WHY_CHANGED_COMMAND = re.compile(
 )
 
 
+def _log_runtime_event(event: str, **fields: object) -> None:
+    """Emit one redacted, machine-readable runtime event.
+
+    Health probes are deliberately silent (``--no-access-log`` keeps the
+    transport noise out of the container), while scheduler and delivery
+    outcomes remain observable through a compact JSON record.  Only counts,
+    statuses and identifiers already safe for operational logs are included;
+    article text, credentials and upstream responses never enter this path.
+    """
+    payload = {"event": event, **fields}
+    LOGGER.info("runtime_event=%s", json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+
+
 def normalize_schedule_times(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
     cleaned = [str(value).strip() for value in values if str(value).strip()]
     if not cleaned or any(not TIME_PATTERN.fullmatch(value) for value in cleaned):
@@ -495,8 +508,25 @@ async def scheduler_loop(settings: Settings, stop: asyncio.Event) -> None:
                     STATUS.last_pipeline_status = str(
                         result["pipeline_results"][-1].get("status")
                     )
+                    summaries = []
+                    for item in result["pipeline_results"]:
+                        if not isinstance(item, dict):
+                            continue
+                        delivery = item.get("delivery") if isinstance(item.get("delivery"), dict) else {}
+                        pipeline = item.get("pipeline") if isinstance(item.get("pipeline"), dict) else {}
+                        summaries.append({
+                            "kind": item.get("kind", "pipeline"),
+                            "status": delivery.get("status") or pipeline.get("status") or item.get("status"),
+                            "published": delivery.get("published", 0),
+                        })
+                    _log_runtime_event(
+                        "scheduler_tick",
+                        result_count=len(result["pipeline_results"]),
+                        results=summaries[:20],
+                    )
             except Exception as exc:
-                    STATUS.last_scheduler_error = redact_sensitive_text(f"{type(exc).__name__}: {exc}")
+                STATUS.last_scheduler_error = redact_sensitive_text(f"{type(exc).__name__}: {exc}")
+                _log_runtime_event("scheduler_error", error=STATUS.last_scheduler_error)
             try:
                 await asyncio.wait_for(stop.wait(), timeout=settings.scheduler_poll_seconds)
             except TimeoutError:
@@ -616,3 +646,45 @@ async def telegram_feedback_loop(settings: Settings, stop: asyncio.Event) -> Non
 
 def runtime_status() -> dict[str, object]:
     return asdict(STATUS)
+
+
+def runtime_readiness(settings: Settings, *, now: datetime | None = None) -> dict[str, object]:
+    """Return the process-local readiness signals used by ``/ready``.
+
+    ``/health`` is intentionally a cheap liveness probe for the container
+    runtime.  Readiness additionally needs to tell an operator whether the
+    scheduler and Telegram poller have actually started and whether the
+    scheduler heartbeat is fresh.  Keeping this calculation pure makes it
+    deterministic in tests and avoids an external Telegram call on every
+    health probe.
+    """
+    now = now or datetime.now(timezone.utc)
+    status = runtime_status()
+    scheduler_required = bool(settings.scheduler_enabled)
+    last_tick = status.get("last_scheduler_tick")
+    heartbeat_fresh = False
+    if isinstance(last_tick, str):
+        try:
+            tick = datetime.fromisoformat(last_tick.replace("Z", "+00:00"))
+            if tick.tzinfo is None:
+                tick = tick.replace(tzinfo=timezone.utc)
+            heartbeat_fresh = (now - tick.astimezone(timezone.utc)).total_seconds() <= max(
+                90, settings.scheduler_poll_seconds * 4
+            )
+        except ValueError:
+            heartbeat_fresh = False
+    scheduler_state = (
+        "healthy"
+        if not scheduler_required or (bool(status.get("scheduler_running")) and heartbeat_fresh)
+        else "starting" if bool(status.get("scheduler_running")) else "stopped"
+    )
+    telegram_required = bool(settings.telegram_ready and settings.telegram_polling_enabled)
+    telegram_state = "healthy" if not telegram_required or bool(status.get("telegram_poller_running")) else "stopped"
+    ready = scheduler_state == "healthy" and telegram_state == "healthy"
+    return {
+        "ready": ready,
+        "scheduler": scheduler_state,
+        "telegram_poller": telegram_state,
+        "last_scheduler_tick": last_tick,
+        "last_scheduler_error": status.get("last_scheduler_error"),
+    }

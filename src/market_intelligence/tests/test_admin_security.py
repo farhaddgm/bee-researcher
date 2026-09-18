@@ -1,8 +1,18 @@
+import os
 import unittest
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
+
+
+# Keep unittest discovery reproducible outside CI too.  This module imports
+# app.admin directly (before test_main can seed the settings environment), so
+# provide the same harmless test-only defaults at module import time.
+os.environ.setdefault("MARKET_INTELLIGENCE_POSTGRES_DB", "assistant_test")
+os.environ.setdefault("MARKET_INTELLIGENCE_POSTGRES_USER", "assistant_test")
+os.environ.setdefault("MARKET_INTELLIGENCE_POSTGRES_PASSWORD", "test-password")
+os.environ.setdefault("MARKET_INTELLIGENCE_REDIS_PASSWORD", "test-password")
 
 from pydantic import SecretStr, ValidationError
 

@@ -14,8 +14,8 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 
 
 class Settings(BaseSettings):
-    app_name: str = "Dotin Market Intelligence"
-    version: str = "3.29.22"
+    app_name: str = "Bee Researcher"
+    version: str = "3.30.5"
     environment: str = "production"
     # Public host names are used only to validate same-origin requests behind
     # the reverse proxy. They are not credentials and may be omitted locally.
@@ -57,7 +57,10 @@ class Settings(BaseSettings):
     fetch_max_items_per_source: int = Field(default=50, ge=1, le=200)
     fetch_concurrency: int = Field(default=3, ge=1, le=10)
     fetch_lock_ttl_seconds: int = Field(default=180, ge=30, le=1800)
-    fetch_user_agent: str = "DotinMarketIntelligence/1.0 (private market research)"
+    # Identify the product consistently in source requests.  Workspace names
+    # (for example Dotin) are runtime data and must not leak into the service
+    # identity or make a new deployment look like a different product.
+    fetch_user_agent: str = "BeeResearcher/1.0 (private market research)"
 
     extraction_concurrency: int = Field(default=3, ge=1, le=10)
     extraction_max_chars: int = Field(default=60_000, ge=2_000, le=250_000)

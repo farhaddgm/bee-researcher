@@ -58,6 +58,7 @@ from app.runtime import (
     scheduler_loop,
     scheduler_schedule_config,
     scheduler_schedule_times,
+    runtime_readiness,
     telegram_feedback_loop,
     update_scheduler_schedule_slots,
 )
@@ -244,6 +245,11 @@ _ADMIN_ASSETS = {
     "bee.svg": "image/svg+xml",
     "bee-researcher.svg": "image/svg+xml",
     "bee-researcher-grey.svg": "image/svg+xml",
+    "Vazirmatn-Regular.woff2": "font/woff2",
+    "Vazirmatn-Medium.woff2": "font/woff2",
+    "Vazirmatn-SemiBold.woff2": "font/woff2",
+    "Vazirmatn-Bold.woff2": "font/woff2",
+    "Vazirmatn-ExtraBold.woff2": "font/woff2",
 }
 
 
@@ -371,6 +377,39 @@ async def csp_report(request: Request) -> Response:
     return Response(status_code=204)
 
 
+@app.post("/admin/api/security/client-error", include_in_schema=False)
+async def client_error_report(
+    request: Request,
+    token: str | None = Cookie(default=None, alias="research_bee_admin_session"),
+) -> Response:
+    """Record a bounded, authenticated browser error signal.
+
+    The browser deliberately sends only a coarse kind and the active route;
+    stack traces and exception text can contain customer content and must not
+    be collected in access or application logs.  This replaces the previous
+    ``/health?client_error=...`` beacon, which polluted health telemetry.
+    """
+
+    await current_admin(token)
+    raw = await request.body()
+    if len(raw) > 1_024:
+        return Response(status_code=413)
+    try:
+        payload = json.loads(raw.decode("utf-8")) if raw else {}
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return Response(status_code=400)
+    if not isinstance(payload, dict):
+        return Response(status_code=400)
+    kind = str(payload.get("kind") or "unknown")[:32]
+    view = str(payload.get("view") or "unknown")[:80]
+    if kind not in {"window", "promise", "unknown"}:
+        kind = "unknown"
+    # This is client-side telemetry rather than a server fault.  Keep it out of
+    # the warning stream so expected browser reports do not mask real incidents.
+    logger.info("authenticated_client_error kind=%s view=%s", kind, view)
+    return Response(status_code=204)
+
+
 @app.middleware("http")
 async def private_indexing_headers(request: Request, call_next):
     """Keep the control plane private and reject cross-origin mutations."""
@@ -454,10 +493,13 @@ async def private_indexing_headers(request: Request, call_next):
     response.headers["Origin-Agent-Cluster"] = "?1"
     nonce = getattr(request.state, "csp_nonce", "")
     script_source = f"'self' 'nonce-{nonce}'" if nonce else "'self'"
-    style_source = f"'self' 'nonce-{nonce}' https://fonts.googleapis.com" if nonce else "'self' https://fonts.googleapis.com"
+    # Fonts are packaged with the application.  Keeping the stylesheet and
+    # font directives self-only avoids a third-party render dependency and
+    # makes the strict CSP reflect what the UI actually loads.
+    style_source = f"'self' 'nonce-{nonce}'" if nonce else "'self'"
     policy_base = (
         f"default-src 'self'; script-src {script_source}; "
-        f"style-src {style_source}; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; "
+        f"style-src {style_source}; font-src 'self'; img-src 'self' data:; "
         "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     )
     # Keep the compatibility policy only while the inline migration is in
@@ -467,7 +509,7 @@ async def private_indexing_headers(request: Request, call_next):
     compatibility_policy = (
         f"default-src 'self'; script-src {script_source}; script-src-attr 'unsafe-inline'; "
         f"style-src {style_source}; style-src-attr 'unsafe-inline'; "
-        "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; "
+        "font-src 'self'; img-src 'self' data:; "
         "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     )
     response.headers["Content-Security-Policy"] = policy_base if settings.csp_strict else compatibility_policy
@@ -566,6 +608,42 @@ async def health() -> JSONResponse:
             "service": "market-intelligence",
             "version": settings.version,
             "dependencies": dependencies,
+            # Liveness remains cheap and stable for Docker.  Consumers that
+            # need to gate traffic must use /ready, which also checks the
+            # process-local scheduler/poller state.
+            "readiness_endpoint": "/ready",
+        },
+    )
+
+
+@app.get("/ready")
+async def ready() -> JSONResponse:
+    """Report whether the service is ready to receive production traffic.
+
+    Unlike /health this endpoint includes the scheduler and Telegram poller
+    startup/heartbeat signals.  It intentionally does not perform a network
+    call to Telegram, so frequent probes cannot consume Telegram rate limits.
+    """
+    checks = await asyncio.gather(
+        check_database(),
+        check_redis(),
+        return_exceptions=True,
+    )
+    names = ("postgres", "redis")
+    dependencies = {
+        name: "healthy" if not isinstance(result, Exception) else "unhealthy"
+        for name, result in zip(names, checks, strict=True)
+    }
+    runtime = runtime_readiness(settings)
+    ready_state = all(value == "healthy" for value in dependencies.values()) and bool(runtime["ready"])
+    return JSONResponse(
+        status_code=200 if ready_state else 503,
+        content={
+            "status": "ready" if ready_state else "not_ready",
+            "service": "market-intelligence",
+            "version": settings.version,
+            "dependencies": dependencies,
+            "runtime": runtime,
         },
     )
 

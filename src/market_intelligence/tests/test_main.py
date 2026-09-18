@@ -66,6 +66,34 @@ class MainTest(unittest.TestCase):
         self.assertEqual(503, response.status_code)
         self.assertEqual("unhealthy", response.json()["dependencies"]["postgres"])
 
+    def test_ready_includes_process_runtime_signals(self):
+        # Readiness is stricter than liveness: a healthy database alone is not
+        # enough while the scheduler has not started its heartbeat.
+        with (
+            patch("app.main.check_database", new=AsyncMock(return_value=None)),
+            patch("app.main.check_redis", new=AsyncMock(return_value=None)),
+            patch.object(settings, "scheduler_enabled", False),
+            patch.object(settings, "telegram_polling_enabled", False),
+        ):
+            response = TestClient(app).get("/ready")
+        self.assertEqual(200, response.status_code)
+        body = response.json()
+        self.assertEqual("ready", body["status"])
+        self.assertIn("runtime", body)
+        self.assertEqual("healthy", body["runtime"]["scheduler"])
+
+    def test_ready_returns_not_ready_for_stale_scheduler(self):
+        with (
+            patch("app.main.check_database", new=AsyncMock(return_value=None)),
+            patch("app.main.check_redis", new=AsyncMock(return_value=None)),
+            patch.object(settings, "scheduler_enabled", True),
+            patch.object(settings, "telegram_polling_enabled", False),
+        ):
+            response = TestClient(app).get("/ready")
+        self.assertEqual(503, response.status_code)
+        self.assertEqual("not_ready", response.json()["status"])
+        self.assertIn(response.json()["runtime"]["scheduler"], {"starting", "stopped"})
+
     def test_private_backoffice_is_not_indexable(self):
         client = TestClient(app)
         robots = client.get("/robots.txt")
@@ -195,7 +223,8 @@ class MainTest(unittest.TestCase):
 
     def test_client_error_telemetry_does_not_embed_exception_text(self):
         body = TestClient(app).get("/admin").text
-        self.assertIn("/health?client_error='+kind", body)
+        self.assertIn("/admin/api/security/client-error", body)
+        self.assertIn("JSON.stringify({kind,view})", body)
         self.assertNotIn("error&&error.message", body)
         self.assertNotIn("slice(0,240)", body)
 
@@ -450,7 +479,7 @@ class MainTest(unittest.TestCase):
 
     def test_admin_ui_login_and_sidebar_copy_are_compact_and_stable(self):
         body = TestClient(app).get("/admin").text
-        self.assertIn("version.textContent='v3.29.22'", body)
+        self.assertIn("version.textContent='v3.30.1'", body)
         self.assertIn("collectionScheduleGrid", body)
         self.assertIn("collection_max_items_per_run", body)
         self.assertIn("collectionOwnerBadge", body)
@@ -763,16 +792,17 @@ class MainTest(unittest.TestCase):
     def test_admin_ui_groups_page_actions_in_the_header(self):
         body = TestClient(app).get("/admin").text
         self.assertIn('<div class="actions"><button class="btn" id="sourceProbeBtn"', body)
-        self.assertIn('type="button" class="btn primary" id="addSourceBtn">＋ افزودن رسانه</button>', body)
+        self.assertIn('type="button" class="btn primary" id="addSourceBtn" data-catalog-create="source">＋ افزودن رسانه</button>', body)
         self.assertIn('<div class="actions"><button class="btn primary" id="newBusinessBtn"', body)
         self.assertIn('<div class="actions"><button class="btn primary" id="feedbackReportBtn"', body)
-        self.assertIn('id="addTopicBtn">＋ افزودن موضوع</button>', body)
+        self.assertIn('id="addTopicBtn" data-catalog-create="topic">＋ افزودن موضوع</button>', body)
         self.assertNotIn('id="editTelegramBtn"', body)
         self.assertIn('type="button" data-edit-telegram>ویرایش اطلاعات</button>', body)
         self.assertIn('id="newUserBtn">＋ افزودن کاربر</button>', body)
         self.assertIn("const sourceActions=document.querySelector('#view-sources .page-head .actions')", body)
         self.assertIn('id="admin-ui-capability-cleanup-v1"', body)
-        self.assertIn("event.target?.closest?.('button[id]'),fnName=button&&actionHandlers[button.id]", body)
+        self.assertIn("const catalogHandlers={source:'openCreateSourceModal',topic:'openCreateTopicModal'}", body)
+        self.assertIn("event.preventDefault();", body)
 
     def test_admin_ui_header_shows_username_without_role(self):
         body = TestClient(app).get("/admin").text
@@ -791,7 +821,11 @@ class MainTest(unittest.TestCase):
         body = TestClient(app).get("/admin").text
         self.assertIn("Never replace a known identity with a transient empty response", body)
         self.assertIn("const userHeaderObserver=new MutationObserver", body)
-        self.assertIn("setInterval(()=>{if(!$('app')?.classList.contains('hidden'))", body)
+        # Identity reconciliation is observer/event driven; a polling timer
+        # caused needless repaints and the locale-number flicker seen in the
+        # production shell.  Keep the regression guard explicit so the timer
+        # cannot be reintroduced accidentally.
+        self.assertNotIn("setInterval(()=>{if(!$('app')?.classList.contains('hidden'))", body)
         self.assertIn("target.setAttribute('aria-label','کاربر واردشده: '+username)", body)
 
     def test_admin_ui_language_switch_keeps_login_language_buttons_in_place(self):
@@ -828,24 +862,57 @@ class MainTest(unittest.TestCase):
         self.assertIn("directSourceSmartDraft", body)
         self.assertIn("source ID is generated automatically", body)
         self.assertIn("Business name (optional)", body)
-        self.assertIn("event.target?.closest?.('button[id]'),fnName=button&&actionHandlers[button.id]", body)
+        self.assertIn("const catalogHandlers={source:'openCreateSourceModal',topic:'openCreateTopicModal'}", body)
+        self.assertIn("window.__researchBeeReconcileWorkspaceActions=run", body)
         self.assertIn("/admin/api/assistants/'+encodeURIComponent(state.assistantId)+'/sources", body)
         self.assertIn("window.openCreateSourceModal=openCreateSourceModal", body)
+
+    def test_authenticated_client_error_uses_dedicated_bounded_endpoint(self):
+        with patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4()))):
+            response = TestClient(app).post(
+                "/admin/api/security/client-error",
+                json={"kind": "window", "view": "sources"},
+            )
+        self.assertEqual(204, response.status_code)
+        body = TestClient(app).get("/admin").text
+        self.assertIn("/admin/api/security/client-error", body)
+        self.assertNotIn("/health?client_error=", body)
 
     def test_admin_ui_media_topic_actions_are_stable_during_first_paint(self):
         body = TestClient(app).get("/admin").text
         # The final action layer must recover an authorized workspace before
         # invoking add/probe/suggestion actions, and table callbacks must be
         # globally resolvable after the CSP attribute migration.
-        self.assertIn("const actionHandlers={addSourceBtn:'openCreateSourceModal',addTopicBtn:'openCreateTopicModal',addPublicSocialSourceBtn:'openPublicSocialSourceModal',sourceSuggestionBtn:'openSourceSuggestionsModal',sourceProbeBtn:'probeSelectedSources'}", body)
+        self.assertIn("const actionHandlers={addPublicSocialSourceBtn:'openPublicSocialSourceModal',sourceSuggestionBtn:'openSourceSuggestionsModal',sourceProbeBtn:'probeSelectedSources'}", body)
+        self.assertIn("const catalogHandlers={source:'openCreateSourceModal',topic:'openCreateTopicModal'}", body)
         self.assertIn("const ensureWorkspace=async()=>", body)
         self.assertIn("button.dataset.adminActionBound='1'", body)
-        self.assertIn("button.onclick=event=>invokeAction(button,fnName,event)", body)
+        self.assertIn("button.addEventListener('click',event=>{", body)
+        self.assertIn("button.onclick=null;", body)
+        self.assertIn("const handleCatalogCreate=event=>", body)
+        self.assertIn("origin?.closest?.('[data-catalog-create]')", body)
+        self.assertIn("event.preventDefault();event.stopImmediatePropagation();", body)
+        self.assertIn("doc.addEventListener('click',handleCatalogCreate,true)", body)
+        self.assertIn("const run=()=>{normalizePageActions();prepareCatalogButtons();prepareActionButtons()}", body)
+        self.assertIn("An action used to fail silently here", body)
+        self.assertIn("try{reportOverviewClientError('window')}catch(_){}", body)
+        self.assertIn("window.__researchBeeReconcileWorkspaceActions?.();", body)
         self.assertIn("window.openCreateTopicModal=openCreateTopicModal", body)
         self.assertIn("window.toggleSource=toggleSource;window.openSourceModal=openSourceModal", body)
         self.assertIn("window.toggleTopic=toggleTopic;window.openTopicModal=openTopicModal", body)
         self.assertIn("window.deleteSourceFromUi=deleteSourceFromUi;window.deleteTopicFromUi=deleteTopicFromUi", body)
-        self.assertIn("Always use the guarded wrapper", body)
+        self.assertIn("The stable capture listener below is the only catalog-create path", body)
+
+    def test_local_vazirmatn_assets_are_served_without_relaxing_csp(self):
+        response = TestClient(app).get("/assets/Vazirmatn-Regular.woff2")
+        self.assertEqual(200, response.status_code)
+        self.assertEqual("font/woff2", response.headers["content-type"])
+        page = TestClient(app).get("/admin")
+        self.assertIn('/assets/Vazirmatn-Regular.woff2', page.text)
+        self.assertNotIn("cdn.jsdelivr.net/gh/rastikerdar", page.text)
+        policy = page.headers["content-security-policy"]
+        self.assertNotIn("fonts.googleapis.com", policy)
+        self.assertNotIn("fonts.gstatic.com", policy)
 
     def test_business_free_assistant_request_and_source_urls_are_validated(self):
         assistant = AssistantRequest(slug="general-market", name="General market")

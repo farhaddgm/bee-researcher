@@ -35,9 +35,8 @@ ADMIN_HTML = r'''<!doctype html>
   <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
   <meta name="googlebot" content="noindex,nofollow,noarchive,nosnippet">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="preload" as="image" href="/assets/bee-researcher-grey.svg" type="image/svg+xml">
-  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css">
-  <style>#workspaceSelect option[value=""]{display:none}</style>
+  <link rel="preload" as="font" href="/assets/Vazirmatn-Regular.woff2" type="font/woff2" crossorigin>
+  <style>@font-face{font-family:"Vazirmatn";src:url("/assets/Vazirmatn-Regular.woff2") format("woff2");font-style:normal;font-weight:400;font-display:swap}@font-face{font-family:"Vazirmatn";src:url("/assets/Vazirmatn-Medium.woff2") format("woff2");font-style:normal;font-weight:500;font-display:swap}@font-face{font-family:"Vazirmatn";src:url("/assets/Vazirmatn-SemiBold.woff2") format("woff2");font-style:normal;font-weight:600;font-display:swap}@font-face{font-family:"Vazirmatn";src:url("/assets/Vazirmatn-Bold.woff2") format("woff2");font-style:normal;font-weight:700;font-display:swap}@font-face{font-family:"Vazirmatn";src:url("/assets/Vazirmatn-ExtraBold.woff2") format("woff2");font-style:normal;font-weight:800 900;font-display:swap}#workspaceSelect option[value=""]{display:none}</style>
   <style>
     /* Keep either shell out of the first paint until the session check has
        completed; this prevents a login-form flash during a hard refresh. */
@@ -55,6 +54,10 @@ ADMIN_HTML = r'''<!doctype html>
   <script>
     document.documentElement.classList.add('session-checking');
     document.documentElement.classList.add('locale-pending');
+    // Only the final threaded Support controller is allowed to own the
+    // support DOM.  Older compatibility layers stay inert from first paint,
+    // eliminating duplicate forms and the brief mixed-layout flash.
+    window.__beeCanonicalSupport=true;
     // A failed script or a slow session endpoint must never leave both shells
     // hidden forever.  The normal bootstrap removes this class in its promise
     // `finally`; this guarded fallback only runs while the document is still
@@ -201,8 +204,8 @@ ADMIN_HTML = r'''<!doctype html>
         <section id="view-assistants" class="view active"><div class="page-head"><div><h2>دستیارها</h2><p>هر دستیار یک workspace مستقل برای بیزینس، رسانه و موضوعات خودش است.</p></div><div class="actions"><button class="btn primary" id="newAssistantBtn">＋ ساخت دستیار</button><button class="btn" id="quickAssistantBtn">⚡ ساخت سریع با توضیح کوتاه</button></div></div><div id="assistantGrid" class="grid assistant-grid"></div></section>
         <section id="view-content" class="view"><div class="page-head"><div><h2>صف بررسی خبر</h2><p>قبل از انتشار، خلاصه و ارتباط هر خبر را بررسی و تأیید کنید.</p></div><div class="actions"><button class="btn" id="refreshPreviewsBtn">بازسازی پیش‌نمایش‌ها</button><button class="btn primary" id="openWeeklyBtn">گزارش هفتگی</button></div></div><div class="card section-card"><div class="filter-bar"><input id="publicationSearch" placeholder="جست‌وجو در عنوان و متن"><select id="publicationStatus"><option value="">همه وضعیت‌ها</option><option value="preview">نیازمند بررسی</option><option value="published">منتشرشده</option><option value="review_only">رد مرزی — بررسی دستی</option><option value="failed">ناموفق</option><option value="archived">بایگانی</option><option value="rejected">ردشده</option></select><button class="btn small" id="publicationFilterBtn">اعمال فیلتر</button><span id="publicationCount" class="muted push-end">—</span></div><div class="table-wrap"><table><thead><tr><th data-publication-column="0">خبر</th><th data-publication-column="1">وضعیت انتشار</th><th data-publication-column="2">امتیاز ارتباط</th><th data-publication-column="3">منبع خبر</th><th data-publication-column="4">تاریخ خبر</th><th data-publication-column="5">انتشار در تلگرام</th></tr></thead><tbody id="publicationRows"></tbody></table></div><div id="publicationPager" class="actions centered mt-14"></div></div></section>
         <section id="view-businesses" class="view"><div class="page-head"><div><h2>بیزینس‌ها</h2><p>برای هر دستیار چند پروفایل کسب‌وکار بسازید و یکی را برای تحلیل فعال کنید.</p></div><div class="actions"><button class="btn primary" id="newBusinessBtn">＋ افزودن بیزینس</button></div></div><div class="card section-card"><div class="notice">هر بیزینس مستقل از رسانه، موضوع، کانال و تنظیمات اجرایی است؛ secret در پروفایل ذخیره نمی‌شود.</div><div id="businessGrid" class="grid assistant-grid"></div></div></section>
-        <section id="view-sources" class="view"><div class="page-head"><div><h2>رسانه‌ها</h2><p>اتصال، سلامت و اولویت دریافت هر رسانه را مدیریت کنید.</p></div><div class="actions"><button class="btn" id="sourceProbeBtn">بررسی سلامت همه</button><button class="btn" id="sourceSuggestionBtn">پیشنهاد رسانه</button><button type="button" class="btn primary" id="addSourceBtn">＋ افزودن رسانه</button></div></div><div class="card section-card"><div class="filter-bar"><input id="sourceSearch" placeholder="جست‌وجوی رسانه" oninput="renderSources()"><span id="sourceCount" class="muted push-end">—</span></div><div class="table-wrap"><table><thead><tr><th>رسانه</th><th>نوع اتصال</th><th>سلامت</th><th>اولویت</th><th>آخرین موفقیت</th><th>عملیات</th></tr></thead><tbody id="sourceRows"></tbody></table></div></div><div id="sourceSuggestionsCard" class="card section-card hidden"><div class="section-title"><h3>پیشنهادهای رسانه</h3><span>فعال‌سازی فقط با تأیید مالک</span></div><div id="sourceSuggestionsRows"></div></div></section>
-        <section id="view-topics" class="view"><div class="page-head"><div><h2>موضوعات</h2><p>موضوعات هدف و آستانه ارتباط با بیزینس را تنظیم کنید.</p></div><div class="actions"><button class="btn primary" id="addTopicBtn">＋ افزودن موضوع</button></div></div><div class="card section-card"><div class="filter-bar"><input id="topicSearch" placeholder="جست‌وجوی موضوع" oninput="renderTopics()"><span id="topicCount" class="muted push-end">—</span></div><div class="table-wrap"><table><thead><tr><th>موضوع</th><th>اهمیت</th><th>آستانه ارتباط</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody id="topicRows"></tbody></table></div></div></section>
+        <section id="view-sources" class="view"><div class="page-head"><div><h2>رسانه‌ها</h2><p>اتصال، سلامت و اولویت دریافت هر رسانه را مدیریت کنید.</p></div><div class="actions"><button class="btn" id="sourceProbeBtn">بررسی سلامت همه</button><button class="btn" id="sourceSuggestionBtn">پیشنهاد رسانه</button><button type="button" class="btn primary" id="addSourceBtn" data-catalog-create="source">＋ افزودن رسانه</button></div></div><div class="card section-card"><div class="filter-bar"><input id="sourceSearch" placeholder="جست‌وجوی رسانه" oninput="renderSources()"><span id="sourceCount" class="muted push-end">—</span></div><div class="table-wrap"><table><thead><tr><th>رسانه</th><th>نوع اتصال</th><th>سلامت</th><th>اولویت</th><th>آخرین موفقیت</th><th>عملیات</th></tr></thead><tbody id="sourceRows"></tbody></table></div></div><div id="sourceSuggestionsCard" class="card section-card hidden"><div class="section-title"><h3>پیشنهادهای رسانه</h3><span>فعال‌سازی فقط با تأیید مالک</span></div><div id="sourceSuggestionsRows"></div></div></section>
+        <section id="view-topics" class="view"><div class="page-head"><div><h2>موضوعات</h2><p>موضوعات هدف و آستانه ارتباط با بیزینس را تنظیم کنید.</p></div><div class="actions"><button type="button" class="btn primary" id="addTopicBtn" data-catalog-create="topic">＋ افزودن موضوع</button></div></div><div class="card section-card"><div class="filter-bar"><input id="topicSearch" placeholder="جست‌وجوی موضوع" oninput="renderTopics()"><span id="topicCount" class="muted push-end">—</span></div><div class="table-wrap"><table><thead><tr><th>موضوع</th><th>اهمیت</th><th>آستانه ارتباط</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody id="topicRows"></tbody></table></div></div></section>
         <section id="view-schedule" class="view"><div class="page-head"><div><h2>زمان‌بندی و کانال</h2><p>روزها و ساعت‌های انتشار هر پروژه را مستقیماً از جدول هفتگی انتخاب کنین.</p></div></div><div class="schedule-layout"><div class="card section-card schedule-matrix-card"><div class="section-title"><h3>جدول هفتگی اجرای pipeline</h3><span id="scheduleTimezone">—</span></div><p class="schedule-note">همهٔ ۲۴ ساعت و ۷ روز هفته یکجا نمایش داده می‌شوند. برای انتخاب کل روز روی نام روز و برای انتخاب ساعت در همهٔ روزها روی ساعت بالای جدول بزنین.</p><div class="schedule-grid-wrap"><table id="scheduleGrid" class="schedule-grid" role="grid" aria-label="جدول ۷ روز و ۲۴ ساعت"></table></div><div id="scheduleSelection" class="schedule-selection" aria-live="polite"></div><div class="schedule-settings"><div class="field"><label>سقف انتشار در هر نوبت</label><input id="maxItemsPerRun" type="text" inputmode="numeric" min="1" max="7" value="۲"></div><div class="field"><label>پنجره تازگی خبر (روز)</label><input id="freshnessWindowDays" type="text" inputmode="numeric" min="۱" max="۷" value="۳" aria-describedby="freshnessWindowHelp"></div><div class="field"><label>اعلان تلگرام</label><select id="telegramSilentNotifications"><option value="false">اعلان عادی</option><option value="true">اعلان بی‌صدا</option></select></div><div class="field"><label>مدل تحلیل OpenAI</label><select id="analysisModel"><option value="gpt-5.6-luna">gpt-5.6-luna</option><option value="gpt-5.5">gpt-5.5</option><option value="gpt-5.4">gpt-5.4</option></select></div><div class="field"><label>کاربران مجاز فیدبک (username با کاما)</label><input id="allowedFeedbackUsers" placeholder="farhaad"></div><small id="freshnessWindowHelp" class="muted">فقط خبرهای منتشرشده در این تعداد روز اخیر برای تحلیل و انتشار معتبر در نظر گرفته می‌شوند.</small><small id="dailyProcessingCapHelp" class="muted">سقف پردازش: حداکثر ۱۰۰۰ خبر جدید در روز برای هر پروژه.</small></div><button class="btn primary" id="saveScheduleBtn" style="margin-top:14px">ذخیره زمان‌بندی و تنظیمات</button><p id="scheduleMsg" class="muted"></p></div><div class="card section-card"><div class="section-title"><h3>آمادگی انتشار تلگرام</h3><span id="telegramStatus" class="status">در حال بررسی</span></div><div id="telegramDetails" class="detail-list"></div></div><div id="channelSettingsCard" class="card section-card channel-settings-card"><div class="section-title channel-section-title"><div><h3>ربات و کانال‌های مقصد پروژه</h3><span>جزئیات اتصال و انتشار هر کانال</span></div><button class="btn small primary" type="button" data-edit-telegram>ویرایش اطلاعات</button></div><div id="channelGrid" class="channel-grid"><div class="empty">در حال دریافت اطلاعات ربات و کانال‌ها…</div></div></div></div></section>
         <section id="view-template-content" class="view"><div class="page-head"><div><h2 data-template-page-title>قالب محتوا</h2><p data-template-page-subtitle>قالب انتشار هر مقصد را فقط از این صفحه مدیریت کنین.</p></div></div><div id="templateContentMount"><div class="card template-empty empty">برای ویرایش قالب محتوا یک پروژه را انتخاب کنین.</div></div></section>
         <section id="view-operations" class="view"><div class="page-head"><div><h2>عملیات و سلامت</h2><p>وضعیت سرویس‌ها و پارامترهای اجرای pipeline.</p></div><div class="actions"><button class="btn" id="systemRefreshBtn">بازخوانی</button><button class="btn primary" id="operationsRunBtn">اجرای تست pipeline</button></div></div><div class="grid three-col"><div class="card section-card"><div class="section-title"><h3>سرویس</h3><span id="operationHealth" class="status">—</span></div><div id="operationMeta" class="detail-list"></div></div><div class="card section-card"><div class="section-title"><h3>پیکربندی تحلیل</h3></div><div id="analysisMeta" class="detail-list"></div></div><div class="card section-card"><div class="section-title"><h3>صف‌ها</h3></div><div id="queueMeta" class="detail-list"></div></div></div><div class="card section-card" style="margin-top:14px"><div class="section-title"><h3>خروجی آخرین اجرا</h3><span id="runResultTime">—</span></div><pre id="runResult" class="article-body">هنوز اجرایی ثبت نشده است.</pre></div></section>
@@ -217,9 +220,11 @@ ADMIN_HTML = r'''<!doctype html>
     // larger dashboard script: one optional initializer failing must not leave
     // the KPI cards at their HTML placeholders. Requests are retried because
     // the assistant list can become available a moment after the shell loads.
-    // Keep the lightweight client-health signal, but never send exception text
-    // to an unauthenticated endpoint where it could enter proxy/access logs.
-    const reportOverviewClientError=label=>{try{const kind=label==='promise'?'promise':'window';navigator.sendBeacon('/health?client_error='+kind)}catch(_){}};window.addEventListener('error',()=>reportOverviewClientError('window'));window.addEventListener('unhandledrejection',()=>reportOverviewClientError('promise'));
+    // Report only a coarse, authenticated UI error signal.  Never send an
+    // exception message, stack trace, query text or news content; they can
+    // include customer data.  This also keeps the health endpoint strictly
+    // for health checks instead of using it as a telemetry sink.
+    const reportOverviewClientError=label=>{try{if(document.getElementById('app')?.classList.contains('hidden'))return;const kind=label==='promise'?'promise':'window',view=document.querySelector('.view.active')?.id?.replace(/^view-/,'')||'unknown',prefix='research_bee_admin_csrf=',cookie=document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith(prefix)),csrf=cookie?decodeURIComponent(cookie.slice(prefix.length)):'';if(!csrf)return;fetch('/admin/api/security/client-error',{method:'POST',credentials:'include',keepalive:true,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({kind,view})}).catch(()=>{})}catch(_){}};window.addEventListener('error',()=>reportOverviewClientError('window'));window.addEventListener('unhandledrejection',()=>reportOverviewClientError('promise'));
     (function(){
       const fa='۰۱۲۳۴۵۶۷۸۹',toFa=value=>String(value).replace(/\d/g,d=>fa[d]);
       const getJSON=async url=>{const response=await fetch(url,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error(url+' '+response.status);return response.json()};
@@ -512,13 +517,16 @@ ADMIN_HTML = r'''<!doctype html>
     // leaving the submit button spinning forever.
     function reqWithTimeout(path,opts={},timeoutMs=15000){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);return req(path,{...opts,signal:controller.signal}).finally(()=>clearTimeout(timer))}
     function toast(text,error=false){const t=$('toast');t.textContent=error?friendlyError(text):translatedCopy(text);t.className='toast'+(error?' error':'');clearTimeout(window.__toast);window.__toast=setTimeout(()=>t.classList.add('hidden'),4200)}
-    function setUserHeader(user){const username=String(user?.username||'').trim();const target=$('userName');if(!target)return;/* Never replace a known identity with a transient empty response. */if(!username){if(state.currentUser?.username)return;if(target.textContent!=='—')target.textContent='—';target.dataset.username='';document.querySelector('.user-chip')?.classList.add('user-missing');return}if(target.textContent!==username)target.textContent=username;target.dataset.username=username;target.setAttribute('aria-label','کاربر واردشده: '+username);document.querySelector('.user-chip')?.classList.remove('user-missing')}
+    function setUserHeader(user){const username=String(user?.username||'').trim();const target=$('userName');if(!target)return;/* Never replace a known identity with a transient empty response. */if(!username){if(state.currentUser?.username)return;if(target.textContent!=='—')target.textContent='—';target.dataset.username='';document.querySelector('.user-chip')?.classList.add('user-missing');window.__researchBeeRefreshSidebarAccount?.();return}if(target.textContent!==username)target.textContent=username;target.dataset.username=username;target.setAttribute('aria-label','کاربر واردشده: '+username);document.querySelector('.user-chip')?.classList.remove('user-missing');window.__researchBeeRefreshSidebarAccount?.()}
     function paintCurrentUser(){const app=$('app');if(state.currentUser?.username&&app&&!app.classList.contains('hidden'))setUserHeader(state.currentUser)}
     async function syncCurrentUser(){const transition=authTransition;try{const r=await fetch('/admin/api/me',{credentials:'include',cache:'no-store'});if(!r.ok){if(r.status===401&&transition===authTransition)showLogin();return}const user=await r.json();if(transition===authTransition&&user?.username&&!$('app')?.classList.contains('hidden')){state.currentUser=user;setUserHeader(user)}}catch{}}
     // Keep the identity slot authoritative if a late view repaint or browser
     // extension mutates the header text. This does not run after sign-out.
     const userHeaderObserver=new MutationObserver(()=>paintCurrentUser());userHeaderObserver.observe($('userName'),{childList:true,characterData:true,subtree:true});
-    setInterval(()=>{if(!$('app')?.classList.contains('hidden')){paintCurrentUser();syncCurrentUser()}},15000);
+    // Identity is refreshed by the authenticated bootstrap and explicit
+    // view/account transitions.  A 15-second global poll caused needless
+    // network traffic and competed with locale/render passes, so no timer is
+    // needed here.
     function clearUserScopedUi(){
       state.assistantId='';
       // Do not let a previous account's project cards survive while the
@@ -584,16 +592,55 @@ ADMIN_HTML = r'''<!doctype html>
     // The authenticated header is refreshed after loadAll().finally(()=>{paintCurrentUser();syncCurrentUser()}).
     // Keep the legacy rendering work; the final atomic controller below
     // serializes its remaining wrappers and commits the requested locale.
-    const legacyLocaleSetLanguage=setLanguage;
+    // Commit locale changes atomically.  The original bilingual setter was
+    // still called for every request, so selecting Turkish/Arabic/etc. first
+    // rendered the Persian shell and only then changed `state.language`; that
+    // produced mixed copy, direction flicker and an unnecessary second full
+    // render.  The canonical setter below updates state, direction and copy
+    // in one pass for all supported locales.
+    let localeRenderInFlight=false;
     setLanguage=function(lang){
       const requested=supportedLanguages[lang]?lang:'en';
-      const result=legacyLocaleSetLanguage(requested);
-      state.language=requested;
-      localStorage.setItem('research_bee_language',requested);
-      document.documentElement.lang=requested;
-      document.documentElement.dir=supportedLanguages[requested]?.dir||'ltr';
-      document.querySelectorAll('[data-language-choice]').forEach(x=>x.classList.toggle('active',x.dataset.languageChoice===requested));
-      return result;
+      if(localeRenderInFlight&&state.language===requested)return requested;
+      localeRenderInFlight=true;
+      document.documentElement.classList.add('locale-switching');
+      try{
+        state.language=requested;
+        localStorage.setItem('research_bee_language',requested);
+        document.documentElement.lang=requested;
+        document.documentElement.dir=supportedLanguages[requested]?.dir||'ltr';
+        document.querySelectorAll('[data-language-choice]').forEach(x=>x.classList.toggle('active',x.dataset.languageChoice===requested));
+        document.querySelectorAll('[data-label-fa][data-label-en]').forEach(x=>{
+          const source=x.dataset.labelFa||x.dataset.labelEn||'';
+          const value=translatedCopy(source)||x.dataset.labelEn||source;
+          const text=x.querySelector('.nav-text');
+          if(text)text.textContent=value;else x.textContent=value;
+        });
+        const copy={
+          loginTitle:localeLabel('ورود به مرکز کنترل','Sign in to control center'),
+          loginSubtitle:localeLabel('مدیریت دستیارهای تحقیقات بازار','Manage your market research assistants'),
+          loginUser:localeLabel('نام کاربری','Username'),loginPass:localeLabel('رمز عبور','Password'),
+          loginSubmit:localeLabel('ورود امن','Secure sign in'),logout:localeLabel('خروج','Sign out'),
+          pageContext:localeLabel('مرکز کنترل تحقیقات بازار','Market research control center')
+        };
+        if($('loginTitle'))$('loginTitle').textContent=copy.loginTitle;
+        if($('loginSubtitle'))$('loginSubtitle').textContent=copy.loginSubtitle;
+        if($('loginUser'))$('loginUser').placeholder=copy.loginUser;
+        if($('loginPass'))$('loginPass').placeholder=copy.loginPass;
+        if($('loginSubmit'))$('loginSubmit').textContent=copy.loginSubmit;
+        if($('logoutBtn'))$('logoutBtn').textContent=copy.logout;
+        if($('pageContext'))$('pageContext').textContent=copy.pageContext;
+        if(!$('app')?.classList.contains('hidden')){
+          renderDashboard();renderQualityReport(state.feedbackReport||{});renderAssistants();renderSources();renderTopics();
+          renderPublications();renderTelegram();renderOperations();renderScheduleGrid();renderChannels();applyRoleVisibility();
+        }
+        applyLucideIcons();translateStaticCopy();translateRequestedOverviewCopy();
+        updateHeaderTitle(document.querySelector('.nav-btn.active')?.dataset.view||'assistants');
+        return requested;
+      }finally{
+        localeRenderInFlight=false;
+        requestAnimationFrame(()=>{document.documentElement.classList.remove('locale-switching');document.documentElement.classList.remove('locale-pending')});
+      }
     };
     function updateHeaderTitle(name){const faLabels={overview:'نمای کلی',assistants:'دستیارها',content:'لیست خبرها',businesses:'کسب‌وکار',sources:'رسانه',topics:'موضوع',schedule:'کانال','template-content':'محتوا',team:'امنیت',quality:'بازخورد',operations:'عملیات',account:'حساب کاربری'};const title=$('pageTitle');if(!title)return;const key=faLabels[name]||name||'نمای کلی';title.dataset.faText=faLabels[name]||key;title.dataset.view=name||'overview';title.textContent=translatedCopy(key)}
     function setView(name){const canViewOperations=state.currentUser?.role==='owner'||state.currentUser?.is_owner===true;if(name==='operations'&&!canViewOperations)name='overview';document.querySelectorAll('.view').forEach(x=>x.classList.toggle('active',x.id==='view-'+name));document.querySelectorAll('.nav-btn').forEach(x=>x.classList.toggle('active',x.dataset.view===name));updateHeaderTitle(name);closeSidebar();if(name==='team')loadUsers();if(name==='quality')loadQuality();if(name==='businesses')refreshBusinessUi();if(name==='businesses')setTimeout(()=>window.loadKnowledge?.(),0);if(name==='account')setTimeout(()=>window.loadPrivacy?.(),0);if(name==='content')setTimeout(()=>window.loadNewsViews?.(),0);if(name==='operations')setTimeout(()=>window.loadIncidents?.(),0)}
@@ -770,15 +817,20 @@ ADMIN_HTML = r'''<!doctype html>
     function ensureWorkspaceActions(){
       document.querySelector('#workspaceSelect option[value=""]')?.remove();
       if(!state.assistantId&&state.assistants.length){const preferred=state.assistants.find(x=>x.id==='00000000-0000-0000-0000-000000000001')||state.assistants[0];state.assistantId=preferred.id;localStorage.setItem('research_bee_workspace',state.assistantId);loadAll();return}
-      const sourceActions=document.querySelector('#view-sources .page-head .actions');ensureButton(sourceActions,'addSourceBtn','＋ افزودن رسانه',openCreateSourceModal,'primary');$('addSourceBtn').onclick=openCreateSourceModal;if($('sourceSuggestionBtn')){$('sourceSuggestionBtn').textContent=state.language==='en'?'Suggest media':'پیشنهاد رسانه';$('sourceSuggestionBtn').onclick=openSourceSuggestionsModal}loadSourceSuggestions();
-      ensureButton(sourceActions,'addPublicSocialSourceBtn',state.language==='en'?'＋ Public social source':'＋ منبع اجتماعی عمومی',openPublicSocialSourceModal,'');if($('addPublicSocialSourceBtn')){$('addPublicSocialSourceBtn').onclick=openPublicSocialSourceModal;$('addPublicSocialSourceBtn').textContent=state.language==='en'?'＋ Public social source':'＋ منبع اجتماعی عمومی'}
-      const topicActions=document.querySelector('#view-topics .page-head .actions');ensureButton(topicActions,'addTopicBtn','＋ افزودن موضوع',openCreateTopicModal,'primary');$('addTopicBtn').onclick=openCreateTopicModal;
+      const sourceActions=document.querySelector('#view-sources .page-head .actions');ensureButton(sourceActions,'addSourceBtn','＋ افزودن رسانه',openCreateSourceModal,'primary');if($('addSourceBtn')?.dataset.adminActionBound!=='1')$('addSourceBtn').onclick=openCreateSourceModal;if($('sourceSuggestionBtn')){$('sourceSuggestionBtn').textContent=state.language==='en'?'Suggest media':'پیشنهاد رسانه';if($('sourceSuggestionBtn')?.dataset.adminActionBound!=='1')$('sourceSuggestionBtn').onclick=openSourceSuggestionsModal}loadSourceSuggestions();
+      ensureButton(sourceActions,'addPublicSocialSourceBtn',state.language==='en'?'＋ Public social source':'＋ منبع اجتماعی عمومی',openPublicSocialSourceModal,'');if($('addPublicSocialSourceBtn')){if($('addPublicSocialSourceBtn')?.dataset.adminActionBound!=='1')$('addPublicSocialSourceBtn').onclick=openPublicSocialSourceModal;$('addPublicSocialSourceBtn').textContent=state.language==='en'?'＋ Public social source':'＋ منبع اجتماعی عمومی'}
+      const topicActions=document.querySelector('#view-topics .page-head .actions');ensureButton(topicActions,'addTopicBtn','＋ افزودن موضوع',openCreateTopicModal,'primary');if($('addTopicBtn')?.dataset.adminActionBound!=='1')$('addTopicBtn').onclick=openCreateTopicModal;
       const scheduleHead=document.querySelector('#view-schedule .page-head');if(scheduleHead&&!scheduleHead.querySelector('.actions')){const a=document.createElement('div');a.className='actions';scheduleHead.appendChild(a)}const scheduleActions=document.querySelector('#view-schedule .page-head .actions');if(scheduleActions&&!$('templateBuilderBtn')){const b=document.createElement('button');b.id='templateBuilderBtn';b.className='btn';scheduleActions.appendChild(b)}if($('templateBuilderBtn')){$('templateBuilderBtn').textContent=state.language==='en'?'Edit content template':'ویرایش قالب محتوا';$('templateBuilderBtn').onclick=openTemplateBuilder}
       const channelEditButton=document.querySelector('#channelSettingsCard [data-edit-telegram]');if(channelEditButton)channelEditButton.onclick=openTelegramSettingsModal;
       const teamActions=document.querySelector('#view-team .page-head .actions');document.getElementById('changePasswordBtn')?.remove();
       document.querySelectorAll('#assistantGrid .assistant-card').forEach((card,index)=>{const item=state.assistants[index];if(!item||!canDeleteAssistant(item)||card.querySelector('.delete-assistant-btn'))return;const b=document.createElement('button');b.dataset.assistantId=item.id;b.className='btn small danger delete-assistant-btn';b.textContent='حذف';b.onclick=()=>deleteAssistantFromUi(item.id,item.name);card.querySelector('.card-actions')?.appendChild(b)});
       document.querySelectorAll('#sourceRows tr').forEach(row=>{const text=row.firstElementChild?.textContent||'';const item=state.sources.find(x=>text.includes(x.source_key));if(!item||row.querySelector('.delete-source-btn'))return;const b=document.createElement('button');b.className='btn small danger delete-source-btn';b.textContent='حذف';b.onclick=()=>deleteSourceFromUi(item.id);row.lastElementChild?.firstElementChild?.prepend(b)});
       document.querySelectorAll('#topicRows tr').forEach(row=>{const text=row.firstElementChild?.textContent||'';const item=state.topics.find(x=>text.includes(x.topic_key));if(!item||row.querySelector('.delete-topic-btn'))return;const b=document.createElement('button');b.className='btn small danger delete-topic-btn';b.textContent='حذف';b.onclick=()=>deleteTopicFromUi(item.id);row.lastElementChild?.firstElementChild?.prepend(b)});
+      // Some controls are created by the legacy renderers above, after the
+      // capability layer has performed its first binding pass.  Hand those
+      // known actions back explicitly to the stable handler rather than
+      // relying on a global DOM observer (which previously made pages slow).
+      window.__researchBeeReconcileWorkspaceActions?.();
     }
     function openSourceModal(id){const x=state.sources.find(a=>a.id===id)||{};modal('ویرایش رسانه',`<div class="form-grid"><div class="field"><label>نام رسانه</label><input id="fSourceName" value="${esc(x.name||'')}"></div><div class="field"><label>نوع اتصال</label><select id="fSourceAdapter"><option value="rss" ${x.adapter==='rss'?'selected':''}>RSS</option><option value="html" ${x.adapter==='html'?'selected':''}>HTML</option><option value="json" ${x.adapter==='json'?'selected':''}>JSON</option></select></div><div class="field"><label>صفحه اصلی</label><input id="fSourceHome" type="url" value="${esc(x.homepage_url||'')}"></div><div class="field"><label>RSS / ورودی دریافت</label><input id="fSourceFeed" type="url" value="${esc(x.fetch_url||'')}"></div><div class="field"><label>اولویت (۱ تا ۵)</label><input id="fPriority" type="number" min="1" max="5" value="${esc(x.priority??1)}"></div><div class="field"><label>فاصله درخواست (ثانیه)</label><input id="fRate" type="number" min="1" value="${esc(x.rate_limit_seconds??60)}"></div><div class="field full"><label>یادداشت دسترسی</label><textarea id="fSourceNotes">${esc(x.access_notes||'')}</textarea></div></div>`,async()=>{try{await req('/admin/api/sources/'+id,{method:'PATCH',body:JSON.stringify({name:$('fSourceName').value.trim(),homepage_url:$('fSourceHome').value.trim(),fetch_url:$('fSourceFeed').value.trim(),adapter:$('fSourceAdapter').value,priority:Number($('fPriority').value),rate_limit_seconds:Number($('fRate').value),access_notes:$('fSourceNotes').value.trim()})});closeModal();toast('رسانه ذخیره شد');loadAll()}catch(err){toast(friendlyError(err.message),true)}})}
     // Keep the historical helper name for compatibility, but make its output
@@ -961,7 +1013,7 @@ ADMIN_HTML = r'''<!doctype html>
       }catch(error){console.error('overview refresh failed',error)}
     }
     const baseLoadAll3=loadAll;loadAll=async function(){try{await baseLoadAll3()}finally{await refreshOverviewKpis()}}
-    function applyRoleVisibility(){const role=state.currentUser?.role||'',owner=role==='owner'||state.currentUser?.is_owner===true,projectAdmin=owner||role==='admin'||role==='assistant_admin',catalogWriter=owner||role==='admin'||role==='assistant_admin'||role==='editor';const primaryRoleVisibility=[['newAssistantBtn',owner],['newUserBtn',projectAdmin],['healthProbeBtn',owner],['operations',owner]];[...primaryRoleVisibility,['templateBuilderBtn',owner],['sourceSuggestionBtn',catalogWriter]].forEach(([id,visible])=>{const el=id==='operations'?document.querySelector('[data-view="operations"]'):$(id);if(el)el.classList.toggle('hidden',!visible)});if(!owner&&document.getElementById('view-operations')?.classList.contains('active'))setView('overview');document.querySelectorAll('.delete-assistant-btn').forEach(el=>{const item=state.assistants.find(x=>x.id===el.dataset.assistantId);el.classList.toggle('hidden',!canDeleteAssistant(item))})}
+    function applyRoleVisibility(){const role=state.currentUser?.role||'',owner=role==='owner'||state.currentUser?.is_owner===true,projectAdmin=owner||role==='admin'||role==='assistant_admin',catalogWriter=owner||role==='admin'||role==='assistant_admin'||role==='editor';const primaryRoleVisibility=[['newAssistantBtn',owner],['newUserBtn',projectAdmin],['healthProbeBtn',owner],['operations',owner]];[...primaryRoleVisibility,['templateBuilderBtn',owner],['sourceSuggestionBtn',catalogWriter],['addPublicSocialSourceBtn',catalogWriter],['addSourceBtn',catalogWriter],['addTopicBtn',catalogWriter]].forEach(([id,visible])=>{const el=id==='operations'?document.querySelector('[data-view="operations"]'):$(id);if(el)el.classList.toggle('hidden',!visible)});if(!owner&&document.getElementById('view-operations')?.classList.contains('active'))setView('overview');document.querySelectorAll('.delete-assistant-btn').forEach(el=>{const item=state.assistants.find(x=>x.id===el.dataset.assistantId);el.classList.toggle('hidden',!canDeleteAssistant(item))})}
     loadAll=async function(){
       const errors=[],safe=async(path,fallback)=>{try{return await req(path)}catch(err){const message=String(err?.message||'');if(!message.includes('no longer current')&&!message.includes('stale auth response'))errors.push(path+': '+friendlyError(message));return fallback}};
       // Metadata and dependency health are not scoped to a project. Start
@@ -1295,6 +1347,7 @@ ADMIN_HTML = r'''<!doctype html>
        separate owner-only queue for every submitted ticket. The same PATCH
        route is used, so RBAC remains enforced server-side. */
     (function(){
+      if(window.__beeCanonicalSupport)return;
       const copy={
         myTitle:{fa:'تیکت‌ها',en:'Tickets',tr:'Talepler',ar:'التذاكر',it:'Ticket',es:'Tickets',de:'Tickets',fr:'Tickets'},
         myHint:{fa:'تیکت‌هایی که خودتان ثبت کرده‌اید و آخرین وضعیت آن‌ها.',en:'Tickets you submitted and their latest status.',tr:'Gönderdiğiniz talepler ve son durumları.',ar:'التذاكر التي أرسلتموها وآخر حالاتها.',it:'I ticket inviati e il loro stato più recente.',es:'Tus tickets y su estado más reciente.',de:'Ihre Tickets und ihr aktueller Status.',fr:'Vos tickets et leur dernier statut.'},
@@ -1409,7 +1462,7 @@ ADMIN_HTML = r'''<!doctype html>
       const priorLanguage=setLanguage;
       setLanguage=function(lang){priorLanguage(lang);syncPublicationHeaders()};
       const version=document.getElementById('sidebarVersion');
-      if(version&&version.textContent.includes('در حال بارگذاری'))version.textContent='v3.29.22';
+      if(version&&version.textContent.includes('در حال بارگذاری'))version.textContent='v3.30.1';
     })();
   </script>
   <script>
@@ -1601,7 +1654,7 @@ ADMIN_HTML = r'''<!doctype html>
     // standalone Security navigation item is removed; the old route remains
     // a safe internal alias for cached links and keyboard shortcuts.
     (function(){
-    const version=document.getElementById('sidebarVersion');if(version)version.textContent='v3.29.22';
+    const version=document.getElementById('sidebarVersion');if(version)version.textContent='v3.30.1';
       const removeStandaloneSecurity=()=>document.querySelector('[data-view="team"]')?.remove();
       const moveSecurity=()=>{
         const account=document.getElementById('view-account'),team=document.getElementById('view-team');
@@ -1643,7 +1696,7 @@ ADMIN_HTML = r'''<!doctype html>
       });
       sync();
       const version=document.getElementById('sidebarVersion');
-      if(version)version.textContent='v3.29.22';
+      if(version)version.textContent='v3.30.1';
     })();
   </script>
   <style>
@@ -1948,6 +2001,9 @@ ADMIN_HTML = r'''<!doctype html>
         const menu=document.getElementById('sidebarAccountMenu');if(menu){const labelsByAction={account:copy.account,security:copy.security,support:copy.support,logout:copy.logout};Object.entries(labelsByAction).forEach(([action,label])=>{const target=menu.querySelector('[data-account-action="'+action+'"] [data-account-label]');if(target)target.textContent=label})}
         moveLegacyAccountNav();
       }
+      // Other account surfaces (such as the owner avatar editor) can update
+      // the identity without rebuilding the whole header.
+      window.__researchBeeRefreshSidebarAccount=ensureAccountMenu;
       const applySharedHeader=()=>{document.body.classList.toggle('assistant-header-reference',Boolean(state.currentUser));ensureAccountMenu()};
       const existingSetView=window.setView;if(typeof existingSetView==='function')window.setView=function(name){const result=existingSetView(name);applySharedHeader();return result};
       const existingSetLanguage=window.setLanguage;if(typeof existingSetLanguage==='function')window.setLanguage=function(language){const result=existingSetLanguage(language);applySharedHeader();return result};
@@ -1966,20 +2022,17 @@ ADMIN_HTML = r'''<!doctype html>
   </style>
   <script>
     // MI-141: add the avatar editor only on the owner account page. The
-    // server stores a bounded image data URL in account preferences, so no
-    // extra media service or public upload endpoint is required.
+    // sidebar avatar is deliberately only an account-menu trigger.  Earlier
+    // code turned the same element into a hidden file-input trigger, which
+    // competed with the menu click handler and left a blank avatar/menu in
+    // compact navigation.
     (function(){
-      const bindSidebarAvatar=()=>{
-        const avatar=document.getElementById('sidebarAccountAvatar');if(!avatar||!state.currentUser||avatar.dataset.avatarBound)return;
-        avatar.dataset.avatarBound='true';avatar.title=state.language==='en'?'Change avatar':'تغییر آواتار';const input=document.createElement('input');input.type='file';input.accept='image/png,image/jpeg,image/webp,image/gif';input.hidden=true;input.id='sidebarAvatarFile';avatar.parentElement?.appendChild(input);avatar.style.cursor='pointer';avatar.addEventListener('click',()=>input.click());input.addEventListener('change',()=>{const file=input.files?.[0];if(!file)return;if(file.size>350000){toast(state.language==='en'?'Choose an image smaller than 350 KB.':'تصویری کوچک‌تر از ۳۵۰ کیلوبایت انتخاب کنین.',true);input.value='';return}const reader=new FileReader();reader.onload=async()=>{try{const value=String(reader.result||'');await req('/admin/api/account/preferences',{method:'PUT',body:JSON.stringify({avatar_url:value})});state.currentUser.avatar_url=value;avatar.innerHTML='<img alt="" src="'+value+'">';const preview=document.getElementById('avatarSettingsPreview');if(preview)preview.innerHTML='<img alt="" src="'+value+'">';toast(state.language==='en'?'Avatar saved':'آواتار ذخیره شد')}catch(err){toast(friendlyError(err.message),true)}};reader.readAsDataURL(file)});
-      };
       const renderAvatarControl=()=>{
-        bindSidebarAvatar();
         if(!state.currentUser||!(state.currentUser.is_owner||state.currentUser.role==='owner'))return;
         const target=document.querySelector('#view-account .section-card');if(!target||document.getElementById('avatarSettings'))return;
         const username=String(state.currentUser.username||'—'),image=state.currentUser.avatar_url;
         const block=document.createElement('div');block.id='avatarSettings';block.className='avatar-settings';block.innerHTML='<div class="avatar-settings-preview" id="avatarSettingsPreview">'+(image?'<img alt="" src="'+image+'">':(username==='—'?'—':username.slice(0,1).toUpperCase()))+'</div><div><b>'+(state.language==='en'?'Profile avatar':'تصویر آواتار')+'</b><div class="muted" style="margin-top:4px">'+(state.language==='en'?'Shown next to your name in the sidebar.':'در کنار نام شما در منوی کناری نمایش داده می‌شود.')+'</div><input id="avatarFile" type="file" accept="image/png,image/jpeg,image/webp,image/gif" style="margin-top:8px"></div>';
-        target.appendChild(block);const input=block.querySelector('#avatarFile');input.addEventListener('change',()=>{const file=input.files?.[0];if(!file)return;if(file.size>350000){toast(state.language==='en'?'Choose an image smaller than 350 KB.':'تصویری کوچک‌تر از ۳۵۰ کیلوبایت انتخاب کنین.',true);input.value='';return}const reader=new FileReader();reader.onload=async()=>{try{const value=String(reader.result||'');await req('/admin/api/account/preferences',{method:'PUT',body:JSON.stringify({avatar_url:value})});state.currentUser.avatar_url=value;const preview=document.getElementById('avatarSettingsPreview');if(preview)preview.innerHTML='<img alt="" src="'+value+'">';const side=document.getElementById('sidebarAccountAvatar');if(side)side.innerHTML='<img alt="" src="'+value+'">';toast(state.language==='en'?'Avatar saved':'آواتار ذخیره شد')}catch(err){toast(friendlyError(err.message),true)}};reader.readAsDataURL(file)});
+        target.appendChild(block);const input=block.querySelector('#avatarFile');input.addEventListener('change',()=>{const file=input.files?.[0];if(!file)return;if(file.size>350000){toast(state.language==='en'?'Choose an image smaller than 350 KB.':'تصویری کوچک‌تر از ۳۵۰ کیلوبایت انتخاب کنین.',true);input.value='';return}const reader=new FileReader();reader.onload=async()=>{try{const value=String(reader.result||'');await req('/admin/api/account/preferences',{method:'PUT',body:JSON.stringify({avatar_url:value})});state.currentUser.avatar_url=value;const preview=document.getElementById('avatarSettingsPreview');if(preview)preview.innerHTML='<img alt="" src="'+value+'">';window.__researchBeeRefreshSidebarAccount?.();toast(state.language==='en'?'Avatar saved':'آواتار ذخیره شد')}catch(err){toast(friendlyError(err.message),true)}};reader.readAsDataURL(file)});
       };
       // Avatar settings only depends on the account surface.  Watching the
       // entire document caused every dashboard repaint to run this probe.
@@ -2058,6 +2111,7 @@ ADMIN_HTML = r'''<!doctype html>
     })();
     /* MI-164: owner-routed support inbox. The view is created lazily so existing layouts remain stable. */
     (()=>{
+      if(window.__beeCanonicalSupport)return;
       const copy=()=>{const t=(fa,en)=>localeLabel(fa,en),normal={fa:'عادی',en:'Normal',tr:'Normal',ar:'عادي',it:'Normale',es:'Normal',de:'Normal',fr:'Normale'}[state.language]||'Normal';return {title:t('پشتیبانی','Support'),intro:t('برای مالک حساب تیکت ثبت کنین؛ پاسخ و وضعیت همین‌جا مدیریت می‌شود.','Create a ticket for the account owner; replies and status are managed here.'),newTitle:t('تیکت جدید','New ticket'),subject:t('موضوع تیکت','Ticket topic'),body:t('شرح درخواست یا مشکل','Describe the request or issue'),priority:t('اولویت','Priority'),submit:t('ارسال تیکت','Send ticket'),refresh:t('بازخوانی','Refresh'),empty:t('هنوز تیکتی ثبت نشده است.','No tickets yet.'),reply:t('پاسخ مالک','Owner reply'),status:t('وضعیت','Status'),save:t('ذخیره','Save'),open:t('باز','Open'),in_progress:t('در حال پیگیری','In progress'),waiting_user:t('منتظر پاسخ کاربر','Waiting for user'),resolved:t('حل‌شده','Resolved'),closed:t('بسته‌شده','Closed'),low:t('کم','Low'),normal,high:t('زیاد','High'),urgent:t('فوری','Urgent')}};
       const ensureNav=()=>{const legacyMenu=document.getElementById('sidebarAccountMenu');if(legacyMenu){document.querySelectorAll('.nav-btn[data-view="support"]').forEach(x=>x.remove());return}const nav=document.querySelector('.nav-group:last-of-type');if(nav&&!nav.querySelector('[data-view="support"]')){const b=document.createElement('button');b.className='nav-btn';b.dataset.view='support';b.dataset.labelFa='پشتیبانی';b.dataset.labelEn='Support';b.innerHTML='<span class="nav-icon" data-icon="life-buoy" aria-hidden="true"></span><span class="nav-text">'+copy().title+'</span>';nav.appendChild(b);b.onclick=()=>setView('support');applyLucideIcons()}};
       const ensureView=()=>{if(document.getElementById('view-support'))return;const root=document.querySelector('.content');if(!root)return;const s=document.createElement('section');s.id='view-support';s.className='view';s.innerHTML='<div class="page-head"><div><h2 data-support-title></h2><p data-support-intro></p></div><button class="btn" data-support-refresh type="button"></button></div><div class="grid two-col"><div class="card section-card"><div class="section-title"><h3 data-support-new></h3></div><form data-support-form><div class="field"><label data-support-subject-label></label><input data-support-subject maxlength="200" required></div><div class="field"><label data-support-body-label></label><textarea data-support-body rows="6" maxlength="5000" required></textarea></div><div class="field"><label data-support-priority-label></label><select data-support-priority><option value="low"></option><option value="normal" selected></option><option value="high"></option><option value="urgent"></option></select></div><button class="btn primary" data-support-submit type="submit"></button></form></div><div class="card section-card"><div class="section-title"><h3 data-support-title-list></h3><span class="muted" data-support-count></span></div><div data-support-list class="detail-list"><div class="empty"></div></div></div></div>';root.appendChild(s);s.querySelector('[data-support-form]').onsubmit=createTicket;s.querySelector('[data-support-refresh]').onclick=loadTickets};
@@ -2074,6 +2128,7 @@ ADMIN_HTML = r'''<!doctype html>
        ticket cards). It decorates the existing API-backed view without
        changing the ticket contract or owner permissions. */
     (function(){
+      if(window.__beeCanonicalSupport)return;
       const text={
         all:{fa:'همه تیکت‌ها',en:'All tickets',tr:'Tüm talepler',ar:'كل التذاكر',it:'Tutti i ticket',es:'Todos los tickets',de:'Alle Tickets',fr:'Tous les tickets'},
         open:{fa:'باز',en:'Open',tr:'Açık',ar:'مفتوح',it:'Aperto',es:'Abierto',de:'Offen',fr:'Ouvert'},
@@ -3420,7 +3475,10 @@ ADMIN_HTML = r'''<!doctype html>
       }
       window.__researchBeeFinalHardening=normalize;normalize();
       let queued=false;const schedule=()=>{if(queued)return;queued=true;requestAnimationFrame(()=>{queued=false;normalize()})};
-      new MutationObserver(schedule).observe(document.body,{subtree:true,childList:true});
+      // Observe only the authenticated app root.  Watching document.body made
+      // every toast/modal mutation trigger a full-page normalization pass.
+      const mutationRoot=document.getElementById('app')||document.body;
+      new MutationObserver(schedule).observe(mutationRoot,{subtree:true,childList:true});
     })();
   </script>
   <style id="admin-button-pattern-v2">
@@ -3616,35 +3674,31 @@ ADMIN_HTML = r'''<!doctype html>
           const actions=doc.createElement('div');actions.className='actions';head.appendChild(actions);actions.appendChild(button);
         });
       };
-      // The action buttons are server-rendered before the selected workspace
-      // is resolved.  Bind them once, recover the first authorized workspace
-      // on an early click, and then call the real action.  This prevents a
-      // click during the first paint from becoming a silent no-op and keeps
-      // Media/Topics symmetric with every other page-head action.
-      const actionHandlers={addSourceBtn:'openCreateSourceModal',addTopicBtn:'openCreateTopicModal',addPublicSocialSourceBtn:'openPublicSocialSourceModal',sourceSuggestionBtn:'openSourceSuggestionsModal',sourceProbeBtn:'probeSelectedSources'};
+      // Catalog-create controls use one document-level capture handler below.
+      // Unlike a listener attached to the button itself, that handler survives
+      // locale repaints, legacy redraws, and replacement of page-head actions.
+      const actionHandlers={addPublicSocialSourceBtn:'openPublicSocialSourceModal',sourceSuggestionBtn:'openSourceSuggestionsModal',sourceProbeBtn:'probeSelectedSources'};
+      const catalogHandlers={source:'openCreateSourceModal',topic:'openCreateTopicModal'};
       const ensureWorkspace=async()=>{
         // A workspace id can survive in localStorage across sign-out or an
-        // account switch. Never treat that stale id as authorized; validate
-        // it against the list returned for the current account first.
-        const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
-        for(let attempt=0;attempt<30;attempt++){
+        // account switch. Resolve it once from the data already loaded, then
+        // make at most one explicit refresh.  Retrying for three seconds from
+        // a click handler turned an ordinary UI action into a silent no-op.
+        const resolve=()=>{
           const known=(state.assistants||[]).filter(item=>item?.id);
           const selectedId=String(doc.getElementById('workspaceSelect')?.value||'').trim();
           const current=known.find(item=>String(item.id)===String(state.assistantId));
-          if(current?.id)return true;
-          const selected=known.find(item=>String(item.id)===selectedId);
-          const candidate=selected||known[0];
-          if(candidate?.id){
-            state.assistantId=candidate.id;
-            localStorage.setItem('research_bee_workspace',candidate.id);
-            return true
-          }
-          if(typeof window.loadAll==='function'){
-            try{await window.loadAll()}catch(_){ }
-          }
-          if(attempt<29)await pause(100)
+          const candidate=current||known.find(item=>String(item.id)===selectedId)||known[0];
+          if(!candidate?.id)return false;
+          state.assistantId=candidate.id;
+          localStorage.setItem('research_bee_workspace',candidate.id);
+          return true
+        };
+        if(resolve())return true;
+        if(typeof window.loadAll==='function'){
+          try{await window.loadAll()}catch(_){return false}
         }
-        return false
+        return resolve()
       };
       const invokeAction=async(button,fnName,event)=>{
         if(button.dataset.adminActionBusy==='1')return;
@@ -3653,30 +3707,84 @@ ADMIN_HTML = r'''<!doctype html>
           if(!(await ensureWorkspace())){toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return}
           const fn=window[fnName];if(typeof fn!=='function'){toast(state.language==='en'?'This action is temporarily unavailable.':'این عملیات موقتاً در دسترس نیست.',true);return}
           await fn.call(button,event)
+        }catch(error){
+          // An action used to fail silently here because this async handler is
+          // deliberately fire-and-forget.  Keep the page interactive and give
+          // the operator a localized, actionable error instead of a button
+          // that appears to have done nothing.
+          const detail=typeof window.friendlyError==='function'?window.friendlyError(error?.message||String(error||'')):(state.language==='en'?'The action could not be opened. Please try again.':'عملیات باز نشد؛ دوباره تلاش کنین.');
+          toast(detail|| (state.language==='en'?'The action could not be opened. Please try again.':'عملیات باز نشد؛ دوباره تلاش کنین.'),true);
+          // Report only the coarse active view. Never transmit exception
+          // text, form values, URLs, or customer data.
+          try{reportOverviewClientError('window')}catch(_){}
         }finally{button.disabled=false;button.dataset.adminActionBusy='0';button.removeAttribute('aria-busy')}
       };
       const prepareActionButtons=()=>Object.entries(actionHandlers).forEach(([id,fnName])=>{
         const button=doc.getElementById(id);if(!button)return;button.type='button';
+        // Legacy renderers may assign an onclick property after a redraw.
+        // Reconciliation always removes it, leaving exactly one event path.
+        button.onclick=null;
+        if(button.dataset.adminActionBound==='1')return;
         button.dataset.adminActionBound='1';
-        // Re-assign on every reconciliation: legacy renderers can attach an
-        // inline/direct handler after the first pass. The wrapper is the
-        // single entry point and remains idempotent through adminActionBusy.
-        button.onclick=event=>invokeAction(button,fnName,event)
+        // Bind once on the control itself. The explicit reconciliation above
+        // clears later legacy assignments without a document-wide observer.
+        button.addEventListener('click',event=>{
+          event.preventDefault();
+          void invokeAction(button,fnName,event)
+        })
       });
-      doc.addEventListener('click',event=>{
-        const button=event.target?.closest?.('button[id]'),fnName=button&&actionHandlers[button.id];
-        if(!button||!fnName)return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        // Always use the guarded wrapper, even if a legacy layer overwrote
-        // `onclick` after the initial pass. Capture + stopImmediatePropagation
-        // prevents duplicate invocation by old delegated listeners.
-        invokeAction(button,fnName,event);
-      },true);
-      const run=()=>{normalizePageActions();prepareActionButtons()};
+      const prepareCatalogButtons=()=>{
+        [['addSourceBtn','source'],['addTopicBtn','topic']].forEach(([id,kind])=>{
+          const button=doc.getElementById(id);if(!button)return;
+          button.type='button';button.dataset.catalogCreate=kind;
+          // Remove every property handler installed by older render layers.
+          // The stable capture listener below is the only catalog-create path.
+          button.onclick=null;button.disabled=false;button.removeAttribute('aria-busy');
+          delete button.dataset.adminActionBound;delete button.dataset.adminActionBusy
+        })
+      };
+      const resolveCatalogWorkspace=()=>{
+        const known=(state.assistants||[]).filter(item=>item?.id);
+        const selectedId=String(doc.getElementById('workspaceSelect')?.value||'').trim();
+        const candidate=known.find(item=>String(item.id)===selectedId)||known.find(item=>String(item.id)===String(state.assistantId))||known[0];
+        const assistantId=String(candidate?.id||selectedId||'').trim();
+        if(!assistantId)return false;
+        state.assistantId=assistantId;localStorage.setItem('research_bee_workspace',assistantId);return true
+      };
+      const handleCatalogCreate=event=>{
+        const origin=event.target instanceof Element?event.target:event.target?.parentElement;
+        const button=origin?.closest?.('[data-catalog-create]');
+        if(!button||!doc.contains(button))return;
+        // Run before target/bubble listeners so obsolete handlers cannot
+        // cancel, duplicate, or silently swallow this interaction.
+        event.preventDefault();event.stopImmediatePropagation();
+        if(button.dataset.catalogCreateBusy==='1')return;
+        button.dataset.catalogCreateBusy='1';
+        try{
+          if(!resolveCatalogWorkspace()){
+            toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return
+          }
+          const fnName=catalogHandlers[button.dataset.catalogCreate],fn=window[fnName];
+          if(typeof fn!=='function')throw Error(state.language==='en'?'This action is temporarily unavailable.':'این عملیات موقتاً در دسترس نیست.');
+          fn.call(button,event);
+          const modalRoot=doc.getElementById('modalRoot');
+          if(!modalRoot||modalRoot.classList.contains('hidden'))throw Error(state.language==='en'?'The form could not be opened. Please try again.':'فرم باز نشد؛ دوباره تلاش کنین.')
+        }catch(error){
+          const detail=typeof window.friendlyError==='function'?window.friendlyError(error?.message||String(error||'')):String(error?.message||error||'');
+          toast(detail||(state.language==='en'?'The form could not be opened. Please try again.':'فرم باز نشد؛ دوباره تلاش کنین.'),true);
+          try{reportOverviewClientError('catalog_action')}catch(_){}
+        }finally{button.dataset.catalogCreateBusy='0'}
+      };
+      doc.addEventListener('click',handleCatalogCreate,true);
+      const run=()=>{normalizePageActions();prepareCatalogButtons();prepareActionButtons()};
       run();
-      new MutationObserver(run).observe(doc.body,{childList:true,subtree:true});
-      window.__researchBeeAdminCapabilityCleanup={run,invokeAction};
+      // Workspace renderers call ensureWorkspaceActions after replacing rows
+      // or page actions.  Observing every DOM insertion here made a normal
+      // table refresh repeatedly reconcile the full document and was a
+      // measurable source of slow pages.  Keep one explicit reconciliation
+      // hook for those renderers instead of a global observer.
+      window.__researchBeeReconcileWorkspaceActions=run;
+      window.__researchBeeAdminCapabilityCleanup={run,invokeAction,handleCatalogCreate};
     })();
   </script>
   <style id="sidebar-collapse-layout-v1">

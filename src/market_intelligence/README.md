@@ -1,4 +1,4 @@
-# Dotin Market Intelligence
+# Bee Researcher
 
 Bee CFO v3.5.1 adds the approved post-phase-one governance layer: measurable
 shadow-pilot runs, direct-source decisions, attention budgets, staged USD/BTC
@@ -126,7 +126,8 @@ head for v1.0.0 is `0003_full_pipeline`.
 
 Private-network operations endpoints:
 
-- `GET /health`, `/meta`, `/metrics`, `/sources`, `/scheduler/status`
+- `GET /health` (liveness), `/ready` (traffic readiness), `/meta`, `/metrics`,
+  `/sources`, `/scheduler/status`
 - `POST /ingestion/run`, `/pipeline/run`, `/relevance/rescore`
 - `POST /analysis/reanalyze-fallbacks?limit=5` (requires the explicit external
   analysis gate and reanalyzes selected preview rows in place)
