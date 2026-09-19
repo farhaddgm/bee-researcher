@@ -39,6 +39,22 @@ class CSPMigrationBudgetTest(unittest.TestCase):
         self.assertIn("cspInlineStyleMap", source)
         self.assertIn("migrateHandler", source)
 
+    def test_runtime_migrator_uses_single_escaped_javascript_patterns(self):
+        source = (Path(__file__).resolve().parents[1] / "app" / "admin_ui.py").read_text(encoding="utf-8")
+        migrator_lines = [
+            line for line in source.splitlines()
+            if "function parseArg" in line or "function migrateHandler" in line
+        ]
+        self.assertEqual(2, len(migrator_lines))
+        joined = "\n".join(migrator_lines)
+        self.assertIn(r"function decodeQuoted(value)", source)
+        self.assertIn(r"value[value.length-1]", joined)
+        self.assertIn(r"/^-?\d+(?:\.\d+)?$/", joined)
+        self.assertIn(r"/^([A-Za-z_$][\w$]*)\(([\s\S]*)\)\s*;?$/", joined)
+        self.assertNotIn(r"[\\w$]", joined)
+        self.assertNotIn(r"\\d", joined)
+        self.assertNotIn(".at(-1)", joined)
+
 
 if __name__ == "__main__":
     unittest.main()
