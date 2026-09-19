@@ -402,11 +402,37 @@ async def client_error_report(
         return Response(status_code=400)
     kind = str(payload.get("kind") or "unknown")[:32]
     view = str(payload.get("view") or "unknown")[:80]
-    if kind not in {"window", "promise", "unknown"}:
+    if kind not in {"window", "promise", "action", "unknown"}:
         kind = "unknown"
+    def safe_token(value: object, limit: int = 64) -> str:
+        token = str(value or "")[:limit]
+        return token if re.fullmatch(r"[A-Za-z0-9_.:-]+", token or "") else "unknown"
+
+    action = safe_token(payload.get("action")) if kind == "action" else ""
+    phase = safe_token(payload.get("phase")) if kind == "action" else ""
+    outcome = safe_token(payload.get("outcome")) if kind == "action" else ""
+    route = safe_token(payload.get("route"), 96) if kind == "action" else ""
+    status = payload.get("status") if kind == "action" else None
+    duration = payload.get("duration_ms") if kind == "action" else None
+    if not isinstance(status, int) or status < 0 or status > 999:
+        status = 0
+    if not isinstance(duration, int) or duration < 0 or duration > 120_000:
+        duration = 0
     # This is client-side telemetry rather than a server fault.  Keep it out of
     # the warning stream so expected browser reports do not mask real incidents.
-    logger.info("authenticated_client_error kind=%s view=%s", kind, view)
+    if kind == "action":
+        logger.info(
+            "authenticated_client_error kind=action view=%s action=%s phase=%s outcome=%s route=%s status=%d duration_ms=%d",
+            view,
+            action,
+            phase,
+            outcome,
+            route,
+            status,
+            duration,
+        )
+    else:
+        logger.info("authenticated_client_error kind=%s view=%s", kind, view)
     return Response(status_code=204)
 
 

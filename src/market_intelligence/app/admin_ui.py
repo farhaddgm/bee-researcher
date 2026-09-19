@@ -224,7 +224,7 @@ ADMIN_HTML = r'''<!doctype html>
     // exception message, stack trace, query text or news content; they can
     // include customer data.  This also keeps the health endpoint strictly
     // for health checks instead of using it as a telemetry sink.
-    const reportOverviewClientError=label=>{try{if(document.getElementById('app')?.classList.contains('hidden'))return;const kind=label==='promise'?'promise':'window',view=document.querySelector('.view.active')?.id?.replace(/^view-/,'')||'unknown',prefix='research_bee_admin_csrf=',cookie=document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith(prefix)),csrf=cookie?decodeURIComponent(cookie.slice(prefix.length)):'';if(!csrf)return;fetch('/admin/api/security/client-error',{method:'POST',credentials:'include',keepalive:true,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify({kind,view})}).catch(()=>{})}catch(_){}};window.addEventListener('error',()=>reportOverviewClientError('window'));window.addEventListener('unhandledrejection',()=>reportOverviewClientError('promise'));
+    const reportOverviewClientError=(label,metadata={})=>{try{if(document.getElementById('app')?.classList.contains('hidden'))return;const token=value=>String(value??'').replace(/[^A-Za-z0-9_.:\/-]/g,'').slice(0,96)||'unknown',actionLabel=token(metadata.action||label),kind=label==='promise'?'promise':label==='action'?'action':'window',view=document.querySelector('.view.active')?.id?.replace(/^view-/,'')||'unknown',prefix='research_bee_admin_csrf=',cookie=document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith(prefix)),csrf=cookie?decodeURIComponent(cookie.slice(prefix.length)):'';if(!csrf)return;const body={kind,view};if(kind==='action'){body.action=actionLabel;body.phase=token(metadata.phase||'unknown');body.outcome=token(metadata.outcome||'error');body.route=token(metadata.route||'unknown');body.status=Number.isFinite(Number(metadata.status))?Math.max(0,Math.min(999,Number(metadata.status))):0;body.duration_ms=Number.isFinite(Number(metadata.duration))?Math.max(0,Math.min(120000,Number(metadata.duration))):0}fetch('/admin/api/security/client-error',{method:'POST',credentials:'include',keepalive:true,headers:{'Content-Type':'application/json','X-CSRF-Token':csrf},body:JSON.stringify(body)}).catch(()=>{})}catch(_){}};window.addEventListener('error',()=>reportOverviewClientError('window'));window.addEventListener('unhandledrejection',()=>reportOverviewClientError('promise'));
     (function(){
       const fa='۰۱۲۳۴۵۶۷۸۹',toFa=value=>String(value).replace(/\d/g,d=>fa[d]);
       const getJSON=async url=>{const response=await fetch(url,{credentials:'include',cache:'no-store'});if(!response.ok)throw new Error(url+' '+response.status);return response.json()};
@@ -510,7 +510,7 @@ ADMIN_HTML = r'''<!doctype html>
     // locale gate active and made the back office look frozen.  Preserve a
     // caller-provided signal (login already has its own shorter timeout), and
     // bound all other requests so safe() can render the rest of the shell.
-    function fetchWithTimeout(url,options={},timeoutMs=20000){if(typeof AbortController==='undefined'||options?.signal)return fetch(url,options);const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);return fetch(url,{...options,signal:controller.signal}).finally(()=>clearTimeout(timer))}
+    function fetchWithTimeout(url,options={},timeoutMs=20000){const started=performance.now(),method=String(options?.method||'GET').toUpperCase(),finish=(status,outcome)=>{try{window.__researchBeeTraceRequest?.(url,method,status,Math.max(0,Math.round(performance.now()-started)),outcome)}catch(_){}};if(typeof AbortController==='undefined'||options?.signal)return fetch(url,options).then(response=>{finish(response.status,'response');return response},error=>{finish(0,'error');throw error});const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);return fetch(url,{...options,signal:controller.signal}).then(response=>{finish(response.status,'response');return response},error=>{finish(0,error?.name==='AbortError'?'timeout':'error');throw error}).finally(()=>clearTimeout(timer))}
     async function req(path,opts={}){const transition=authTransition,p=path==='/admin/api/topics'?scoped(path):(path.startsWith('/admin/api')?path:scoped(path)),method=String(opts.method||'GET').toUpperCase(),isGet=method==='GET';/* Authenticated endpoints must not be touched until /me has committed the current user. Several optional panels are installed while the HTML is parsing; without this boundary their 401 response could call showLogin(), invalidate a valid bootstrap response, and leave the login shell stuck. The login and /me handshakes are the only intentional pre-auth requests. */if(!state.currentUser&&p!=='/admin/api/login'&&p!=='/admin/api/me')throw Error('authentication bootstrap pending');if(isGet&&pendingGetRequests.has(p))return pendingGetRequests.get(p);const request=(async()=>{const r=await fetchWithTimeout(p,{credentials:'include',...opts,headers:requestHeaders(opts)},20000);if(transition!==authTransition)throw Error(friendlyError('stale auth response'));if(r.status===401){/* A rejected login is a credential error, not an expired session. Calling showLogin here increments authTransition and used to suppress the only visible error message. */const expire=()=>{if(transition===authTransition)showLogin()};if(p!=='/admin/api/login')expire();throw Error(friendlyError(p==='/admin/api/login'?'invalid credentials':'جلسه منقضی شده است'))}const text=await r.text();let body={};try{body=text?JSON.parse(text):{}}catch{body={detail:text}}if(!r.ok){const detail=Array.isArray(body.detail)?body.detail.map(item=>item?.msg||item?.detail||String(item)).join('؛ '):body.detail;throw Error(friendlyError(detail||'درخواست ناموفق بود'))}return body})();if(!isGet)return request;pendingGetRequests.set(p,request);try{return await request}finally{if(pendingGetRequests.get(p)===request)pendingGetRequests.delete(p)}}
     // Authentication must have a bounded wait. A stalled proxy or network
     // connection should return the user to a recoverable form instead of
@@ -3752,7 +3752,37 @@ ADMIN_HTML = r'''<!doctype html>
         if(!assistantId)return false;
         state.assistantId=assistantId;localStorage.setItem('research_bee_workspace',assistantId);return true
       };
-      const handleCatalogCreate=event=>{
+      // Workspace-dependent controls used to return early when the first
+      // render exposed a button before /admin/api/assistants had finished.
+      // Gate those controls once, reload the authorized workspace if needed,
+      // then replay the original click.  This keeps every action deterministic
+      // instead of making a button appear inert during the initial paint.
+      const workspaceGateIds=new Set(['addSourceBtn','addTopicBtn','sourceProbeBtn','healthProbeBtn','runPipelineBtn','operationsRunBtn','saveScheduleBtn','saveLimitsBtn','saveCollectionSettingsBtn','feedbackReportBtn','feedbackLearningBtn','feedbackRollbackBtn','knowledgeEditBtn','privacySaveBtn','privacyExportBtn','templateBuilderBtn']);
+      const safeActionRoute=route=>String(route||'unknown').split('?')[0].replace(/\/[0-9a-f]{8,}(?:-[0-9a-f]{4,}){1,4}(?=\/|$)/gi,'/:id').replace(/\/\d+(?=\/|$)/g,'/:id').replace(/[^A-Za-z0-9_.:/-]/g,'').slice(0,96)||'unknown';
+      const actionTrace=(action,phase,outcome,details={})=>{try{const actionName=String(action||'unknown'),phaseName=String(phase||'unknown'),result=String(outcome||'ok'),view=doc.querySelector('.view.active')?.id?.replace(/^view-/,'')||'unknown',trace=Array.isArray(window.__researchBeeActionTrace)?window.__researchBeeActionTrace:[],entry={action:actionName,phase:phaseName,outcome:result,at:Date.now(),view};if(details.route)entry.route=safeActionRoute(details.route);if(Number.isFinite(Number(details.status)))entry.status=Number(details.status);if(Number.isFinite(Number(details.duration)))entry.duration_ms=Number(details.duration);trace.push(entry);while(trace.length>50)trace.shift();window.__researchBeeActionTrace=trace;if(result==='waiting'&&phaseName==='click'){const context={action:actionName,startedAt:Date.now()};window.__researchBeeActionContext=context;setTimeout(()=>{if(window.__researchBeeActionContext===context){actionTrace(actionName,'timeout','error',{route:'client',duration:Date.now()-context.startedAt})}},3200)}if(result==='error'||phaseName==='modal')window.__researchBeeActionContext=null;if(result==='error')reportOverviewClientError('action',{action:actionName,phase:phaseName,outcome:result,route:details.route||'client',status:details.status||0,duration:details.duration||0})}catch(_){}};
+      window.__researchBeeTraceRequest=(url,method,status,duration,outcome)=>{const context=window.__researchBeeActionContext;if(!context||Date.now()-context.startedAt>30000)return;const failed=outcome!=='response'||Number(status)>=400;actionTrace(context.action,'request',failed?'error':'ok',{route:url,status:Number(status)||0,duration:Number(duration)||0})};
+      const workspaceReady=()=>{const selected=String(state.assistantId||'').trim(),known=(state.assistants||[]).some(item=>String(item?.id||'')===selected);return Boolean(selected&&known)};
+      const handleWorkspaceGate=event=>{
+        const origin=event.target instanceof Element?event.target:event.target?.parentElement;
+        const button=origin?.closest?.('button');
+        if(!button||!doc.contains(button)||!workspaceGateIds.has(button.id)||workspaceReady())return;
+        if(button.dataset.workspaceReplay==='1'){delete button.dataset.workspaceReplay;return}
+        event.preventDefault();event.stopImmediatePropagation();
+        if(button.dataset.workspaceGateBusy==='1')return;
+        actionTrace(button.id,'click','waiting');
+        button.dataset.workspaceGateBusy='1';button.disabled=true;button.setAttribute('aria-busy','true');
+        void ensureWorkspace().then(ready=>{
+          if(!ready){actionTrace(button.id,'workspace','error');toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return}
+          // loadAll may replace page-head controls while the workspace is being
+          // resolved. Always replay on the live DOM node, never on a detached
+          // reference captured before the asynchronous refresh.
+          const replay=doc.getElementById(button.id);
+          if(!replay){actionTrace(button.id,'replay_target','error');throw Error('workspace_action_target_missing')}
+          replay.dataset.workspaceReplay='1';replay.disabled=false;replay.removeAttribute('aria-busy');actionTrace(button.id,'replay','ok');replay.click();
+        }).catch(error=>{const detail=typeof window.friendlyError==='function'?window.friendlyError(error?.message||String(error||'')):String(error?.message||error||'');actionTrace(button.id,'workspace','error');toast(detail||(state.language==='en'?'The selected assistant could not be loaded. Please try again.':'دستیار انتخاب‌شده بارگذاری نشد؛ دوباره تلاش کنین.'),true)}).finally(()=>{button.disabled=false;button.dataset.workspaceGateBusy='0';button.removeAttribute('aria-busy')})
+      };
+      doc.addEventListener('click',handleWorkspaceGate,true);
+      const handleCatalogCreate=async event=>{
         const origin=event.target instanceof Element?event.target:event.target?.parentElement;
         const button=origin?.closest?.('[data-catalog-create]');
         if(!button||!doc.contains(button))return;
@@ -3760,20 +3790,23 @@ ADMIN_HTML = r'''<!doctype html>
         // cancel, duplicate, or silently swallow this interaction.
         event.preventDefault();event.stopImmediatePropagation();
         if(button.dataset.catalogCreateBusy==='1')return;
+        actionTrace('catalog_'+button.dataset.catalogCreate,'click','waiting');
         button.dataset.catalogCreateBusy='1';
         try{
-          if(!resolveCatalogWorkspace()){
-            toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return
+          if(!(await ensureWorkspace())){
+            actionTrace('catalog_'+button.dataset.catalogCreate,'workspace','error');toast(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.',true);return
           }
+          if(!resolveCatalogWorkspace())throw Error(state.language==='en'?'Select an authorized assistant first.':'ابتدا یک دستیار مجاز انتخاب کنین.');
           const fnName=catalogHandlers[button.dataset.catalogCreate],fn=window[fnName];
           if(typeof fn!=='function')throw Error(state.language==='en'?'This action is temporarily unavailable.':'این عملیات موقتاً در دسترس نیست.');
-          fn.call(button,event);
+          await Promise.resolve(fn.call(button,event));
           const modalRoot=doc.getElementById('modalRoot');
           if(!modalRoot||modalRoot.classList.contains('hidden'))throw Error(state.language==='en'?'The form could not be opened. Please try again.':'فرم باز نشد؛ دوباره تلاش کنین.')
+          actionTrace('catalog_'+button.dataset.catalogCreate,'modal','ok');
         }catch(error){
           const detail=typeof window.friendlyError==='function'?window.friendlyError(error?.message||String(error||'')):String(error?.message||error||'');
           toast(detail||(state.language==='en'?'The form could not be opened. Please try again.':'فرم باز نشد؛ دوباره تلاش کنین.'),true);
-          try{reportOverviewClientError('catalog_action')}catch(_){}
+          actionTrace('catalog_'+button.dataset.catalogCreate,'handler','error');
         }finally{button.dataset.catalogCreateBusy='0'}
       };
       doc.addEventListener('click',handleCatalogCreate,true);
