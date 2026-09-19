@@ -39,6 +39,21 @@ class CSPMigrationBudgetTest(unittest.TestCase):
         self.assertIn("cspInlineStyleMap", source)
         self.assertIn("migrateHandler", source)
 
+    def test_runtime_migrator_regexes_are_not_double_escaped(self):
+        # ADMIN_HTML is a raw Python string, so a doubled backslash reaches the
+        # browser verbatim.  The migrator patterns then required literal
+        # backslashes, never matched ``closeModal()``, and every dynamic inline
+        # handler (modal close, table row actions) stayed dead under the strict
+        # CSP that forbids inline event attributes.
+        from app.admin_ui import ADMIN_HTML
+
+        self.assertNotIn(r"[\\w$]", ADMIN_HTML)
+        self.assertNotIn(r"\\d+(?:", ADMIN_HTML)
+        self.assertIn(r"expression.match(/^([A-Za-z_$][\w$]*)\(([\s\S]*)\)\s*;?$/)", ADMIN_HTML)
+        self.assertIn(r"if(/^-?\d+(?:\.\d+)?$/.test(value))return Number(value)", ADMIN_HTML)
+        self.assertIn("function unquote(value)", ADMIN_HTML)
+        self.assertNotIn("value.at(-1)", ADMIN_HTML.split("MI-208: migrate legacy HTML attributes", 1)[1].split("</script>", 1)[0])
+
 
 if __name__ == "__main__":
     unittest.main()
