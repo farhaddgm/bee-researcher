@@ -2719,6 +2719,107 @@ _BUSINESS_DRAFT_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Keep media setup useful when the optional drafting provider is disabled or
+# unavailable. This directory contains only public, probeable feeds; it never
+# contains credentials and every candidate still passes the verification step.
+_LOCAL_MEDIA_DIRECTORY: tuple[dict[str, object], ...] = (
+    {
+        "name": "راه پرداخت", "aliases": ("راه پرداخت", "way2pay", "way2pay.ir"),
+        "tags": ("پرداخت", "بانکداری", "فین تک", "fintech", "payment"),
+        "homepage_url": "https://way2pay.ir/", "fetch_url": "https://way2pay.ir/feed/",
+        "adapter": "rss", "language": "fa", "region": "IR", "priority": 5,
+        "summary": "رسانه تخصصی فناوری‌های مالی، پرداخت و بانکداری.",
+    },
+    {
+        "name": "دیجیاتو", "aliases": ("دیجیاتو", "digiato", "digiato.com"),
+        "tags": ("فناوری", "هوش مصنوعی", "استارتاپ", "technology", "ai"),
+        "homepage_url": "https://digiato.com/", "fetch_url": "https://digiato.com/feed",
+        "adapter": "rss", "language": "fa", "region": "IR", "priority": 4,
+        "summary": "رسانه فناوری و کسب‌وکارهای دیجیتال.",
+    },
+    {
+        "name": "زومیت", "aliases": ("زومیت", "zoomit", "zoomit.ir"),
+        "tags": ("فناوری", "محصول", "هوش مصنوعی", "technology", "ai"),
+        "homepage_url": "https://www.zoomit.ir/", "fetch_url": "https://www.zoomit.ir/feed/",
+        "adapter": "rss", "language": "fa", "region": "IR", "priority": 3,
+        "summary": "رسانه فناوری، محصولات و روندهای دیجیتال.",
+    },
+    {
+        "name": "Finextra", "aliases": ("finextra", "finextra.com"),
+        "tags": ("پرداخت", "بانکداری", "فین تک", "fintech", "banking", "payments"),
+        "homepage_url": "https://www.finextra.com/", "fetch_url": "https://www.finextra.com/rss/headlines.aspx",
+        "adapter": "rss", "language": "en", "region": "Global", "priority": 5,
+        "summary": "رسانه بین‌المللی تخصصی خدمات مالی و فناوری بانکداری.",
+    },
+    {
+        "name": "TechCrunch", "aliases": ("techcrunch", "techcrunch.com"),
+        "tags": ("فناوری", "استارتاپ", "هوش مصنوعی", "technology", "startup", "ai"),
+        "homepage_url": "https://techcrunch.com/", "fetch_url": "https://techcrunch.com/feed/",
+        "adapter": "rss", "language": "en", "region": "Global", "priority": 4,
+        "summary": "رسانه بین‌المللی فناوری، استارتاپ و سرمایه‌گذاری.",
+    },
+)
+
+
+def _media_query_tokens(value: str) -> set[str]:
+    normalized = re.sub(r"[\u200c\u200f\u202a-\u202e]", " ", str(value or "").casefold())
+    normalized = normalized.replace("ي", "ی").replace("ك", "ک")
+    return {token for token in re.split(r"[^\w\u0600-\u06ff]+", normalized) if len(token) >= 2}
+
+
+def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] | None:
+    """Resolve a known public source without depending on an external model."""
+    requested = str(name or "").strip().casefold()
+    for entry in _LOCAL_MEDIA_DIRECTORY:
+        aliases = [str(value).casefold() for value in entry["aliases"]]
+        if requested in aliases or any(alias in requested or requested in alias for alias in aliases):
+            return {
+                "name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
+                "fetch_url": str(entry["fetch_url"]), "adapter": str(entry["adapter"]),
+                "language": str(entry["language"]), "region": str(entry["region"]),
+                "priority": int(entry["priority"]), "access_notes": "Public feed from Bee Researcher directory.",
+                "research_notes": "Resolved from the local public-media directory; connection is verified before registration.",
+                "fit_reason": str(entry["summary"]), "example_article": "", "overlap_notes": "",
+                "match_status": "match", "match_explanation": "نام با یک رسانهٔ عمومی شناخته‌شده تطبیق داده شد.",
+                "alternatives": [], "draft_source": "local_directory",
+            }
+    candidate = requested.removeprefix("https://").removeprefix("http://").split("/", 1)[0]
+    if "." in candidate and " " not in candidate:
+        homepage = f"https://{candidate}/"
+        return {
+            "name": str(name).strip()[:160], "homepage_url": homepage,
+            "fetch_url": f"{homepage}feed/", "adapter": "rss", "language": "", "region": "",
+            "priority": 3, "access_notes": "Feed path is a proposal; review it before saving.",
+            "research_notes": "A public domain was supplied directly; the feed path must pass the connection check.",
+            "fit_reason": str(instruction or "Public source supplied by the owner.")[:600],
+            "example_article": "", "overlap_notes": "", "match_status": "uncertain",
+            "match_explanation": "دامنه دریافت شد؛ مسیر فید باید بررسی و در صورت نیاز اصلاح شود.",
+            "alternatives": [], "draft_source": "local_domain",
+        }
+    return None
+
+
+def _local_source_suggestions(keyword: str, instruction: str = "") -> dict[str, object]:
+    query_tokens = _media_query_tokens(keyword) | _media_query_tokens(instruction)
+    ranked: list[tuple[int, dict[str, object]]] = []
+    for entry in _LOCAL_MEDIA_DIRECTORY:
+        entry_tokens = _media_query_tokens(" ".join(map(str, entry["tags"])))
+        alias_tokens = _media_query_tokens(" ".join(map(str, entry["aliases"])))
+        score = len(query_tokens & entry_tokens) * 3 + len(query_tokens & alias_tokens) * 5
+        if score:
+            ranked.append((score, entry))
+    ranked.sort(key=lambda pair: (-pair[0], -int(pair[1]["priority"])))
+    suggestions = [
+        {"name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
+         "summary": str(entry["summary"]), "fit_reason": "بر اساس کلیدواژهٔ واردشده از فهرست رسانه‌های عمومی انتخاب شد."}
+        for _, entry in ranked[:5]
+    ]
+    return {
+        "suggestions": suggestions,
+        "message": "" if suggestions else "در فهرست محلی رسانهٔ دقیقی برای این کلیدواژه پیدا نشد؛ نام مشابه را بررسی کنین.",
+        "alternatives": [] if suggestions else [str(entry["name"]) for entry in _LOCAL_MEDIA_DIRECTORY[:3]],
+    }
+
 _ASSISTANT_DRAFT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -2846,6 +2947,10 @@ async def draft_assistant(payload: AssistantDraftRequest, user: AdminUser) -> di
 
 
 async def _catalog_draft(kind: Literal["source", "topic", "business"], name: str, instruction: str) -> dict[str, object]:
+    if kind == "source":
+        local_draft = _local_source_draft(name, instruction)
+        if local_draft is not None:
+            return local_draft
     settings = get_settings()
     client = OpenAIClient(settings)
     system = (
@@ -2875,7 +2980,7 @@ async def _catalog_draft(kind: Literal["source", "topic", "business"], name: str
         # Setup must remain usable when the external service is unavailable.
         # The user still receives an honest editable draft, never fabricated
         # credentials or a silently persisted record.
-        note = "تحلیل خودکار در دسترس نبود؛ مقادیر را بررسی و تکمیل کنید."
+        note = "رسانه‌ای با این نام در فهرست محلی پیدا نشد و تحلیل خودکار در دسترس نبود؛ نام دقیق یا دامنهٔ عمومی را وارد کنین."
         if kind == "source":
             return {"name": name, "homepage_url": "", "fetch_url": "", "adapter": "rss", "language": "fa", "region": "IR", "priority": 3, "access_notes": "", "research_notes": note, "fit_reason": "", "example_article": "", "overlap_notes": "", "match_status": "uncertain", "match_explanation": note, "alternatives": [], "draft_source": "fallback"}
         if kind == "topic":
@@ -2890,6 +2995,9 @@ async def _source_suggestions(keyword: str, instruction: str) -> dict[str, objec
     credentials. Those operational details are resolved only after the owner
     approves one candidate.
     """
+    local = _local_source_suggestions(keyword, instruction)
+    if local["suggestions"]:
+        return local
     settings = get_settings()
     client = OpenAIClient(settings)
     system = (
@@ -2916,7 +3024,11 @@ async def _source_suggestions(keyword: str, instruction: str) -> dict[str, objec
             "alternatives": [str(value).strip()[:160] for value in (result.get("alternatives") or [])[:3] if str(value).strip()] if isinstance(result, dict) else [],
         }
     except Exception:
-        return {"suggestions": [], "message": "تحلیل خودکار برای پیشنهاد رسانه در دسترس نبود.", "alternatives": []}
+        return {
+            "suggestions": [],
+            "message": "رسانه‌ای برای این کلیدواژه پیدا نشد؛ نام دقیق، دامنهٔ عمومی یا کلیدواژهٔ مشخص‌تری وارد کنین.",
+            "alternatives": local["alternatives"],
+        }
 
 
 async def _assistant_media_context(assistant_id: uuid.UUID) -> dict[str, object]:

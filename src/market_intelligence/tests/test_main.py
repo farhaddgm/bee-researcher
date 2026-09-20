@@ -14,7 +14,7 @@ os.environ.setdefault("MARKET_INTELLIGENCE_REDIS_PASSWORD", "test-password")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import _redact_http_detail, app, settings  # noqa: E402
-from app.admin import AssistantCloneRequest, AssistantRequest, SourceCreate, TopicCreate  # noqa: E402
+from app.admin import AssistantCloneRequest, AssistantRequest, SourceCreate, TopicCreate, _local_source_draft, _local_source_suggestions  # noqa: E402
 from app.security_controls import csrf_token_matches, new_csrf_token  # noqa: E402
 
 
@@ -1303,6 +1303,21 @@ class MainTest(unittest.TestCase):
         self.assertIn("async function probeSelectedSources()", body)
         self.assertIn("/sources/health-probe?assistant_id='+encodeURIComponent(state.assistantId)", body)
         self.assertIn("await loadAll();const count=Number(result.source_count??0)", body)
+
+    def test_local_media_directory_keeps_add_and_suggest_working_without_openai(self):
+        draft = _local_source_draft("راه پرداخت", "پرداخت و بانکداری")
+        self.assertIsNotNone(draft)
+        self.assertEqual("https://way2pay.ir/feed/", draft["fetch_url"])
+        self.assertEqual("local_directory", draft["draft_source"])
+        result = _local_source_suggestions("فین‌تک", "پرداخت")
+        self.assertGreaterEqual(len(result["suggestions"]), 1)
+        self.assertEqual([], result["alternatives"])
+
+    def test_unknown_media_returns_actionable_alternatives_without_provider(self):
+        self.assertIsNone(_local_source_draft("رسانه ناشناخته", ""))
+        result = _local_source_suggestions("کلیدواژه ناشناخته", "")
+        self.assertEqual([], result["suggestions"])
+        self.assertGreaterEqual(len(result["alternatives"]), 1)
 
     def test_media_discovery_requires_verified_review_before_registration(self):
         body = TestClient(app).get("/admin").text
