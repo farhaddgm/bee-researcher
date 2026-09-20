@@ -928,6 +928,18 @@ class MainTest(unittest.TestCase):
         self.assertIn("window.deleteSourceFromUi=deleteSourceFromUi;window.deleteTopicFromUi=deleteTopicFromUi", body)
         self.assertIn("The stable capture listener below is the only catalog-create path", body)
 
+    def test_admin_final_normalizer_does_not_create_a_mutation_feedback_loop(self):
+        body = TestClient(app).get("/admin").text
+        # The final hardening layer observes the app tree.  It must not call
+        # appendChild for an already-correct action order, otherwise its own
+        # childList observer schedules a new normalization frame forever.
+        self.assertIn("function reorderIfNeeded(group,ordered)", body)
+        self.assertIn("current.every((node,index)=>node===ordered[index])", body)
+        self.assertIn("reorderIfNeeded(assistantGroup,[...neutral,...primary])", body)
+        self.assertIn("reorderIfNeeded(group,[...rest,...primary])", body)
+        self.assertNotIn("[...neutral,...primary].forEach(node=>assistantGroup.appendChild(node))", body)
+        self.assertNotIn("[...rest,...primary].forEach(node=>group.appendChild(node))", body)
+
     def test_local_vazirmatn_assets_are_served_without_relaxing_csp(self):
         response = TestClient(app).get("/assets/Vazirmatn-Regular.woff2")
         self.assertEqual(200, response.status_code)
