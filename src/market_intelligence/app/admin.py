@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import difflib
 import hashlib
 import hmac
 import json
@@ -44,7 +45,7 @@ from app.models import (
     Topic,
 )
 from app.openai_client import OpenAIClient
-from app.fetchers import validate_public_url_syntax
+from app.fetchers import FetchFailure, SourceFetcher, SourceSpec, validate_public_url_syntax
 from app.security_controls import CSRF_COOKIE, new_csrf_token
 from app.telegram_delivery import render_analysis_message
 
@@ -2659,8 +2660,11 @@ _SOURCE_DRAFT_SCHEMA = {
         "access_notes": {"type": "string"}, "research_notes": {"type": "string"},
         "fit_reason": {"type": "string"}, "example_article": {"type": "string"},
         "overlap_notes": {"type": "string"},
+        "match_status": {"type": "string", "enum": ["match", "uncertain", "not_found"]},
+        "match_explanation": {"type": "string"},
+        "alternatives": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
     },
-    "required": ["name", "homepage_url", "fetch_url", "adapter", "language", "region", "priority", "access_notes", "research_notes", "fit_reason", "example_article", "overlap_notes"],
+    "required": ["name", "homepage_url", "fetch_url", "adapter", "language", "region", "priority", "access_notes", "research_notes", "fit_reason", "example_article", "overlap_notes", "match_status", "match_explanation", "alternatives"],
     "additionalProperties": False,
 }
 _SOURCE_SUGGESTIONS_SCHEMA = {
@@ -2680,9 +2684,11 @@ _SOURCE_SUGGESTIONS_SCHEMA = {
                 "required": ["name", "homepage_url", "summary", "fit_reason"],
                 "additionalProperties": False,
             },
-        }
+        },
+        "message": {"type": "string"},
+        "alternatives": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
     },
-    "required": ["suggestions"],
+    "required": ["suggestions", "message", "alternatives"],
     "additionalProperties": False,
 }
 _TOPIC_DRAFT_SCHEMA = {
@@ -2845,13 +2851,18 @@ async def _catalog_draft(kind: Literal["source", "topic", "business"], name: str
     system = (
         "شما دستیار راه‌اندازی یک سامانه تحقیقات بازار هستید. بر اساس نام داده‌شده، "
         "یک پیش‌نویس دقیق و قابل ویرایش بسازید. چیزی را قطعی جلوه ندهید؛ اگر لینک یا "
-        "اطلاعاتی قابل اطمینان نیست، صریحاً در research_notes بنویسید. خروجی فقط JSON باشد."
+        "اطلاعاتی قابل اطمینان نیست، صریحاً در research_notes بنویسید. برای رسانه فقط وقتی "
+        "نام و URL عمومیِ قابل اتکا دارید match_status را match قرار دهید. در غیر این صورت "
+        "match_status را uncertain یا not_found، URLها را خالی، و حداکثر سه نام مشابه را در "
+        "alternatives برگردانید. هرگز URL، RSS یا credential ساختگی تولید نکنید. خروجی فقط JSON باشد."
     )
     schemas = {"source": _SOURCE_DRAFT_SCHEMA, "topic": _TOPIC_DRAFT_SCHEMA, "business": _BUSINESS_DRAFT_SCHEMA}
     try:
         draft = await asyncio.wait_for(
             client.draft_json(
                 system_prompt=system,
+                # Only the explicit operator input is sent to the optional
+                # drafting provider; project data remains local.
                 user_payload={"kind": kind, "name": name, "instruction": instruction},
                 schema_name=f"market_intelligence_{kind}_draft",
                 schema=schemas[kind],
@@ -2866,13 +2877,13 @@ async def _catalog_draft(kind: Literal["source", "topic", "business"], name: str
         # credentials or a silently persisted record.
         note = "تحلیل خودکار در دسترس نبود؛ مقادیر را بررسی و تکمیل کنید."
         if kind == "source":
-            return {"name": name, "homepage_url": "", "fetch_url": "", "adapter": "rss", "language": "fa", "region": "IR", "priority": 3, "access_notes": "", "research_notes": note, "fit_reason": "", "example_article": "", "overlap_notes": "", "draft_source": "fallback"}
+            return {"name": name, "homepage_url": "", "fetch_url": "", "adapter": "rss", "language": "fa", "region": "IR", "priority": 3, "access_notes": "", "research_notes": note, "fit_reason": "", "example_article": "", "overlap_notes": "", "match_status": "uncertain", "match_explanation": note, "alternatives": [], "draft_source": "fallback"}
         if kind == "topic":
             return {"name": name, "definition": f"پوشش و تحلیل اخبار مرتبط با «{name}». ", "positive_terms": [name], "negative_terms": [], "importance": 3, "threshold": 0.45, "research_notes": note, "draft_source": "fallback"}
         return {"business_name": name, "description": "", "products_services": "", "target_customers": "", "markets": "", "revenue_model": "", "strategic_goals": "", "competitors": [], "sensitivities": [], "output_language": "fa", "output_tone": "کوتاه، تحلیلی، اجرایی و رسمی", "research_notes": note, "draft_source": "fallback"}
 
 
-async def _source_suggestions(keyword: str, instruction: str) -> list[dict[str, object]]:
+async def _source_suggestions(keyword: str, instruction: str) -> dict[str, object]:
     """Return up to five concise, review-first media candidates.
 
     The discovery step deliberately does not fabricate feed adapters or
@@ -2884,7 +2895,9 @@ async def _source_suggestions(keyword: str, instruction: str) -> list[dict[str, 
     system = (
         "شما پژوهشگر کشف رسانه هستید. برای کلیدواژه داده‌شده حداکثر پنج رسانه تخصصی، "
         "عمومی و معتبر پیشنهاد دهید. فقط نام، آدرس وب‌سایت، توضیح دو یا سه خطی و دلیل تناسب را برگردانید. "
-        "اگر از اعتبار یا آدرس مطمئن نیستید آن رسانه را پیشنهاد ندهید. خروجی فقط JSON باشد."
+        "اگر از اعتبار یا آدرس مطمئن نیستید آن رسانه را پیشنهاد ندهید. اگر مورد مناسبی نیست، "
+        "suggestions را خالی بگذارید و در message توضیح کوتاه و در alternatives حداکثر سه نام "
+        "مشابه و محتمل پیشنهاد کنید. خروجی فقط JSON باشد."
     )
     try:
         result = await asyncio.wait_for(
@@ -2897,14 +2910,71 @@ async def _source_suggestions(keyword: str, instruction: str) -> list[dict[str, 
             timeout=50,
         )
         rows = result.get("suggestions") if isinstance(result, dict) else []
-        return [dict(row) for row in rows[:5] if isinstance(row, dict) and str(row.get("name") or "").strip()]
+        return {
+            "suggestions": [dict(row) for row in rows[:5] if isinstance(row, dict) and str(row.get("name") or "").strip()],
+            "message": str(result.get("message") or "").strip()[:600] if isinstance(result, dict) else "",
+            "alternatives": [str(value).strip()[:160] for value in (result.get("alternatives") or [])[:3] if str(value).strip()] if isinstance(result, dict) else [],
+        }
     except Exception:
-        return []
+        return {"suggestions": [], "message": "تحلیل خودکار برای پیشنهاد رسانه در دسترس نبود.", "alternatives": []}
+
+
+async def _assistant_media_context(assistant_id: uuid.UUID) -> dict[str, object]:
+    """Return local-only media names for duplicate/similar-name handling."""
+    async with SessionLocal() as session:
+        assistant = await session.get(AssistantWorkspace, assistant_id)
+        if assistant is None:
+            return {}
+        sources = (await session.scalars(
+            select(Source.name).where(Source.assistant_id == assistant_id).order_by(Source.priority.desc(), Source.name).limit(20)
+        )).all()
+    return {"existing_media": [str(value)[:160] for value in sources]}
+
+
+def _draft_alternatives(draft: dict[str, object], context: dict[str, object]) -> list[str]:
+    """Combine model alternatives with close local names without guessing URLs."""
+    alternatives = [str(value).strip()[:160] for value in (draft.get("alternatives") or [])[:3] if str(value).strip()]
+    requested = str(draft.get("name") or "").strip()
+    known = [str(value).strip() for value in (context.get("existing_media") or []) if str(value).strip()]
+    for value in difflib.get_close_matches(requested, known, n=3, cutoff=0.45):
+        if value not in alternatives:
+            alternatives.append(value)
+    return alternatives[:3]
+
+
+async def _verify_source_draft(draft: dict[str, object]) -> dict[str, object]:
+    """Bounded, non-persistent connector test using the production parser."""
+    homepage = str(draft.get("homepage_url") or "").strip()
+    fetch_url = str(draft.get("fetch_url") or "").strip()
+    adapter = str(draft.get("adapter") or "rss").strip()
+    if str(draft.get("match_status") or "uncertain") == "not_found" or not homepage or not fetch_url:
+        return {"status": "not_found", "message": str(draft.get("match_explanation") or "رسانهٔ قابل اتکایی برای این نام پیدا نشد.")[:600], "items_found": 0}
+    if adapter not in {"rss", "html", "json", "telegram_public"}:
+        return {"status": "not_usable", "message": "نوع اتصال پیشنهادی برای بررسی خودکار این رسانه قابل استفاده نیست.", "items_found": 0}
+    try:
+        homepage = validate_public_url_syntax(homepage)
+        fetch_url = validate_public_url_syntax(fetch_url)
+        draft["homepage_url"] = homepage
+        draft["fetch_url"] = fetch_url
+    except ValueError:
+        return {"status": "not_usable", "message": "آدرس‌های پیشنهادی عمومی و معتبر نیستند؛ این رسانه ثبت نشد.", "items_found": 0}
+    try:
+        result = await asyncio.wait_for(SourceFetcher(get_settings()).fetch(SourceSpec(source_key="DRAFT-VERIFY", name=str(draft.get("name") or "media draft")[:160], homepage_url=homepage, fetch_url=fetch_url, adapter=adapter, request_timeout_seconds=20, max_retries=0)), timeout=25)
+    except (FetchFailure, ValueError, OSError, asyncio.TimeoutError) as exc:
+        return {"status": "not_usable", "message": f"اتصال یا خواندن محتوای رسانه تأیید نشد: {str(exc)[:300]}", "items_found": 0}
+    except Exception:
+        return {"status": "not_usable", "message": "اتصال یا خواندن محتوای رسانه تأیید نشد.", "items_found": 0}
+    if result.status == "succeeded" and result.items:
+        return {"status": "ready", "message": "اتصال رسانه و خواندن نمونه‌ای از محتوای آن تأیید شد.", "items_found": len(result.items), "response_url": result.response_url}
+    return {"status": "not_usable", "message": "رسانه پاسخ داد، اما محتوای قابل‌خواندن برای این نوع اتصال پیدا نشد.", "items_found": len(result.items), "response_url": result.response_url}
 
 
 async def draft_source(assistant_id: uuid.UUID, payload: CatalogDraftRequest, user: AdminUser) -> dict[str, object]:
     await _require_assistant_access(assistant_id, user, write=True)
-    return {"kind": "source", "draft": await _catalog_draft("source", payload.name.strip(), payload.instruction.strip()), "expires_in_seconds": 300}
+    context = await _assistant_media_context(assistant_id)
+    draft = await _catalog_draft("source", payload.name.strip(), payload.instruction.strip())
+    draft["alternatives"] = _draft_alternatives(draft, context)
+    return {"kind": "source", "draft": draft, "verification": await _verify_source_draft(draft), "expires_in_seconds": 300}
 
 
 _TEMPLATE_BLOCKS = {
@@ -3114,7 +3184,8 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
     keyword = payload.name.strip()
     if not keyword:
         raise HTTPException(status_code=422, detail="media keyword is required")
-    candidates = await _source_suggestions(keyword, payload.instruction.strip())
+    discovery = await _source_suggestions(keyword, payload.instruction.strip())
+    candidates = discovery["suggestions"]
     suggestions = []
     async with SessionLocal() as session:
         item = await session.get(AssistantWorkspace, assistant_id, with_for_update=True)
@@ -3144,7 +3215,13 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
         item.config = config
         await session.commit()
     await _audit(user.id, "source.suggestion.create", assistant_id=assistant_id, details={"keyword": keyword, "count": len(suggestions)})
-    return {"keyword": keyword, "count": len(suggestions), "suggestions": suggestions}
+    return {
+        "keyword": keyword,
+        "count": len(suggestions),
+        "suggestions": suggestions,
+        "message": str(discovery.get("message") or "").strip()[:600],
+        "alternatives": [str(value)[:160] for value in (discovery.get("alternatives") or [])[:3]],
+    }
 
 
 async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.UUID, *, approve: bool, user: AdminUser) -> dict[str, object]:
@@ -3201,6 +3278,10 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
                 # Preserve any newer non-empty values saved on the suggestion
                 # while filling only the missing operational fields.
                 draft = {**enriched, **{key: value for key, value in draft.items() if value not in (None, "")}}
+
+        verification = await _verify_source_draft(draft)
+        if verification.get("status") != "ready":
+            raise HTTPException(status_code=422, detail="source suggestion could not be verified as readable; review its media details and try again")
 
         # Re-read and lock only for the short, final write. This serializes
         # source-key allocation and makes a concurrent approval idempotent.

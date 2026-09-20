@@ -1,6 +1,7 @@
 import os
 import unittest
 import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -1302,6 +1303,16 @@ class MainTest(unittest.TestCase):
         self.assertIn("async function probeSelectedSources()", body)
         self.assertIn("/sources/health-probe?assistant_id='+encodeURIComponent(state.assistantId)", body)
         self.assertIn("await loadAll();const count=Number(result.source_count??0)", body)
+
+    def test_media_discovery_requires_verified_review_before_registration(self):
+        body = TestClient(app).get("/admin").text
+        source = Path(__file__).resolve().parents[1].joinpath("app", "admin.py").read_text()
+        self.assertIn('"match_status"', source)
+        self.assertIn('"alternatives"', source)
+        self.assertIn("async def _verify_source_draft", source)
+        self.assertIn("mediaDraftName", body)
+        self.assertIn("mediaReviewHomepage", body)
+        self.assertIn("status!=='ready'", body)
 
     def test_manual_ingestion_endpoint(self):
         result = {"status": "completed", "source_count": 1}
