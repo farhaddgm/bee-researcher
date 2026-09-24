@@ -261,6 +261,10 @@ class Source(Base):
         ),
         CheckConstraint("priority BETWEEN 1 AND 5", name="sources_priority"),
         CheckConstraint(
+            "output_language IN ('source', 'fa', 'en', 'tr', 'ar', 'it', 'es', 'de', 'fr')",
+            name="sources_output_language",
+        ),
+        CheckConstraint(
             "rate_limit_seconds BETWEEN 1 AND 3600",
             name="sources_rate_limit_seconds",
         ),
@@ -280,6 +284,9 @@ class Source(Base):
     item_url_pattern: Mapped[str | None] = mapped_column(String(512))
     item_title_class_pattern: Mapped[str | None] = mapped_column(String(512))
     language: Mapped[str] = mapped_column(String(16), nullable=False, default="fa")
+    # Language used for generated summaries and published messages. ``source``
+    # keeps the historical behavior and follows the source/article language.
+    output_language: Mapped[str] = mapped_column(String(16), nullable=False, default="source")
     region: Mapped[str] = mapped_column(String(16), nullable=False, default="IR")
     priority: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=3)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)

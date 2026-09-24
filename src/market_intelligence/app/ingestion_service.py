@@ -115,6 +115,8 @@ async def list_sources(*, assistant_id: uuid.UUID | None = None) -> list[dict[st
             "access_notes": source.access_notes,
             "credential_ref": source.credential_ref,
             "account_ref": source.account_ref,
+            "language": source.language,
+            "output_language": source.output_language,
             "robots_policy": source.robots_policy,
             "health_status": source.health_status,
             "consecutive_failures": source.consecutive_failures,

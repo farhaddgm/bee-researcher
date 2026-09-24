@@ -54,6 +54,7 @@ USER_SESSION_COOKIE = "research_bee_user_session"
 _WORKSPACE_WRITE_ROLES = frozenset({"admin", "owner", "assistant_admin", "editor"})
 _ROLE_RANK = {"viewer": 1, "analyst": 2, "editor": 3, "assistant_admin": 4, "admin": 5, "owner": 6}
 DEFAULT_ASSISTANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
+OUTPUT_LANGUAGE_CODES = ("source", "fa", "en", "tr", "ar", "it", "es", "de", "fr")
 
 # Collection/analysis controls are deliberately a separate contract from
 # publication controls.  They are owner-only even when a project editor may
@@ -285,6 +286,11 @@ class SourceUpdate(BaseModel):
     access_policy: Literal["public_only", "private_authenticated"] | None = None
     credential_ref: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]{2,127}$")
     account_ref: str | None = Field(default=None, max_length=256)
+    # Keep the detected source language editable independently from the
+    # publication language.  The latter controls generated summaries and is
+    # intentionally not inferred from this field.
+    language: str | None = Field(default=None, min_length=2, max_length=16)
+    output_language: Literal["source", "fa", "en", "tr", "ar", "it", "es", "de", "fr"] | None = None
     enabled: bool | None = None
     priority: int | None = Field(default=None, ge=1, le=5)
     rate_limit_seconds: int | None = Field(default=None, ge=1, le=3600)
@@ -310,6 +316,7 @@ class SourceCreate(BaseModel):
     credential_ref: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]{2,127}$")
     account_ref: str | None = Field(default=None, max_length=256)
     language: str = Field(default="fa", min_length=2, max_length=16)
+    output_language: Literal["source", "fa", "en", "tr", "ar", "it", "es", "de", "fr"] = "source"
     region: str = Field(default="IR", min_length=2, max_length=16)
     priority: int = Field(default=3, ge=1, le=5)
     enabled: bool = True
@@ -2298,6 +2305,7 @@ async def _copy_workspace_catalog(session, source_assistant_id: uuid.UUID, targe
             item_url_pattern=source.item_url_pattern,
             item_title_class_pattern=source.item_title_class_pattern,
             language=source.language,
+            output_language=source.output_language,
             region=source.region,
             priority=source.priority,
             display_order=source.display_order,
@@ -2656,6 +2664,7 @@ _SOURCE_DRAFT_SCHEMA = {
         "access_policy": {"type": "string", "enum": ["public_only", "private_authenticated"]},
         "credential_ref": {"type": "string"}, "account_ref": {"type": "string"},
         "language": {"type": "string"}, "region": {"type": "string"},
+        "output_language": {"type": "string", "enum": list(OUTPUT_LANGUAGE_CODES)},
         "priority": {"type": "integer", "minimum": 1, "maximum": 5},
         "access_notes": {"type": "string"}, "research_notes": {"type": "string"},
         "fit_reason": {"type": "string"}, "example_article": {"type": "string"},
@@ -2664,7 +2673,7 @@ _SOURCE_DRAFT_SCHEMA = {
         "match_explanation": {"type": "string"},
         "alternatives": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
     },
-    "required": ["name", "homepage_url", "fetch_url", "adapter", "language", "region", "priority", "access_notes", "research_notes", "fit_reason", "example_article", "overlap_notes", "match_status", "match_explanation", "alternatives"],
+    "required": ["name", "homepage_url", "fetch_url", "adapter", "language", "region", "output_language", "priority", "access_notes", "research_notes", "fit_reason", "example_article", "overlap_notes", "match_status", "match_explanation", "alternatives"],
     "additionalProperties": False,
 }
 _SOURCE_SUGGESTIONS_SCHEMA = {
@@ -2680,8 +2689,13 @@ _SOURCE_SUGGESTIONS_SCHEMA = {
                     "homepage_url": {"type": "string"},
                     "summary": {"type": "string"},
                     "fit_reason": {"type": "string"},
+                    "language": {"type": "string"},
+                    "region": {"type": "string"},
+                    "source_type": {"type": "string"},
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "evidence": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
                 },
-                "required": ["name", "homepage_url", "summary", "fit_reason"],
+                "required": ["name", "homepage_url", "summary", "fit_reason", "language", "region", "source_type", "confidence", "evidence"],
                 "additionalProperties": False,
             },
         },
@@ -2719,42 +2733,53 @@ _BUSINESS_DRAFT_SCHEMA = {
     "additionalProperties": False,
 }
 
-# Keep media setup useful when the optional drafting provider is disabled or
-# unavailable. This directory contains only public, probeable feeds; it never
-# contains credentials and every candidate still passes the verification step.
+# A small, deterministic directory keeps media setup useful even when the
+# optional drafting provider is disabled, rate-limited, or unavailable.  It is
+# deliberately limited to public feeds that are safe to probe; the directory
+# never carries credentials and is not a substitute for the verification step.
 _LOCAL_MEDIA_DIRECTORY: tuple[dict[str, object], ...] = (
     {
-        "name": "راه پرداخت", "aliases": ("راه پرداخت", "way2pay", "way2pay.ir"),
+        "name": "راه پرداخت",
+        "aliases": ("راه پرداخت", "way2pay", "way2pay.ir"),
         "tags": ("پرداخت", "بانکداری", "فین تک", "fintech", "payment"),
-        "homepage_url": "https://way2pay.ir/", "fetch_url": "https://way2pay.ir/feed/",
+        "homepage_url": "https://way2pay.ir/",
+        "fetch_url": "https://way2pay.ir/feed/",
         "adapter": "rss", "language": "fa", "region": "IR", "priority": 5,
         "summary": "رسانه تخصصی فناوری‌های مالی، پرداخت و بانکداری.",
     },
     {
-        "name": "دیجیاتو", "aliases": ("دیجیاتو", "digiato", "digiato.com"),
+        "name": "دیجیاتو",
+        "aliases": ("دیجیاتو", "digiato", "digiato.com"),
         "tags": ("فناوری", "هوش مصنوعی", "استارتاپ", "technology", "ai"),
-        "homepage_url": "https://digiato.com/", "fetch_url": "https://digiato.com/feed",
+        "homepage_url": "https://digiato.com/",
+        "fetch_url": "https://digiato.com/feed",
         "adapter": "rss", "language": "fa", "region": "IR", "priority": 4,
         "summary": "رسانه فناوری و کسب‌وکارهای دیجیتال.",
     },
     {
-        "name": "زومیت", "aliases": ("زومیت", "zoomit", "zoomit.ir"),
+        "name": "زومیت",
+        "aliases": ("زومیت", "zoomit", "zoomit.ir"),
         "tags": ("فناوری", "محصول", "هوش مصنوعی", "technology", "ai"),
-        "homepage_url": "https://www.zoomit.ir/", "fetch_url": "https://www.zoomit.ir/feed/",
+        "homepage_url": "https://www.zoomit.ir/",
+        "fetch_url": "https://www.zoomit.ir/feed/",
         "adapter": "rss", "language": "fa", "region": "IR", "priority": 3,
         "summary": "رسانه فناوری، محصولات و روندهای دیجیتال.",
     },
     {
-        "name": "Finextra", "aliases": ("finextra", "finextra.com"),
+        "name": "Finextra",
+        "aliases": ("finextra", "finextra.com"),
         "tags": ("پرداخت", "بانکداری", "فین تک", "fintech", "banking", "payments"),
-        "homepage_url": "https://www.finextra.com/", "fetch_url": "https://www.finextra.com/rss/headlines.aspx",
+        "homepage_url": "https://www.finextra.com/",
+        "fetch_url": "https://www.finextra.com/rss/headlines.aspx",
         "adapter": "rss", "language": "en", "region": "Global", "priority": 5,
         "summary": "رسانه بین‌المللی تخصصی خدمات مالی و فناوری بانکداری.",
     },
     {
-        "name": "TechCrunch", "aliases": ("techcrunch", "techcrunch.com"),
+        "name": "TechCrunch",
+        "aliases": ("techcrunch", "techcrunch.com"),
         "tags": ("فناوری", "استارتاپ", "هوش مصنوعی", "technology", "startup", "ai"),
-        "homepage_url": "https://techcrunch.com/", "fetch_url": "https://techcrunch.com/feed/",
+        "homepage_url": "https://techcrunch.com/",
+        "fetch_url": "https://techcrunch.com/feed/",
         "adapter": "rss", "language": "en", "region": "Global", "priority": 4,
         "summary": "رسانه بین‌المللی فناوری، استارتاپ و سرمایه‌گذاری.",
     },
@@ -2777,18 +2802,51 @@ def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] |
                 "name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
                 "fetch_url": str(entry["fetch_url"]), "adapter": str(entry["adapter"]),
                 "language": str(entry["language"]), "region": str(entry["region"]),
+                "output_language": "source",
                 "priority": int(entry["priority"]), "access_notes": "Public feed from Bee Researcher directory.",
                 "research_notes": "Resolved from the local public-media directory; connection is verified before registration.",
                 "fit_reason": str(entry["summary"]), "example_article": "", "overlap_notes": "",
                 "match_status": "match", "match_explanation": "نام با یک رسانهٔ عمومی شناخته‌شده تطبیق داده شد.",
                 "alternatives": [], "draft_source": "local_directory",
             }
+    # A keyword is often broader than a publication's exact name (for
+    # example, "فین‌تک ایران" or "technology startups").  Resolve a clear
+    # single best directory match offline before falling back to the optional
+    # external discovery provider.  Require at least two weighted token hits
+    # so a vague word never silently registers the wrong media source.
+    query_tokens = _media_query_tokens(f"{name} {instruction}")
+    ranked: list[tuple[int, int, dict[str, object]]] = []
+    for entry in _LOCAL_MEDIA_DIRECTORY:
+        tag_tokens = _media_query_tokens(" ".join(map(str, entry.get("tags") or ())))
+        alias_tokens = _media_query_tokens(" ".join(map(str, entry.get("aliases") or ())))
+        score = len(query_tokens & tag_tokens) * 3 + len(query_tokens & alias_tokens) * 5
+        if score >= 6:
+            ranked.append((score, int(entry.get("priority") or 0), entry))
+    if ranked:
+        ranked.sort(key=lambda row: (-row[0], -row[1], str(row[2].get("name") or "")))
+        score, _priority, entry = ranked[0]
+        return {
+            "name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
+            "fetch_url": str(entry["fetch_url"]), "adapter": str(entry["adapter"]),
+            "language": str(entry["language"]), "region": str(entry["region"]),
+            "output_language": "source", "priority": int(entry["priority"]),
+            "access_notes": "Public feed from Bee Researcher directory.",
+            "research_notes": "The closest public-media directory match was selected from the supplied keyword; review it before registration.",
+            "fit_reason": str(entry["summary"]), "example_article": "", "overlap_notes": "",
+            "match_status": "match",
+            "match_explanation": f"بهترین تطبیق آفلاین با امتیاز {score} از فهرست رسانه‌های عمومی پیدا شد.",
+            "alternatives": [str(row[2]["name"]) for row in ranked[1:4]],
+            "draft_source": "local_keyword_match",
+        }
+    # A URL/domain supplied as the name is a safe, useful escape hatch for a
+    # source that is not in the built-in directory.  We still require the
+    # fetch probe before allowing registration.
     candidate = requested.removeprefix("https://").removeprefix("http://").split("/", 1)[0]
     if "." in candidate and " " not in candidate:
         homepage = f"https://{candidate}/"
         return {
             "name": str(name).strip()[:160], "homepage_url": homepage,
-            "fetch_url": f"{homepage}feed/", "adapter": "rss", "language": "", "region": "",
+            "fetch_url": f"{homepage}feed/", "adapter": "rss", "language": "", "output_language": "source", "region": "",
             "priority": 3, "access_notes": "Feed path is a proposal; review it before saving.",
             "research_notes": "A public domain was supplied directly; the feed path must pass the connection check.",
             "fit_reason": str(instruction or "Public source supplied by the owner.")[:600],
@@ -2809,15 +2867,49 @@ def _local_source_suggestions(keyword: str, instruction: str = "") -> dict[str, 
         if score:
             ranked.append((score, entry))
     ranked.sort(key=lambda pair: (-pair[0], -int(pair[1]["priority"])))
-    suggestions = [
-        {"name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
-         "summary": str(entry["summary"]), "fit_reason": "بر اساس کلیدواژهٔ واردشده از فهرست رسانه‌های عمومی انتخاب شد."}
-        for _, entry in ranked[:5]
-    ]
+    suggestions = []
+    # Pick one candidate from each available coverage bucket first.  This
+    # prevents five near-identical local sources from crowding out a useful
+    # cross-language/region option, while still filling the result up to five.
+    selected: list[tuple[int, dict[str, object]]] = []
+    seen_buckets: set[tuple[str, str, str]] = set()
+    for score, entry in ranked:
+        source_type = (
+            "finance_media" if _media_query_tokens(" ".join(map(str, entry.get("tags") or ()))) & {"پرداخت", "بانکداری", "فین", "fintech", "banking", "payments", "payment"}
+            else "technology_media" if _media_query_tokens(" ".join(map(str, entry.get("tags") or ()))) & {"فناوری", "technology", "ai", "هوش", "استارتاپ", "startup"}
+            else "specialist_public_media"
+        )
+        bucket = (str(entry.get("language") or "unknown"), str(entry.get("region") or "Global"), source_type)
+        if bucket not in seen_buckets and len(selected) < 5:
+            selected.append((score, entry))
+            seen_buckets.add(bucket)
+    for pair in ranked:
+        if pair not in selected and len(selected) < 5:
+            selected.append(pair)
+    for score, entry in selected[:5]:
+        # A deterministic confidence is deliberately conservative: it is a
+        # discovery ranking, not a claim that the source has already passed
+        # the connection/readability probe.
+        confidence = min(0.96, 0.58 + (float(score) / 20.0) + (0.04 if int(entry["priority"]) >= 4 else 0.0))
+        suggestions.append({
+            "name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
+            "summary": str(entry["summary"]),
+            "fit_reason": "بر اساس کلیدواژه و زاویهٔ واردشده، از فهرست رسانه‌های عمومی انتخاب شد.",
+            "language": str(entry.get("language") or "unknown"),
+            "region": str(entry.get("region") or "Global"),
+            "source_type": (
+                "finance_media" if _media_query_tokens(" ".join(map(str, entry.get("tags") or ()))) & {"پرداخت", "بانکداری", "فین", "fintech", "banking", "payments", "payment"}
+                else "technology_media" if _media_query_tokens(" ".join(map(str, entry.get("tags") or ()))) & {"فناوری", "technology", "ai", "هوش", "استارتاپ", "startup"}
+                else "specialist_public_media"
+            ),
+            "confidence": round(confidence, 2),
+            "evidence": [str(entry["homepage_url"])],
+        })
+    alternatives = [] if suggestions else [str(entry["name"]) for entry in _LOCAL_MEDIA_DIRECTORY[:3]]
     return {
         "suggestions": suggestions,
         "message": "" if suggestions else "در فهرست محلی رسانهٔ دقیقی برای این کلیدواژه پیدا نشد؛ نام مشابه را بررسی کنین.",
-        "alternatives": [] if suggestions else [str(entry["name"]) for entry in _LOCAL_MEDIA_DIRECTORY[:3]],
+        "alternatives": alternatives,
     }
 
 _ASSISTANT_DRAFT_SCHEMA = {
@@ -2946,7 +3038,11 @@ async def draft_assistant(payload: AssistantDraftRequest, user: AdminUser) -> di
     return {"status": "draft", "expires_in_seconds": 300, "draft": draft}
 
 
-async def _catalog_draft(kind: Literal["source", "topic", "business"], name: str, instruction: str) -> dict[str, object]:
+async def _catalog_draft(
+    kind: Literal["source", "topic", "business"],
+    name: str,
+    instruction: str,
+) -> dict[str, object]:
     if kind == "source":
         local_draft = _local_source_draft(name, instruction)
         if local_draft is not None:
@@ -2966,8 +3062,9 @@ async def _catalog_draft(kind: Literal["source", "topic", "business"], name: str
         draft = await asyncio.wait_for(
             client.draft_json(
                 system_prompt=system,
-                # Only the explicit operator input is sent to the optional
-                # drafting provider; project data remains local.
+                # Only the explicit catalog input is sent to the optional
+                # drafting provider. Business profiles, existing sources and
+                # project configuration remain local to this service.
                 user_payload={"kind": kind, "name": name, "instruction": instruction},
                 schema_name=f"market_intelligence_{kind}_draft",
                 schema=schemas[kind],
@@ -2982,13 +3079,16 @@ async def _catalog_draft(kind: Literal["source", "topic", "business"], name: str
         # credentials or a silently persisted record.
         note = "رسانه‌ای با این نام در فهرست محلی پیدا نشد و تحلیل خودکار در دسترس نبود؛ نام دقیق یا دامنهٔ عمومی را وارد کنین."
         if kind == "source":
-            return {"name": name, "homepage_url": "", "fetch_url": "", "adapter": "rss", "language": "fa", "region": "IR", "priority": 3, "access_notes": "", "research_notes": note, "fit_reason": "", "example_article": "", "overlap_notes": "", "match_status": "uncertain", "match_explanation": note, "alternatives": [], "draft_source": "fallback"}
+            return {"name": name, "homepage_url": "", "fetch_url": "", "adapter": "rss", "language": "fa", "output_language": "source", "region": "IR", "priority": 3, "access_notes": "", "research_notes": note, "fit_reason": "", "example_article": "", "overlap_notes": "", "match_status": "uncertain", "match_explanation": note, "alternatives": [], "draft_source": "fallback"}
         if kind == "topic":
             return {"name": name, "definition": f"پوشش و تحلیل اخبار مرتبط با «{name}». ", "positive_terms": [name], "negative_terms": [], "importance": 3, "threshold": 0.45, "research_notes": note, "draft_source": "fallback"}
         return {"business_name": name, "description": "", "products_services": "", "target_customers": "", "markets": "", "revenue_model": "", "strategic_goals": "", "competitors": [], "sensitivities": [], "output_language": "fa", "output_tone": "کوتاه، تحلیلی، اجرایی و رسمی", "research_notes": note, "draft_source": "fallback"}
 
 
-async def _source_suggestions(keyword: str, instruction: str) -> dict[str, object]:
+async def _source_suggestions(
+    keyword: str,
+    instruction: str,
+) -> dict[str, object]:
     """Return up to five concise, review-first media candidates.
 
     The discovery step deliberately does not fabricate feed adapters or
@@ -3002,7 +3102,10 @@ async def _source_suggestions(keyword: str, instruction: str) -> dict[str, objec
     client = OpenAIClient(settings)
     system = (
         "شما پژوهشگر کشف رسانه هستید. برای کلیدواژه داده‌شده حداکثر پنج رسانه تخصصی، "
-        "عمومی و معتبر پیشنهاد دهید. فقط نام، آدرس وب‌سایت، توضیح دو یا سه خطی و دلیل تناسب را برگردانید. "
+        "عمومی و معتبر پیشنهاد دهید. فهرست را از نظر تناسب موضوعی، اعتبار، قابلیت خواندن، "
+        "زبان، منطقه و نوع رسانه متنوع کنید؛ رسانه‌های تکراری یا پنج رسانهٔ هم‌نوع پیشنهاد ندهید. "
+        "برای هر مورد زبان، منطقه، نوع رسانه، امتیاز اطمینان بین صفر و یک و حداکثر سه شاهد معتبر بدهید. "
+        "فقط نام، آدرس وب‌سایت، توضیح دو یا سه خطی و دلیل تناسب را برگردانید. "
         "اگر از اعتبار یا آدرس مطمئن نیستید آن رسانه را پیشنهاد ندهید. اگر مورد مناسبی نیست، "
         "suggestions را خالی بگذارید و در message توضیح کوتاه و در alternatives حداکثر سه نام "
         "مشابه و محتمل پیشنهاد کنید. خروجی فقط JSON باشد."
@@ -3011,6 +3114,8 @@ async def _source_suggestions(keyword: str, instruction: str) -> dict[str, objec
         result = await asyncio.wait_for(
             client.draft_json(
                 system_prompt=system,
+                # Keyword and optional operator guidance are the complete
+                # external discovery payload. Project data stays local.
                 user_payload={"keyword": keyword, "instruction": instruction},
                 schema_name="market_intelligence_source_suggestions",
                 schema=_SOURCE_SUGGESTIONS_SCHEMA,
@@ -3019,7 +3124,18 @@ async def _source_suggestions(keyword: str, instruction: str) -> dict[str, objec
         )
         rows = result.get("suggestions") if isinstance(result, dict) else []
         return {
-            "suggestions": [dict(row) for row in rows[:5] if isinstance(row, dict) and str(row.get("name") or "").strip()],
+            "suggestions": [
+                {
+                    **dict(row),
+                    "language": str(row.get("language") or "unknown"),
+                    "region": str(row.get("region") or "Global"),
+                    "source_type": str(row.get("source_type") or "specialist_public_media"),
+                    "confidence": min(max(float(row.get("confidence", 0.55)), 0.0), 1.0),
+                    "evidence": [str(value)[:2048] for value in (row.get("evidence") or [])[:3] if str(value).strip()],
+                }
+                for row in rows[:5]
+                if isinstance(row, dict) and str(row.get("name") or "").strip() and str(row.get("homepage_url") or "").strip()
+            ],
             "message": str(result.get("message") or "").strip()[:600] if isinstance(result, dict) else "",
             "alternatives": [str(value).strip()[:160] for value in (result.get("alternatives") or [])[:3] if str(value).strip()] if isinstance(result, dict) else [],
         }
@@ -3032,19 +3148,39 @@ async def _source_suggestions(keyword: str, instruction: str) -> dict[str, objec
 
 
 async def _assistant_media_context(assistant_id: uuid.UUID) -> dict[str, object]:
-    """Return local-only media names for duplicate/similar-name handling."""
+    """Return a small, non-secret project brief for media discovery.
+
+    A media name is ambiguous on its own.  This brief is intentionally used
+    only inside Bee Researcher for duplicate detection and alternatives; it
+    is never sent to the optional drafting provider.
+    """
     async with SessionLocal() as session:
         assistant = await session.get(AssistantWorkspace, assistant_id)
         if assistant is None:
             return {}
+        profiles = (await session.scalars(
+            select(BusinessProfile).where(BusinessProfile.assistant_id == assistant_id).order_by(BusinessProfile.id)
+        )).all()
+        selected_id = str((assistant.config or {}).get("active_business_id") or "")
+        profile = next((row for row in profiles if str(row.id) == selected_id), profiles[0] if profiles else None)
         sources = (await session.scalars(
             select(Source.name).where(Source.assistant_id == assistant_id).order_by(Source.priority.desc(), Source.name).limit(20)
         )).all()
-    return {"existing_media": [str(value)[:160] for value in sources]}
+    return {
+        "assistant_name": str(assistant.name or "")[:160],
+        "mission": str(assistant.description or "")[:1200],
+        "business": {
+            "name": str((profile.business_name if profile else assistant.business_name) or "")[:160],
+            "description": str((profile.description if profile else "") or "")[:1200],
+            "markets": str((profile.markets if profile else "") or "")[:500],
+            "products_services": str((profile.products_services if profile else "") or "")[:500],
+        },
+        "existing_media": [str(value)[:160] for value in sources],
+    }
 
 
 def _draft_alternatives(draft: dict[str, object], context: dict[str, object]) -> list[str]:
-    """Combine model alternatives with close local names without guessing URLs."""
+    """Combine model alternatives with close existing names without guessing URLs."""
     alternatives = [str(value).strip()[:160] for value in (draft.get("alternatives") or [])[:3] if str(value).strip()]
     requested = str(draft.get("name") or "").strip()
     known = [str(value).strip() for value in (context.get("existing_media") or []) if str(value).strip()]
@@ -3055,30 +3191,85 @@ def _draft_alternatives(draft: dict[str, object], context: dict[str, object]) ->
 
 
 async def _verify_source_draft(draft: dict[str, object]) -> dict[str, object]:
-    """Bounded, non-persistent connector test using the production parser."""
+    """Check a generated public connector before it is shown as ready to add.
+
+    The test uses the same SSRF checks, robots policy and parsers as runtime
+    collection, but does not persist a Source, article or publication.  It is
+    intentionally bounded to a single request attempt and 20 seconds.
+    """
     homepage = str(draft.get("homepage_url") or "").strip()
     fetch_url = str(draft.get("fetch_url") or "").strip()
     adapter = str(draft.get("adapter") or "rss").strip()
-    if str(draft.get("match_status") or "uncertain") == "not_found" or not homepage or not fetch_url:
-        return {"status": "not_found", "message": str(draft.get("match_explanation") or "رسانهٔ قابل اتکایی برای این نام پیدا نشد.")[:600], "items_found": 0}
+    match_status = str(draft.get("match_status") or "uncertain")
+    if match_status == "not_found" or not homepage or not fetch_url:
+        return {
+            "status": "not_found",
+            "message": str(draft.get("match_explanation") or "رسانهٔ قابل اتکایی برای این نام پیدا نشد.")[:600],
+            "items_found": 0,
+        }
     if adapter not in {"rss", "html", "json", "telegram_public"}:
-        return {"status": "not_usable", "message": "نوع اتصال پیشنهادی برای بررسی خودکار این رسانه قابل استفاده نیست.", "items_found": 0}
+        return {
+            "status": "not_usable",
+            "message": "نوع اتصال پیشنهادی برای بررسی خودکار این رسانه قابل استفاده نیست.",
+            "items_found": 0,
+        }
     try:
         homepage = validate_public_url_syntax(homepage)
         fetch_url = validate_public_url_syntax(fetch_url)
         draft["homepage_url"] = homepage
         draft["fetch_url"] = fetch_url
     except ValueError:
-        return {"status": "not_usable", "message": "آدرس‌های پیشنهادی عمومی و معتبر نیستند؛ این رسانه ثبت نشد.", "items_found": 0}
+        return {
+            "status": "not_usable",
+            "message": "آدرس‌های پیشنهادی عمومی و معتبر نیستند؛ این رسانه ثبت نشد.",
+            "items_found": 0,
+        }
     try:
-        result = await asyncio.wait_for(SourceFetcher(get_settings()).fetch(SourceSpec(source_key="DRAFT-VERIFY", name=str(draft.get("name") or "media draft")[:160], homepage_url=homepage, fetch_url=fetch_url, adapter=adapter, request_timeout_seconds=20, max_retries=0)), timeout=25)
+        result = await asyncio.wait_for(
+            SourceFetcher(get_settings()).fetch(
+                SourceSpec(
+                    source_key="DRAFT-VERIFY",
+                    name=str(draft.get("name") or "media draft")[:160],
+                    homepage_url=homepage,
+                    fetch_url=fetch_url,
+                    adapter=adapter,
+                    request_timeout_seconds=20,
+                    max_retries=0,
+                )
+            ),
+            timeout=25,
+        )
     except (FetchFailure, ValueError, OSError, asyncio.TimeoutError) as exc:
-        return {"status": "not_usable", "message": f"اتصال یا خواندن محتوای رسانه تأیید نشد: {str(exc)[:300]}", "items_found": 0}
+        # A transport/DNS/timeout failure is not proof that the publication
+        # is invalid.  Keep the candidate editable so the owner can correct
+        # its feed path and save it; a real HTTP/content failure below still
+        # remains ``not_usable``.  This avoids the previous dead-end where a
+        # temporarily unavailable network made every valid media name look
+        # like a missing source.
+        status_code = getattr(exc, "status_code", None)
+        if status_code is None:
+            return {
+                "status": "needs_review",
+                "message": f"اتصال خودکار موقتاً در دسترس نبود؛ آدرس و نوع اتصال را مرور و سپس ثبت کنین: {str(exc)[:260]}",
+                "items_found": 0,
+                "editable": True,
+            }
+        return {"status": "not_usable", "message": f"رسانه پاسخ HTTP معتبر نداد: {str(exc)[:300]}", "items_found": 0, "editable": True}
     except Exception:
         return {"status": "not_usable", "message": "اتصال یا خواندن محتوای رسانه تأیید نشد.", "items_found": 0}
     if result.status == "succeeded" and result.items:
-        return {"status": "ready", "message": "اتصال رسانه و خواندن نمونه‌ای از محتوای آن تأیید شد.", "items_found": len(result.items), "response_url": result.response_url}
-    return {"status": "not_usable", "message": "رسانه پاسخ داد، اما محتوای قابل‌خواندن برای این نوع اتصال پیدا نشد.", "items_found": len(result.items), "response_url": result.response_url}
+        return {
+            "status": "ready",
+            "message": "اتصال رسانه و خواندن نمونه‌ای از محتوای آن تأیید شد.",
+            "items_found": len(result.items),
+            "response_url": result.response_url,
+        }
+    return {
+        "status": "not_usable",
+        "message": "رسانه پاسخ داد، اما محتوای قابل‌خواندن برای این نوع اتصال پیدا نشد.",
+        "items_found": len(result.items),
+        "response_url": result.response_url,
+    }
 
 
 async def draft_source(assistant_id: uuid.UUID, payload: CatalogDraftRequest, user: AdminUser) -> dict[str, object]:
@@ -3086,7 +3277,13 @@ async def draft_source(assistant_id: uuid.UUID, payload: CatalogDraftRequest, us
     context = await _assistant_media_context(assistant_id)
     draft = await _catalog_draft("source", payload.name.strip(), payload.instruction.strip())
     draft["alternatives"] = _draft_alternatives(draft, context)
-    return {"kind": "source", "draft": draft, "verification": await _verify_source_draft(draft), "expires_in_seconds": 300}
+    verification = await _verify_source_draft(draft)
+    return {
+        "kind": "source",
+        "draft": draft,
+        "verification": verification,
+        "expires_in_seconds": 300,
+    }
 
 
 _TEMPLATE_BLOCKS = {
@@ -3280,10 +3477,9 @@ async def list_source_suggestions(assistant_id: uuid.UUID, user: AdminUser) -> d
         item = await session.get(AssistantWorkspace, assistant_id)
     if item is None:
         raise HTTPException(status_code=404, detail="assistant not found")
-    # Rejected suggestions remain in the workspace audit/config history, but
-    # are intentionally omitted from the active media-suggestions list so a
-    # dismissed card does not keep reappearing at the bottom of the page.
-    rows = [row for row in _source_suggestion_rows(item.config) if row.get("status") != "rejected"]
+    # The config list is an active review queue. Decisions remove the card;
+    # ignore legacy non-pending rows as a safe migration for old workspaces.
+    rows = [row for row in _source_suggestion_rows(item.config) if row.get("status", "pending") == "pending"]
     return {
         "assistant_id": str(assistant_id),
         "can_approve": is_owner(user),
@@ -3305,23 +3501,41 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
             raise HTTPException(status_code=404, detail="assistant not found")
         config = dict(item.config or {})
         rows = _source_suggestion_rows(config)
+        existing_sources = (await session.execute(select(Source).where(Source.assistant_id == assistant_id))).scalars().all()
+        existing_names = {str(source.name or "").strip().casefold() for source in existing_sources}
+        existing_homepages = {str(source.homepage_url or "").strip().rstrip("/").casefold() for source in existing_sources}
+        pending_homepages = {
+            str((row.get("draft") or {}).get("homepage_url") or "").strip().rstrip("/").casefold()
+            for row in rows if row.get("status", "pending") == "pending"
+        }
         for candidate in candidates[:5]:
+            candidate_name = str(candidate.get("name") or "").strip()[:160]
+            candidate_homepage = str(candidate.get("homepage_url") or "").strip()[:2048]
+            homepage_key = candidate_homepage.rstrip("/").casefold()
+            if not candidate_name or not candidate_homepage or candidate_name.casefold() in existing_names or homepage_key in existing_homepages or homepage_key in pending_homepages:
+                continue
             suggestion = {
                 "id": str(uuid.uuid4()),
                 "keyword": keyword,
-                "name": str(candidate.get("name") or "").strip()[:160],
+                "name": candidate_name,
                 "status": "pending",
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "created_by": str(user.username),
                 "draft": {
-                    "name": str(candidate.get("name") or "").strip()[:160],
-                    "homepage_url": str(candidate.get("homepage_url") or "").strip()[:2048],
+                    "name": candidate_name,
+                    "homepage_url": candidate_homepage,
                     "summary": str(candidate.get("summary") or "").strip()[:600],
                     "fit_reason": str(candidate.get("fit_reason") or "").strip()[:600],
+                    "language": str(candidate.get("language") or "unknown")[:16],
+                    "region": str(candidate.get("region") or "Global")[:32],
+                    "source_type": str(candidate.get("source_type") or "specialist_public_media")[:48],
+                    "confidence": min(max(float(candidate.get("confidence", 0.55)), 0.0), 1.0),
+                    "evidence": [str(value)[:2048] for value in (candidate.get("evidence") or [])[:3] if str(value).strip()],
                 },
             }
             if suggestion["name"] and suggestion["draft"]["homepage_url"]:
                 rows.insert(0, suggestion)
+                pending_homepages.add(homepage_key)
                 suggestions.append(suggestion)
         config["source_suggestions"] = rows[:50]
         item.config = config
@@ -3368,18 +3582,19 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
                 raise HTTPException(status_code=404, detail="source suggestion not found")
             if suggestion.get("status") != "pending":
                 return suggestion
-            suggestion["status"] = "rejected"
-            suggestion["decided_at"] = datetime.now(timezone.utc).isoformat()
-            config["source_suggestions"] = rows
+            # Rejected cards are intentionally not retained in the active
+            # queue. The audit event below preserves who decided and when.
+            config["source_suggestions"] = [row for row in rows if str(row.get("id")) != str(suggestion_id)]
             item.config = config
             await session.commit()
-            result = suggestion
+            result = {"id": str(suggestion_id), "status": "rejected", "removed": True}
     else:
         # Discovery cards intentionally contain only a short summary and
         # website. Resolve the operational feed/adapter details lazily at
         # approval time, outside any database transaction.
         original_draft = suggestion.get("draft") if isinstance(suggestion.get("draft"), dict) else {}
         draft = dict(original_draft)
+        context = await _assistant_media_context(assistant_id)
         if not str(draft.get("fetch_url") or "").strip():
             enriched = await _catalog_draft(
                 "source",
@@ -3442,6 +3657,7 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
                 credential_ref=str(draft.get("credential_ref") or "").strip() or None,
                 account_ref=str(draft.get("account_ref") or "").strip() or None,
                 language=str(draft.get("language") or "fa")[:16],
+                output_language=(str(draft.get("output_language") or "source") if str(draft.get("output_language") or "source") in OUTPUT_LANGUAGE_CODES else "source"),
                 region=str(draft.get("region") or "IR")[:16],
                 priority=min(max(int(draft.get("priority") or 3), 1), 5),
                 access_notes=str(draft.get("access_notes") or ""),
@@ -3451,13 +3667,10 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
             max_order = await session.scalar(select(Source.display_order).where(Source.assistant_id == assistant_id).order_by(Source.display_order.desc()).limit(1))
             source.display_order = int(max_order or 0) + 10
             session.add(source)
-            suggestion["status"] = "approved"
-            suggestion["source_key"] = source_key
-            suggestion["decided_at"] = datetime.now(timezone.utc).isoformat()
-            config["source_suggestions"] = rows
+            config["source_suggestions"] = [row for row in rows if str(row.get("id")) != str(suggestion_id)]
             item.config = config
             await session.commit()
-            result = suggestion
+            result = {"id": str(suggestion_id), "status": "approved", "source_key": source_key, "removed": True}
     await _audit(user.id, "source.suggestion.approve" if approve else "source.suggestion.reject", assistant_id=assistant_id, details={"suggestion_id": str(suggestion_id)})
     return result
 
@@ -3492,6 +3705,7 @@ async def create_source(assistant_id: uuid.UUID, payload: SourceCreate, user: Ad
             fetch_url=payload.fetch_url,
             adapter=payload.adapter,
             language=payload.language,
+            output_language=payload.output_language,
             region=payload.region,
             priority=payload.priority,
             enabled=payload.enabled,

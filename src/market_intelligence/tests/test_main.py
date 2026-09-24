@@ -1,3 +1,4 @@
+import asyncio
 import os
 import unittest
 import uuid
@@ -14,7 +15,19 @@ os.environ.setdefault("MARKET_INTELLIGENCE_REDIS_PASSWORD", "test-password")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import _redact_http_detail, app, settings  # noqa: E402
-from app.admin import AssistantCloneRequest, AssistantRequest, SourceCreate, TopicCreate, _local_source_draft, _local_source_suggestions  # noqa: E402
+from app.admin import (  # noqa: E402
+    AssistantCloneRequest,
+    AssistantRequest,
+    CatalogDraftRequest,
+    SourceCreate,
+    SourceUpdate,
+    TopicCreate,
+    _local_source_draft,
+    _local_source_suggestions,
+    _verify_source_draft,
+    draft_source,
+)
+from app.fetchers import FetchFailure  # noqa: E402
 from app.security_controls import csrf_token_matches, new_csrf_token  # noqa: E402
 
 
@@ -859,14 +872,89 @@ class MainTest(unittest.TestCase):
 
     def test_admin_ui_has_reliable_media_form_and_business_free_assistant_copy(self):
         body = TestClient(app).get("/admin").text
-        self.assertIn("directSourceName", body)
-        self.assertIn("directSourceSmartDraft", body)
-        self.assertIn("source ID is generated automatically", body)
+        self.assertIn('id="media-workflow-v2"', body)
+        self.assertIn("mediaDraftName", body)
+        self.assertIn("mediaReviewHomepage", body)
+        self.assertIn("SourceFetcher(get_settings()).fetch", Path(__file__).resolve().parents[1].joinpath("app", "admin.py").read_text())
         self.assertIn("Business name (optional)", body)
         self.assertIn("const catalogHandlers={source:'openCreateSourceModal',topic:'openCreateTopicModal'}", body)
         self.assertIn("window.__researchBeeReconcileWorkspaceActions=run", body)
         self.assertIn("/admin/api/assistants/'+encodeURIComponent(state.assistantId)+'/sources", body)
         self.assertIn("window.openCreateSourceModal=openCreateSourceModal", body)
+        self.assertIn("Publication language", body)
+        self.assertIn("mediaManualReview", body)
+
+    def test_source_discovery_schema_and_ui_require_a_verified_review_before_add(self):
+        body = TestClient(app).get("/admin").text
+        source = Path(__file__).resolve().parents[1].joinpath("app", "admin.py").read_text()
+        self.assertIn('"match_status"', source)
+        self.assertIn('"alternatives"', source)
+        self.assertIn("async def _verify_source_draft", source)
+        self.assertIn("connection and sample content were verified", body)
+        self.assertIn("status!=='ready'", body)
+        self.assertIn("mediaSuggestKeyword", body)
+        self.assertIn("media-health-summary", body)
+
+    def test_source_draft_returns_project_scoped_verification_and_alternatives(self):
+        assistant_id = uuid.uuid4()
+        user = SimpleNamespace(id=uuid.uuid4(), username="owner", role="owner")
+        draft = {
+            "name": "Reuters",
+            "homepage_url": "https://www.reuters.com",
+            "fetch_url": "https://www.reuters.com/feed/",
+            "adapter": "rss",
+            "priority": 3,
+            "alternatives": ["Reuters Business"],
+        }
+        verification = {"status": "ready", "items_found": 4, "message": "readable"}
+        with (
+            patch("app.admin._require_assistant_access", new=AsyncMock()),
+            patch("app.admin._assistant_media_context", new=AsyncMock(return_value={"existing_media": ["Reuters Markets"]})),
+            patch("app.admin._catalog_draft", new=AsyncMock(return_value=draft)),
+            patch("app.admin._verify_source_draft", new=AsyncMock(return_value=verification)),
+        ):
+            result = asyncio.run(draft_source(assistant_id, CatalogDraftRequest(name="Reuters"), user))
+        self.assertEqual("source", result["kind"])
+        self.assertEqual(verification, result["verification"])
+        self.assertIn("Reuters Business", result["draft"]["alternatives"])
+
+    def test_local_media_directory_keeps_add_and_suggest_working_without_openai(self):
+        draft = _local_source_draft("راه پرداخت", "پرداخت و بانکداری")
+        self.assertIsNotNone(draft)
+        self.assertEqual("https://way2pay.ir/feed/", draft["fetch_url"])
+        self.assertEqual("local_directory", draft["draft_source"])
+        result = _local_source_suggestions("فین‌تک", "پرداخت")
+        self.assertGreaterEqual(len(result["suggestions"]), 1)
+        self.assertEqual([], result["alternatives"])
+
+    def test_local_media_keyword_match_and_per_source_language_are_editable(self):
+        draft = _local_source_draft("فین‌تک ایران", "پرداخت و بانکداری")
+        self.assertIsNotNone(draft)
+        self.assertEqual("local_keyword_match", draft["draft_source"])
+        self.assertEqual("source", draft["output_language"])
+        payload = SourceUpdate(language="en", output_language="de")
+        self.assertEqual("en", payload.language)
+        self.assertEqual("de", payload.output_language)
+
+    def test_transient_media_probe_failure_keeps_draft_editable(self):
+        draft = {
+            "name": "Example Media",
+            "homepage_url": "https://example.com/",
+            "fetch_url": "https://example.com/feed/",
+            "adapter": "rss",
+            "match_status": "match",
+        }
+        with patch("app.admin.SourceFetcher.fetch", new=AsyncMock(side_effect=FetchFailure("source request failed"))):
+            result = asyncio.run(_verify_source_draft(draft))
+        self.assertEqual("needs_review", result["status"])
+        self.assertTrue(result["editable"])
+
+    def test_unknown_media_returns_actionable_alternatives_without_provider(self):
+        draft = _local_source_draft("رسانه ناشناخته", "")
+        self.assertIsNone(draft)
+        result = _local_source_suggestions("کلیدواژه ناشناخته", "")
+        self.assertEqual([], result["suggestions"])
+        self.assertGreaterEqual(len(result["alternatives"]), 1)
 
     def test_authenticated_client_error_uses_dedicated_bounded_endpoint(self):
         with patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4()))):
@@ -1303,31 +1391,6 @@ class MainTest(unittest.TestCase):
         self.assertIn("async function probeSelectedSources()", body)
         self.assertIn("/sources/health-probe?assistant_id='+encodeURIComponent(state.assistantId)", body)
         self.assertIn("await loadAll();const count=Number(result.source_count??0)", body)
-
-    def test_local_media_directory_keeps_add_and_suggest_working_without_openai(self):
-        draft = _local_source_draft("راه پرداخت", "پرداخت و بانکداری")
-        self.assertIsNotNone(draft)
-        self.assertEqual("https://way2pay.ir/feed/", draft["fetch_url"])
-        self.assertEqual("local_directory", draft["draft_source"])
-        result = _local_source_suggestions("فین‌تک", "پرداخت")
-        self.assertGreaterEqual(len(result["suggestions"]), 1)
-        self.assertEqual([], result["alternatives"])
-
-    def test_unknown_media_returns_actionable_alternatives_without_provider(self):
-        self.assertIsNone(_local_source_draft("رسانه ناشناخته", ""))
-        result = _local_source_suggestions("کلیدواژه ناشناخته", "")
-        self.assertEqual([], result["suggestions"])
-        self.assertGreaterEqual(len(result["alternatives"]), 1)
-
-    def test_media_discovery_requires_verified_review_before_registration(self):
-        body = TestClient(app).get("/admin").text
-        source = Path(__file__).resolve().parents[1].joinpath("app", "admin.py").read_text()
-        self.assertIn('"match_status"', source)
-        self.assertIn('"alternatives"', source)
-        self.assertIn("async def _verify_source_draft", source)
-        self.assertIn("mediaDraftName", body)
-        self.assertIn("mediaReviewHomepage", body)
-        self.assertIn("status!=='ready'", body)
 
     def test_manual_ingestion_endpoint(self):
         result = {"status": "completed", "source_count": 1}

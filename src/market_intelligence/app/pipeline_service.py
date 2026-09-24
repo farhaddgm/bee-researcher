@@ -768,6 +768,20 @@ def _profile_payload(profile: BusinessProfile) -> dict[str, object]:
     }
 
 
+def _source_output_language(source: Source, profile: BusinessProfile) -> str:
+    """Resolve the publication language for one source.
+
+    ``source`` means follow the configured business/profile language. A
+    concrete per-source override is intentionally resolved here, at analysis
+    time, so changing one media source never changes another source or the
+    business profile itself.
+    """
+    selected = str(getattr(source, "output_language", "source") or "source").strip().casefold()
+    if selected == "source":
+        selected = str(getattr(profile, "output_language", "fa") or "fa").strip().casefold()
+    return selected if selected in {"fa", "en", "tr", "ar", "it", "es", "de", "fr"} else "fa"
+
+
 def _template_guidance(message_templates: dict | None) -> str:
     """Expose owner-authored per-block writing guidance to the model safely."""
     if not isinstance(message_templates, dict):
@@ -1109,6 +1123,7 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                         for topic, score in topic_rows
                     ],
                     incomplete_text=article.extraction_status == "partial",
+                    output_language=_source_output_language(source, profile),
                 )
                 payload = _structured_analysis_payload(
                     result,
@@ -1255,6 +1270,7 @@ async def reanalyze_fallback_articles(
                     for topic, score in topic_rows
                 ],
                 incomplete_text=article.extraction_status == "partial",
+                output_language=_source_output_language(source, profile),
             )
             payload = _structured_analysis_payload(
                 result,
