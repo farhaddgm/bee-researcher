@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import ipaddress
 import json
 import logging
 import re
 import secrets
+import time
 import uuid
+from collections import deque
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -257,6 +261,81 @@ settings = get_settings()
 logger = logging.getLogger(__name__)
 
 
+class _ClientErrorRateLimiter:
+    """Bound authenticated browser telemetry without retaining session IDs.
+
+    This endpoint is intentionally best-effort and its limiter is process-local:
+    it protects the application log from a noisy/malfunctioning browser while
+    keeping telemetry independent from Redis availability. Keys are one-way
+    hashes of session tokens, never usernames, IP addresses or raw cookies.
+    """
+
+    def __init__(self, *, limit: int = 60, window_seconds: int = 300, max_clients: int = 2048) -> None:
+        self.limit = limit
+        self.window_seconds = window_seconds
+        self.max_clients = max_clients
+        self._events: dict[str, deque[float]] = {}
+
+    def allow(self, session_token: str, *, now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        key = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+        events = self._events.get(key)
+        if events is None:
+            if len(self._events) >= self.max_clients:
+                expired = [client for client, samples in self._events.items() if not samples or samples[-1] <= current - self.window_seconds]
+                for client in expired:
+                    self._events.pop(client, None)
+                if len(self._events) >= self.max_clients:
+                    oldest = min(self._events, key=lambda client: self._events[client][-1] if self._events[client] else float("-inf"))
+                    self._events.pop(oldest, None)
+            events = self._events.setdefault(key, deque())
+        cutoff = current - self.window_seconds
+        while events and events[0] <= cutoff:
+            events.popleft()
+        if len(events) >= self.limit:
+            return False
+        events.append(current)
+        return True
+
+
+_client_error_rate_limiter = _ClientErrorRateLimiter()
+
+
+def _safe_telemetry_token(value: object, limit: int = 64) -> str:
+    token_value = str(value or "")[:limit]
+    return token_value if re.fullmatch(r"[A-Za-z0-9_.:-]+", token_value or "") else "unknown"
+
+
+def _reader_assistant_is_accessible(
+    available: Mapping[str, object], assistant_id: uuid.UUID
+) -> bool:
+    """Fail closed if the workspace service returns a malformed access list."""
+    assistant_rows = available.get("assistants")
+    return isinstance(assistant_rows, list) and any(
+        isinstance(item, Mapping) and str(item.get("id") or "") == str(assistant_id)
+        for item in assistant_rows
+    )
+
+
+async def _read_bounded_request_body(request: Request, limit: int) -> bytes | None:
+    """Read only small telemetry payloads without buffering arbitrary bodies."""
+    content_length = request.headers.get("content-length", "").strip()
+    if content_length:
+        try:
+            if int(content_length) > limit:
+                return None
+        except ValueError:
+            return None
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     stop = asyncio.Event()
@@ -362,8 +441,8 @@ async def redact_http_exception(_request: Request, exc: HTTPException) -> JSONRe
 async def csp_report(request: Request) -> Response:
     """Receive bounded report-only CSP violations without requiring a session."""
 
-    raw = await request.body()
-    if len(raw) > 64_000:
+    raw = await _read_bounded_request_body(request, 64_000)
+    if raw is None:
         return Response(status_code=413)
     if not raw:
         return Response(status_code=204)
@@ -390,9 +469,17 @@ async def client_error_report(
     ``/health?client_error=...`` beacon, which polluted health telemetry.
     """
 
+    # Apply the per-session ceiling before the database-backed session lookup
+    # so a noisy client cannot turn its own error beacon into an unbounded DB
+    # workload. Missing/invalid sessions still receive the normal auth error.
+    if not token:
+        await current_admin(token)
+        return Response(status_code=401)
+    if not _client_error_rate_limiter.allow(token):
+        return Response(status_code=429, headers={"Retry-After": "60"})
     await current_admin(token)
-    raw = await request.body()
-    if len(raw) > 1_024:
+    raw = await _read_bounded_request_body(request, 1_024)
+    if raw is None:
         return Response(status_code=413)
     try:
         payload = json.loads(raw.decode("utf-8")) if raw else {}
@@ -401,17 +488,16 @@ async def client_error_report(
     if not isinstance(payload, dict):
         return Response(status_code=400)
     kind = str(payload.get("kind") or "unknown")[:32]
-    view = str(payload.get("view") or "unknown")[:80]
     if kind not in {"window", "promise", "action", "unknown"}:
         kind = "unknown"
-    def safe_token(value: object, limit: int = 64) -> str:
-        token = str(value or "")[:limit]
-        return token if re.fullmatch(r"[A-Za-z0-9_.:-]+", token or "") else "unknown"
-
-    action = safe_token(payload.get("action")) if kind == "action" else ""
-    phase = safe_token(payload.get("phase")) if kind == "action" else ""
-    outcome = safe_token(payload.get("outcome")) if kind == "action" else ""
-    route = safe_token(payload.get("route"), 96) if kind == "action" else ""
+    # Browser context is useful for triage, but never trust arbitrary text from
+    # the client: it could contain user content, control characters or a
+    # username. Restrict it to the same low-risk token alphabet as actions.
+    view = _safe_telemetry_token(payload.get("view"), 80)
+    action = _safe_telemetry_token(payload.get("action")) if kind == "action" else ""
+    phase = _safe_telemetry_token(payload.get("phase")) if kind == "action" else ""
+    outcome = _safe_telemetry_token(payload.get("outcome")) if kind == "action" else ""
+    route = _safe_telemetry_token(payload.get("route"), 96) if kind == "action" else ""
     status = payload.get("status") if kind == "action" else None
     duration = payload.get("duration_ms") if kind == "action" else None
     if not isinstance(status, int) or status < 0 or status > 999:
@@ -528,10 +614,8 @@ async def private_indexing_headers(request: Request, call_next):
         f"style-src {style_source}; font-src 'self'; img-src 'self' data:; "
         "connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
     )
-    # Keep the compatibility policy only while the inline migration is in
-    # progress.  Deployments can opt into the strict policy after browser
-    # smoke verification; strict mode never includes either unsafe-inline
-    # exception.
+    # Compatibility mode remains an explicit emergency rollback only. Strict
+    # CSP is the default and never includes either unsafe-inline exception.
     compatibility_policy = (
         f"default-src 'self'; script-src {script_source}; script-src-attr 'unsafe-inline'; "
         f"style-src {style_source}; style-src-attr 'unsafe-inline'; "
@@ -832,7 +916,7 @@ async def user_api_publications(
     # Reuse the same project membership boundary as the back-office, while
     # exposing only the final Telegram-ready message and no settings.
     available = await reader_assistants(user)
-    if str(assistant_id) not in {str(item["id"]) for item in available["assistants"]}:
+    if not _reader_assistant_is_accessible(available, assistant_id):
         raise HTTPException(status_code=403, detail="workspace access denied")
     rows = await list_publications(status="published", limit=limit, assistant_id=assistant_id, query=query)
     return {
@@ -1434,6 +1518,10 @@ async def metadata(token: str | None = Cookie(default=None, alias="research_bee_
     return {
         "service": "market-intelligence",
         "version": settings.version,
+        "source_revision": settings.build_revision,
+        # Deployment tooling injects the immutable promoted digest; the
+        # running process must not guess it from a mutable image tag.
+        "image_digest": settings.image_digest,
         "environment": settings.environment,
         "business_name": settings.business_name,
         "database_schema": settings.database_schema,
@@ -1911,7 +1999,7 @@ async def feedback_ranking_rollback(token: str | None = Cookie(default=None, ali
 
 
 @app.post("/retention/run")
-async def retention_run(token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
+async def retention_run(token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, int]:
     if not is_owner(await current_admin(token)):
         raise HTTPException(status_code=403, detail="owner role required")
     return await apply_retention(settings)

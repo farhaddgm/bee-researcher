@@ -17,6 +17,8 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
 import httpx
+from defusedxml import ElementTree as SafeET
+from defusedxml.common import DefusedXmlException
 
 from app.config import Settings
 
@@ -184,7 +186,15 @@ def _entry_url(entry: ET.Element, base_url: str) -> str:
 def parse_feed(content: bytes, base_url: str, limit: int = 50) -> list[DiscoveredItem]:
     if b"<!DOCTYPE" in content[:4096].upper():
         raise ValueError("XML documents with a DOCTYPE are not accepted")
-    root = ET.fromstring(content)
+    try:
+        root = SafeET.fromstring(
+            content,
+            forbid_dtd=True,
+            forbid_entities=True,
+            forbid_external=True,
+        )
+    except DefusedXmlException as exc:
+        raise ValueError("Unsafe XML document rejected") from exc
     entries = [
         node
         for node in root.iter()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from typing import Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -15,7 +16,9 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 
 class Settings(BaseSettings):
     app_name: str = "Bee Researcher"
-    version: str = "3.30.8"
+    version: str = "3.30.14"
+    build_revision: str = "unknown"
+    image_digest: str | None = None
     environment: str = "production"
     # Public host names are used only to validate same-origin requests behind
     # the reverse proxy. They are not credentials and may be omitted locally.
@@ -114,15 +117,11 @@ class Settings(BaseSettings):
     login_window_seconds: int = Field(default=900, ge=60, le=3600)
     max_request_body_bytes: int = Field(default=2_000_000, ge=64_000, le=10_000_000)
 
-    # CSP is enforced with the compatibility policy while the legacy UI is
-    # migrated.  The stricter policy is emitted in report-only mode so every
-    # remaining inline event/style attribute is visible before enforcement.
+    # The nonce-based strict policy is the default. Legacy handlers/styles
+    # are migrated to ordinary listeners and nonce-authorized rules at runtime;
+    # compatibility remains an explicit rollback only, not the normal posture.
     csp_report_only: bool = True
-    # Opt-in enforcement switch for the final CSP migration.  It stays off
-    # until the browser smoke suite confirms that no legacy inline attribute
-    # is still required; the CI budget prevents the compatibility surface
-    # from growing in the meantime.
-    csp_strict: bool = False
+    csp_strict: bool = True
     csp_report_uri: str = "/admin/api/security/csp-report"
 
     openai_api_key: SecretStr | None = None
@@ -138,7 +137,7 @@ class Settings(BaseSettings):
     # WhatsApp is intentionally disabled until the owner supplies official
     # Meta credentials and a public webhook. Secrets never enter the sheet.
     whatsapp_enabled: bool = False
-    whatsapp_destination_type: str = "cloud_api"
+    whatsapp_destination_type: Literal["cloud_api", "channel"] = "cloud_api"
     whatsapp_business_account_id: str | None = None
     whatsapp_phone_number_id: str | None = None
     whatsapp_channel_id: str | None = None
@@ -246,11 +245,13 @@ class Settings(BaseSettings):
 
     @field_validator("whatsapp_destination_type")
     @classmethod
-    def valid_whatsapp_destination_type(cls, value: str) -> str:
+    def valid_whatsapp_destination_type(cls, value: str) -> Literal["cloud_api", "channel"]:
         value = value.strip().lower()
-        if value not in {"cloud_api", "channel"}:
-            raise ValueError("whatsapp_destination_type must be cloud_api or channel")
-        return value
+        if value == "cloud_api":
+            return "cloud_api"
+        if value == "channel":
+            return "channel"
+        raise ValueError("whatsapp_destination_type must be cloud_api or channel")
 
     @field_validator("whatsapp_webhook_public_url")
     @classmethod
@@ -320,4 +321,6 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    # Required values are loaded from the environment by BaseSettings; mypy
+    # cannot see those values at construction time.
+    return Settings()  # type: ignore[call-arg]

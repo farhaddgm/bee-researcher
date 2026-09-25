@@ -120,6 +120,18 @@ class BeeCFOGovernanceTest(unittest.TestCase):
         quiet = evaluate_attention_budget(candidate, policy=policy, recent_count=0, duplicate_seen=False, now=datetime(2026, 8, 25, 1, tzinfo=timezone.utc))
         self.assertEqual("quiet_hours", quiet["reason"])
         self.assertFalse(quiet["delivery_performed"])
+        with self.assertRaisesRegex(ValueError, "daily_cap must be an integer"):
+            normalize_attention_policy({"daily_cap": 1.5})
+
+    def test_verified_pilot_check_builder_ignores_malformed_nested_shapes(self):
+        result = build_verified_pilot_checks(
+            report={"current_state": "not-a-mapping", "media_forecasts": {"not": "a list"}},
+            price_snapshot={"price_source_health": []},
+            quality_gate={"checks": None},
+            canary_preview={"checks": []},
+            shadow_run={"run": object()},
+        )
+        self.assertFalse(any(result.values()))
 
     def test_market_pack_order_is_explicit_and_non_activating(self):
         self.assertEqual(["USD_FREE", "BTC_USDT"], [item["pack_key"] for item in MARKET_PACKS])

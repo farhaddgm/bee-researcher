@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from decimal import Decimal
 import hashlib
 import json
 from urllib.parse import urlsplit
@@ -189,9 +190,11 @@ def evaluate_source_contract(
 
 def _value(quote: object) -> float | None:
     value = getattr(quote, "value", None)
+    if not isinstance(value, (str, bytes, bytearray, int, float, Decimal)):
+        return None
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return parsed if parsed > 0 else None
 

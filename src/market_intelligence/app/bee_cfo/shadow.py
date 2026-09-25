@@ -63,13 +63,15 @@ def build_shadow_run(
     output_hash = _digest(output)
     previous_hash = _digest(previous_output) if previous_output is not None else None
     state = output["current_state"]
+    previous_state_value = previous_output.get("current_state") if previous_output is not None else None
+    previous_state = previous_state_value if isinstance(previous_state_value, Mapping) else None
     evidence = verify_evidence_pack(state.get("evidence_pack")) if isinstance(state, Mapping) else {
         "ready": False,
         "reason": "missing_evidence_pack",
         "entry_count": 0,
     }
     diff = build_report_diff(
-        previous_output.get("current_state") if previous_output is not None else None,
+        previous_state,
         state if isinstance(state, Mapping) else {},
     )
     checks = {

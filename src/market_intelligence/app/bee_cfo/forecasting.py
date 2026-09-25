@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from statistics import mean
 from typing import Iterable, Mapping
 
@@ -18,12 +19,21 @@ CHAMPION_CHALLENGER_REVISION = "bee-cfo-champion-challenger-1"
 MIN_CHAMPION_CHALLENGER_SAMPLES = 20
 
 
-def _finite(value: object) -> float | None:
+def _number(value: object) -> float | None:
+    """Convert trusted scalar inputs without invoking arbitrary __float__ hooks."""
+
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        return None
     try:
         number = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError, InvalidOperation):
         return None
-    return number if math.isfinite(number) and number > 0 else None
+    return number if math.isfinite(number) else None
+
+
+def _finite(value: object) -> float | None:
+    number = _number(value)
+    return number if number is not None and number > 0 else None
 
 
 def _normal_cdf(value: float) -> float:
@@ -138,11 +148,16 @@ def evaluate_champion_challenger(
     minimum_samples: int = MIN_CHAMPION_CHALLENGER_SAMPLES,
 ) -> dict[str, object]:
     """Make a candidate eligible for review only after a time-ordered win."""
-    try:
-        samples = int(walk_forward.get("sample_size") or 0)
-        champion_mae = float(walk_forward.get("baseline_mae"))
-        challenger_mae = float(walk_forward.get("ensemble_mae"))
-    except (TypeError, ValueError):
+    raw_samples = walk_forward.get("sample_size")
+    sample_number = _number(raw_samples)
+    champion_mae = _number(walk_forward.get("baseline_mae"))
+    challenger_mae = _number(walk_forward.get("ensemble_mae"))
+    if (
+        sample_number is None
+        or not sample_number.is_integer()
+        or champion_mae is None
+        or challenger_mae is None
+    ):
         return {
             "revision": CHAMPION_CHALLENGER_REVISION,
             "status": "insufficient_evidence",
@@ -150,6 +165,7 @@ def evaluate_champion_challenger(
             "public_target_permitted": False,
             "reason": "walk-forward metrics are incomplete",
         }
+    samples = int(sample_number)
     eligible = (
         walk_forward.get("status") == "available"
         and samples >= minimum_samples
@@ -211,7 +227,15 @@ def build_price_forecasts(
     walk_forward = _walk_forward_metrics(values)
     champion_challenger = evaluate_champion_challenger(walk_forward)
     trend_weight = 0.40 if len(cleaned) >= MIN_TREND_OBSERVATIONS else 0.0
-    if trend_weight and walk_forward.get("status") == "available" and float(walk_forward.get("ensemble_mae") or 0) > float(walk_forward.get("baseline_mae") or 0) * 1.05:
+    ensemble_mae = _number(walk_forward.get("ensemble_mae"))
+    baseline_mae = _number(walk_forward.get("baseline_mae"))
+    if (
+        trend_weight
+        and walk_forward.get("status") == "available"
+        and ensemble_mae is not None
+        and baseline_mae is not None
+        and ensemble_mae > baseline_mae * 1.05
+    ):
         trend_weight = 0.15
     statistical_weight = 0.15 if len(cleaned) >= MIN_STATISTICAL_OBSERVATIONS else 0.0
     baseline_weight = 1.0 - trend_weight - statistical_weight
@@ -312,11 +336,14 @@ def evaluate_price_forecast(forecast: Mapping[str, object], actual_value: object
     change = (actual / baseline) - 1 if baseline else 0.0
     actual_state = "up" if change > FLAT_THRESHOLD else "down" if change < -FLAT_THRESHOLD else "flat"
     probabilities = {
-        "up": float(forecast.get("probability_up") or 0),
-        "down": float(forecast.get("probability_down") or 0),
-        "flat": float(forecast.get("probability_flat") or 0),
+        key: min(1.0, max(0.0, _number(forecast.get(field)) or 0.0))
+        for key, field in (
+            ("up", "probability_up"),
+            ("down", "probability_down"),
+            ("flat", "probability_flat"),
+        )
     }
-    predicted_state = max(probabilities, key=probabilities.get)
+    predicted_state = max(probabilities, key=lambda key: probabilities[key])
     one_hot = {key: 1.0 if key == actual_state else 0.0 for key in probabilities}
     brier = sum((probabilities[key] - one_hot[key]) ** 2 for key in probabilities)
     return {
@@ -336,11 +363,11 @@ def aggregate_calibration(records: Iterable[Mapping[str, object]]) -> dict[str, 
     if not rows:
         return {"status": "no_call", "sample_size": 0}
     def avg(key: str) -> float | None:
-        values = [float(row[key]) for row in rows if row.get(key) is not None]
+        values = [number for row in rows if (number := _number(row.get(key))) is not None]
         return mean(values) if values else None
     hits = [row for row in rows if row.get("direction_hit") is not None]
     covered = [row for row in rows if row.get("interval_covered") is not None]
-    brier_values = [float(row["brier_score"]) for row in rows if row.get("brier_score") is not None]
+    brier_values = [number for row in rows if (number := _number(row.get("brier_score"))) is not None]
     drift = None
     drift_status = "not_enough_history"
     if len(brier_values) >= 10:

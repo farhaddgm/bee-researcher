@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -67,7 +68,7 @@ def _catalog_option_readiness(
     *,
     market: BeeCFOMarket,
     indicator: BeeCFOIndicator,
-    sources: list[BeeCFOIndicatorSource],
+    sources: Sequence[BeeCFOIndicatorSource],
     selected: bool,
     approved_source_keys: set[str] | None = None,
 ) -> dict[str, object]:
@@ -126,7 +127,7 @@ def _catalog_option_readiness(
 async def _approved_source_keys(
     assistant_id: uuid.UUID,
     *,
-    sources: list[BeeCFOIndicatorSource],
+    sources: Sequence[BeeCFOIndicatorSource],
     indicators_by_id: dict[uuid.UUID, BeeCFOIndicator],
 ) -> set[str]:
     """Read the latest source-decision ledger without mutating catalog state."""
@@ -138,7 +139,7 @@ async def _approved_source_keys(
 async def _approved_source_decisions(
     assistant_id: uuid.UUID,
     *,
-    sources: list[BeeCFOIndicatorSource],
+    sources: Sequence[BeeCFOIndicatorSource],
     indicators_by_id: dict[uuid.UUID, BeeCFOIndicator],
 ) -> dict[str, dict[str, object]]:
     """Return pinned owner decisions keyed by source without changing state."""
@@ -166,16 +167,16 @@ async def _approved_source_decisions(
         latest.setdefault(event.event_key, event)
     allowed: dict[str, dict[str, object]] = {}
     for event_key, source in source_pairs.items():
-        event = latest.get(event_key)
+        latest_event = latest.get(event_key)
         indicator = indicators_by_id[source.indicator_id]
-        if event and source_decision_allows_delivery(
-            event.status,
-            event.payload,
+        if latest_event and source_decision_allows_delivery(
+            latest_event.status,
+            latest_event.payload,
             indicator_key=indicator.indicator_key,
             source_key=source.source_key,
             current_contract_fingerprint=source_contract_fingerprint(indicator=indicator, source=source),
         ):
-            allowed[source.source_key] = dict(event.payload or {})
+            allowed[source.source_key] = dict(latest_event.payload or {})
     return allowed
 
 
@@ -379,6 +380,7 @@ async def probe_indicator_sources(
         checked_at = datetime.now(timezone.utc)
         try:
             quote = await fetch_price_quote(indicator=indicator, source=source, settings=settings)
+            provider_signature = quote.raw.get("provider_signature")
             async with SessionLocal() as session:
                 row = await session.get(BeeCFOIndicatorSource, source.id)
                 if row is not None:
@@ -393,9 +395,9 @@ async def probe_indicator_sources(
                     "status": "passed",
                     "value": quote.value,
                     "observed_at": quote.observed_at.isoformat(),
-                    "provider_signature": quote.raw.get("provider_signature") if isinstance(quote.raw, dict) else None,
-                    "provider_fixture_candidate": build_provider_fixture(quote.raw["provider_signature"])
-                    if isinstance(quote.raw, dict) and isinstance(quote.raw.get("provider_signature"), dict) else None,
+                    "provider_signature": provider_signature,
+                    "provider_fixture_candidate": build_provider_fixture(provider_signature)
+                    if isinstance(provider_signature, dict) else None,
                 }
             )
         except Exception as exc:
@@ -589,10 +591,17 @@ async def capture_price_snapshot(
         attempted_sources.append(source.source_key)
         try:
             quote = await fetch_price_quote(indicator=indicator, source=source, settings=settings)
+            decision = approved_decisions[source.source_key]
+            provider_fixture = decision.get("provider_fixture")
+            if not isinstance(provider_fixture, Mapping):
+                provider_fixture = None
+            provider_signature = quote.raw.get("provider_signature")
+            if not isinstance(provider_signature, Mapping):
+                provider_signature = None
             provider_contract = evaluate_provider_response(
-                approved_decisions[source.source_key].get("provider_fixture"),
-                quote.raw.get("provider_signature") if isinstance(quote.raw, dict) else None,
-                enforced=bool(approved_decisions[source.source_key].get("provider_fixture_enforced", False)),
+                provider_fixture,
+                provider_signature,
+                enforced=bool(decision.get("provider_fixture_enforced", False)),
             )
             if not provider_contract["delivery_permitted"]:
                 async with SessionLocal() as session:
@@ -620,6 +629,8 @@ async def capture_price_snapshot(
                     await session.commit()
             break
         except Exception as exc:
+            quote = None
+            selected_source = None
             errors.append(f"{source.source_key}: {type(exc).__name__}: {exc}"[:240])
             async with SessionLocal() as session:
                 row = await session.get(BeeCFOIndicatorSource, source.id)
@@ -627,7 +638,7 @@ async def capture_price_snapshot(
                     row.last_checked_at = datetime.now(timezone.utc)
                     row.last_error = str(exc)[:500]
                     await session.commit()
-    if quote is None:
+    if quote is None or selected_source is None:
         raise PriceUnavailable("; ".join(errors)[:1000] or "no approved price source returned a quote")
 
     verifier: PriceQuote | None = None
@@ -690,7 +701,11 @@ async def capture_price_snapshot(
         except ValueError as exc:
             raise PriceUnavailable(str(exc)) from exc
         change_value = quote.value - previous_value if previous_value is not None else None
-        change_percent = (change_value / previous_value * 100) if previous_value not in (None, 0) else None
+        change_percent = (
+            (quote.value - previous_value) / previous_value * 100
+            if previous_value is not None and previous_value != 0
+            else None
+        )
         comparison = {
             "status": "available" if previous_value is not None else "unavailable",
             "window_hours": int(comparison_window_hours),

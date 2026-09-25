@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
+from pydantic import SecretStr
 
 
 os.environ.setdefault("MARKET_INTELLIGENCE_POSTGRES_DB", "assistant_test")
@@ -14,28 +15,221 @@ os.environ.setdefault("MARKET_INTELLIGENCE_REDIS_PASSWORD", "test-password")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app.main import _redact_http_detail, app, settings  # noqa: E402
+from app.main import (  # noqa: E402
+    _ClientErrorRateLimiter,
+    _redact_http_detail,
+    _reader_assistant_is_accessible,
+    _safe_telemetry_token,
+    app,
+    settings,
+)
 from app.admin import (  # noqa: E402
     AssistantCloneRequest,
     AssistantRequest,
+    AssistantUpdate,
     CatalogDraftRequest,
+    DEFAULT_ASSISTANT_ID,
     SourceCreate,
     SourceUpdate,
     TopicCreate,
+    _telegram_config,
     _local_source_draft,
     _local_source_suggestions,
     _verify_source_draft,
+    assistant_readiness,
     draft_source,
+    update_assistant,
 )
 from app.fetchers import FetchFailure  # noqa: E402
 from app.security_controls import csrf_token_matches, new_csrf_token  # noqa: E402
 
 
 class MainTest(unittest.TestCase):
+    def test_reader_assistant_access_check_fails_closed_on_malformed_workspace_data(self):
+        assistant_id = uuid.uuid4()
+        self.assertTrue(
+            _reader_assistant_is_accessible(
+                {"assistants": [{"id": str(assistant_id)}]}, assistant_id
+            )
+        )
+        self.assertFalse(_reader_assistant_is_accessible({"assistants": [None]}, assistant_id))
+        self.assertFalse(_reader_assistant_is_accessible({"assistants": "not-a-list"}, assistant_id))
+
+    def test_legacy_assistant_readiness_uses_effective_inherited_destinations(self):
+        assistant_id = DEFAULT_ASSISTANT_ID
+        workspace = SimpleNamespace(
+            id=assistant_id,
+            status="active",
+            deleted_at=None,
+            business_name="",
+            config={"runtime": {"max_items_per_run": 7, "analysis_model": "test-model", "schedule_slots": []}},
+        )
+
+        class ScalarResult:
+            def __init__(self, value):
+                self.value = value
+
+            def scalar_one(self):
+                return self.value
+
+        class FakeAsyncSession:
+            async def get(self, _model, _assistant_id):
+                return workspace
+
+            async def execute(self, _statement):
+                return ScalarResult(next(counts))
+
+        class FakeSessionContext:
+            async def __aenter__(self):
+                return FakeAsyncSession()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        counts = iter((2, 1, 0))
+        owner = SimpleNamespace(username="owner", role="owner")
+        telegram_settings = SimpleNamespace(
+            admin_owner_username="owner",
+            telegram_bot_token=SecretStr("123456:server-secret"),
+            telegram_channel_id="-100111",
+            telegram_observer_channel_id="-100222",
+        )
+
+        async def fake_access(_assistant_id, _user):
+            return workspace
+
+        with (
+            patch("app.admin._require_assistant_access", new=AsyncMock(side_effect=fake_access)),
+            patch("app.admin.SessionLocal", return_value=FakeSessionContext()),
+            patch("app.admin.get_settings", return_value=telegram_settings),
+        ):
+            readiness = asyncio.run(assistant_readiness(assistant_id, owner))
+        self.assertTrue(readiness["ready"])
+        self.assertTrue(readiness["checks"]["feedback_channel"])
+        self.assertTrue(readiness["checks"]["observer_channel"])
+        self.assertEqual([], readiness["missing"])
+
+
+    def test_owner_can_update_workspace_without_admin_user_fields(self):
+        assistant_id = uuid.uuid4()
+        workspace = SimpleNamespace(
+            id=assistant_id,
+            slug="dotin",
+            name="Dotin",
+            status="active",
+        )
+
+        class FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def get(self, _model, _assistant_id, **_kwargs):
+                return workspace
+
+            async def commit(self):
+                return None
+
+        owner = SimpleNamespace(id=uuid.uuid4(), role="owner")
+        with (
+            patch("app.admin._require_project_admin", new=AsyncMock(return_value=workspace)),
+            patch("app.admin.SessionLocal", return_value=FakeSession()),
+            patch("app.admin._audit", new=AsyncMock()),
+        ):
+            result = asyncio.run(
+                update_assistant(
+                    assistant_id,
+                    AssistantUpdate(name="Dotin updated"),
+                    owner,
+                )
+            )
+
+        self.assertEqual("Dotin updated", workspace.name)
+        self.assertEqual(str(assistant_id), result["id"])
+
+    def test_readiness_uses_effective_legacy_telegram_destinations(self):
+        configured = SimpleNamespace(
+            telegram_bot_token=SecretStr("123456:server-secret"),
+            telegram_channel_id="-100111",
+            telegram_observer_channel_id="-100222",
+        )
+        with patch("app.admin.get_settings", return_value=configured):
+            inherited = _telegram_config({}, assistant_id=DEFAULT_ASSISTANT_ID)
+            isolated = _telegram_config({}, assistant_id=uuid.uuid4())
+            explicitly_cleared = _telegram_config(
+                {"telegram": {"feedback_channel_id": None, "observer_channel_id": None}},
+                assistant_id=DEFAULT_ASSISTANT_ID,
+            )
+
+        self.assertEqual("-100111", inherited["feedback_channel_id"])
+        self.assertEqual("-100222", inherited["observer_channel_id"])
+        self.assertIsNone(isolated["feedback_channel_id"])
+        self.assertIsNone(isolated["observer_channel_id"])
+        self.assertIsNone(explicitly_cleared["feedback_channel_id"])
+        self.assertIsNone(explicitly_cleared["observer_channel_id"])
+        self.assertTrue(inherited["token_configured"])
+        self.assertNotIn("server-secret", repr(inherited))
+
     def test_http_error_details_redact_credentials_recursively(self):
         detail = _redact_http_detail({"message": "Bearer secret-token", "items": ["?api_key=hidden"]})
         self.assertEqual("Bearer [REDACTED]", detail["message"])
         self.assertEqual("?api_key=[REDACTED]", detail["items"][0])
+
+    def test_browser_error_telemetry_is_rate_limited_and_context_is_safe(self):
+        limiter = _ClientErrorRateLimiter(limit=2, window_seconds=10, max_clients=2)
+        self.assertTrue(limiter.allow("opaque-session-a", now=1))
+        self.assertTrue(limiter.allow("opaque-session-a", now=2))
+        self.assertFalse(limiter.allow("opaque-session-a", now=3))
+        self.assertTrue(limiter.allow("opaque-session-b", now=3))
+        self.assertTrue(limiter.allow("opaque-session-a", now=12))
+        self.assertEqual("sources", _safe_telemetry_token("sources", 80))
+        self.assertEqual("unknown", _safe_telemetry_token("alice@example.com", 80))
+        self.assertEqual("unknown", _safe_telemetry_token("view\nforged-log-entry", 80))
+
+    def test_authenticated_client_error_endpoint_enforces_rate_limit(self):
+        limiter = _ClientErrorRateLimiter(limit=1, window_seconds=300, max_clients=8)
+        client = TestClient(app)
+        session_token = "test-admin-browser-session"
+        csrf_token = new_csrf_token(session_token, settings)
+        client.cookies.set("research_bee_admin_session", session_token)
+        client.cookies.set("research_bee_admin_csrf", csrf_token)
+        headers = {"X-CSRF-Token": csrf_token}
+        with (
+            patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4()))),
+            patch("app.main._client_error_rate_limiter", limiter),
+        ):
+            accepted = client.post(
+                "/admin/api/security/client-error",
+                json={"kind": "window", "view": "overview"},
+                headers=headers,
+            )
+            limited = client.post(
+                "/admin/api/security/client-error",
+                json={"kind": "window", "view": "overview"},
+                headers=headers,
+            )
+        self.assertEqual(204, accepted.status_code)
+        self.assertEqual(429, limited.status_code)
+        self.assertEqual("60", limited.headers.get("retry-after"))
+
+    def test_authenticated_client_error_rejects_oversized_body_at_telemetry_limit(self):
+        session_token = "oversized-admin-browser-session"
+        csrf_token = new_csrf_token(session_token, settings)
+        client = TestClient(app)
+        client.cookies.set("research_bee_admin_session", session_token)
+        client.cookies.set("research_bee_admin_csrf", csrf_token)
+        with (
+            patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4()))),
+            patch("app.main._client_error_rate_limiter", _ClientErrorRateLimiter(limit=4)),
+        ):
+            response = client.post(
+                "/admin/api/security/client-error",
+                content=b"x" * 1_025,
+                headers={"X-CSRF-Token": csrf_token, "content-type": "application/json"},
+            )
+        self.assertEqual(413, response.status_code)
 
     def test_csrf_token_is_signed_and_bound_to_session(self):
         session = "opaque-session"
@@ -53,6 +247,8 @@ class MainTest(unittest.TestCase):
         self.assertEqual(settings.queue_namespace, body["queue_namespace"])
         self.assertEqual(["rss", "html", "json", "telegram_public", "telegram_private", "instagram_public", "instagram_private", "x_public", "x_private"], body["ingestion"]["adapters"])
         self.assertEqual(settings.version, body["version"])
+        self.assertEqual(settings.build_revision, body["source_revision"])
+        self.assertEqual(settings.image_digest, body["image_digest"])
         self.assertEqual(6, body["admin_session_idle_hours"])
         self.assertEqual(3, body["freshness_window_days"])
         self.assertEqual(settings.pilot_mode, body["pipeline"]["pilot_mode"])
@@ -124,11 +320,13 @@ class MainTest(unittest.TestCase):
         self.assertEqual("DENY", admin.headers["x-frame-options"])
         self.assertIn("frame-ancestors 'none'", admin.headers["content-security-policy"])
         self.assertNotIn("script-src 'self' 'unsafe-inline'", admin.headers["content-security-policy"])
-        self.assertIn("script-src-attr 'unsafe-inline'", admin.headers["content-security-policy"])
+        self.assertNotIn("script-src-attr", admin.headers["content-security-policy"])
+        self.assertNotIn("style-src-attr", admin.headers["content-security-policy"])
+        self.assertNotIn("unsafe-inline", admin.headers["content-security-policy"])
         self.assertIn("nonce-", admin.headers["content-security-policy"])
         self.assertIn("Content-Security-Policy-Report-Only", admin.headers)
         self.assertIn("report-uri /admin/api/security/csp-report", admin.headers["content-security-policy-report-only"])
-        self.assertNotIn("script-src-attr 'unsafe-inline'", admin.headers["content-security-policy-report-only"])
+        self.assertNotIn("script-src-attr", admin.headers["content-security-policy-report-only"])
         self.assertIn("camera=()", admin.headers["permissions-policy"])
         self.assertEqual("same-origin", admin.headers["cross-origin-opener-policy"])
         self.assertEqual("none", admin.headers["x-permitted-cross-domain-policies"])
@@ -957,14 +1155,25 @@ class MainTest(unittest.TestCase):
         self.assertGreaterEqual(len(result["alternatives"]), 1)
 
     def test_authenticated_client_error_uses_dedicated_bounded_endpoint(self):
+        session_token = "authenticated-client-error-session"
+        csrf_token = new_csrf_token(session_token, settings)
+
+        def authenticated_client():
+            client = TestClient(app)
+            client.cookies.set("research_bee_admin_session", session_token)
+            client.cookies.set("research_bee_admin_csrf", csrf_token)
+            return client
+
+        headers = {"X-CSRF-Token": csrf_token}
         with patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4()))):
-            response = TestClient(app).post(
+            response = authenticated_client().post(
                 "/admin/api/security/client-error",
                 json={"kind": "window", "view": "sources"},
+                headers=headers,
             )
         self.assertEqual(204, response.status_code)
         with patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(id=uuid.uuid4()))):
-            action_response = TestClient(app).post(
+            action_response = authenticated_client().post(
                 "/admin/api/security/client-error",
                 json={
                     "kind": "action",
@@ -976,6 +1185,7 @@ class MainTest(unittest.TestCase):
                     "status": 500,
                     "duration_ms": 321,
                 },
+                headers=headers,
             )
         self.assertEqual(204, action_response.status_code)
         body = TestClient(app).get("/admin").text

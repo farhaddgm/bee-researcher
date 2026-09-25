@@ -38,7 +38,8 @@ def _contains_personal_advice(messages: list[str]) -> bool:
 
 def build_canary_preview(*, report: Mapping[str, object], watch_name: str) -> dict[str, object]:
     """Render and check an observer-only preview from the persisted report."""
-    state = report.get("current_state") if isinstance(report.get("current_state"), Mapping) else {}
+    state_value = report.get("current_state")
+    state: Mapping[str, object] = state_value if isinstance(state_value, Mapping) else {}
     media = render_media_outlook_messages(report=report, watch_name=watch_name)
     followups = render_followup_messages(report=report, watch_name=watch_name)
     messages = [*media, *followups]

@@ -1,9 +1,9 @@
-"""Guard the staged CSP migration from regressing the inline-attribute surface.
+"""Guard the legacy-attribute transformer from regressing its known input set.
 
-The back-office still needs two narrowly scoped CSP compatibility directives
-while the legacy shell is migrated.  This check intentionally does not try to
-rewrite the UI; it makes the current migration budget explicit and fails CI if
-new inline event/style attributes are introduced.
+The active CSP is strict by default and does not authorize inline event or
+style attributes. The shell still contains legacy markup which is transformed
+before execution; this count is a regression budget for that migration input,
+not an allow-list of CSP exceptions.
 """
 
 from __future__ import annotations
@@ -14,10 +14,8 @@ from pathlib import Path
 
 
 DEFAULT_MAX_ONCLICK = 132
-# The v3.17.0 MFA/account additions introduce three documented style
-# attributes while the staged CSP migration is still in Report-Only mode.
-# Keep the budget explicit so CI fails on any further growth; the final
-# compatibility exceptions remain a separately tracked migration gate.
+# The transformer currently covers this bounded legacy input. Keep the number
+# explicit so new inline markup cannot silently grow the conversion surface.
 DEFAULT_MAX_STYLE = 54
 _ATTR_PATTERNS = {
     # Do not count DOM property assignments such as ``button.onclick =``;

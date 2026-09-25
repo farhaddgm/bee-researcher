@@ -73,6 +73,34 @@ class BeeCFOBenchmarkTest(unittest.TestCase):
         self.assertEqual("hit", evaluate_media_outcome(expected_stance="up", actual_direction="up")["outcome"])
         self.assertEqual("insufficient_sample", source_scorecard([{"direction_hit": True, "brier_score": 0.1}])["status"])
 
+    def test_benchmark_helpers_fail_safe_on_malformed_persisted_values(self):
+        agreement = model_agreement(
+            {
+                "status": "available",
+                "forecasts": [
+                    {"probability_up": "NaN", "probability_down": float("inf")},
+                    "bad row",
+                    {"probability_flat": "0.8"},
+                ],
+            }
+        )
+        self.assertEqual("agreement", agreement["status"])
+        self.assertIsNone(
+            evaluate_media_outcome(
+                expected_stance="up", actual_direction="down", probability=float("nan")
+            )["brier_score"]
+        )
+        scorecard = source_scorecard(
+            [{"direction_hit": True, "brier_score": float("inf")}] * 20
+        )
+        self.assertIsNone(scorecard["brier_score"])
+        self.assertIsNone(
+            evaluate_alert_rule(
+                {"status": "active", "kind": "stale_quote"},
+                current={"coverage_score": {"missing": "quote"}},
+            )
+        )
+
     def test_renderers_expose_evidence_and_coverage_without_overflow(self):
         report = {
             "as_of": "2026-08-23T12:00:00+00:00", "confidence": 0.7,

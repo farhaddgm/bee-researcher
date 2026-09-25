@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import html
+import math
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime
+from decimal import Decimal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .media_forecasts import build_media_consensus, classify_media_statement, parse_horizon
@@ -20,6 +22,34 @@ BEE_CFO_FOLLOWUP_MESSAGE_LIMIT = 1200
 BEE_CFO_FOLLOWUP_RENDERER_REVISION = "bee-cfo-followups-1"
 TELEGRAM_DESTINATION_PATTERN = re.compile(r"^(?:-100\d{6,20}|\d{5,20})$")
 _TEHRAN = "Asia/Tehran"
+
+
+def _as_mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _as_list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
+def _safe_float(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _safe_int(value: object) -> int | None:
+    number = _safe_float(value)
+    if number is None or not number.is_integer():
+        return None
+    try:
+        return int(number)
+    except (ValueError, OverflowError):
+        return None
 
 
 def validate_telegram_destination(value: object) -> str:
@@ -50,17 +80,16 @@ def _text(value: object, *, fallback: str = "—", limit: int = 500) -> str:
 
 
 def _percent(value: object) -> str:
-    try:
-        number = max(0.0, min(1.0, float(value))) * 100
-    except (TypeError, ValueError):
+    parsed = _safe_float(value)
+    if parsed is None:
         return "نامشخص"
+    number = max(0.0, min(1.0, parsed)) * 100
     return f"{_localized_digits(f'{number:.0f}')}٪"
 
 
 def _percent_change(value: object) -> str:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
+    number = _safe_float(value)
+    if number is None:
         return "نامشخص"
     sign = "+" if number > 0 else "-" if number < 0 else ""
     magnitude = abs(number)
@@ -106,24 +135,22 @@ def _coverage(state: Mapping[str, object], citations: list[object]) -> tuple[int
     raw = state.get("raw_evidence_count")
     valid = state.get("valid_evidence_count")
     sources = state.get("source_count")
-    try:
-        raw_count = max(0, int(raw))
-    except (TypeError, ValueError):
-        raw_count = len(citations)
-    try:
-        valid_count = max(0, int(valid))
-    except (TypeError, ValueError):
-        valid_count = min(raw_count, len(_bullet_items(state.get("facts"), limit=3)))
-    try:
-        source_count = max(0, int(sources))
-    except (TypeError, ValueError):
-        source_count = len(
-            {
-                str(item.get("source_key") or item.get("source_name") or "")
-                for item in citations
-                if isinstance(item, Mapping)
-            }
-        )
+    raw_value = _safe_int(raw)
+    raw_count = max(0, raw_value) if raw_value is not None else len(citations)
+    valid_value = _safe_int(valid)
+    valid_count = (
+        max(0, valid_value)
+        if valid_value is not None
+        else min(raw_count, len(_bullet_items(state.get("facts"), limit=3)))
+    )
+    source_value = _safe_int(sources)
+    source_count = max(0, source_value) if source_value is not None else len(
+        {
+            str(item.get("source_key") or item.get("source_name") or "")
+            for item in citations
+            if isinstance(item, Mapping)
+        }
+    )
     return valid_count, raw_count, source_count
 
 
@@ -238,8 +265,12 @@ def _normalize_media_render_rows(rows: list[object]) -> list[dict[str, object]]:
             continue
         normalized = dict(item)
         if not normalized.get("horizon_key"):
-            horizon_days = normalized.get("horizon_days")
-            day_key = {1: "24h", 2: "48h", 7: "3_7d", 30: "8_30d", 90: "30d_plus"}.get(horizon_days)
+            horizon_days = _safe_int(normalized.get("horizon_days"))
+            day_key = (
+                {1: "24h", 2: "48h", 7: "3_7d", 30: "8_30d", 90: "30d_plus"}.get(horizon_days)
+                if horizon_days is not None
+                else None
+            )
             parsed = parse_horizon(str(normalized.get("horizon") or ""))
             normalized.update(parsed if day_key is None else {
                 "horizon_key": day_key,
@@ -285,7 +316,7 @@ def _media_statement_bullet(row: Mapping[str, object]) -> str:
     return f"• {_media_link(row)} — «{view}»{suffix}"
 
 
-def _media_category_block(label: str, rows: list[Mapping[str, object]]) -> str | None:
+def _media_category_block(label: str, rows: Sequence[Mapping[str, object]]) -> str | None:
     if not rows:
         return None
     lines = [f"<b>{label}</b>"]
@@ -308,20 +339,21 @@ def _media_category_block(label: str, rows: list[Mapping[str, object]]) -> str |
 
 def render_media_outlook_messages(*, report: Mapping[str, object], watch_name: str) -> list[str]:
     """Render the channel title followed by one compact card per horizon."""
-    state = report.get("current_state") if isinstance(report.get("current_state"), Mapping) else {}
+    state = _as_mapping(report.get("current_state"))
     perspectives = state.get("media_perspectives")
-    rows = perspectives if isinstance(perspectives, list) else []
+    rows = _as_list(perspectives)
     render_rows = _normalize_media_render_rows(rows)
     explicit_rows = [item for item in render_rows if item.get("evidence_type") == "explicit_opinion"]
     # Rebuild the aggregation from re-validated rows. Persisted consensus may
     # have been calculated by an older classifier revision.
     consensus = build_media_consensus(render_rows) if explicit_rows else {}
-    buckets = consensus.get("buckets") if isinstance(consensus.get("buckets"), list) else []
-    bucket_by_horizon = {
-        str(bucket.get("horizon_key")): bucket
-        for bucket in buckets
-        if isinstance(bucket, Mapping)
-    }
+    buckets = _as_list(consensus.get("buckets"))
+    bucket_by_horizon: dict[str, Mapping[str, object]] = {}
+    for bucket_value in buckets:
+        bucket_row = _as_mapping(bucket_value)
+        horizon = bucket_row.get("horizon_key")
+        if horizon:
+            bucket_by_horizon[str(horizon)] = bucket_row
     horizon_order = ("24h", "48h", "3_7d", "8_30d", "30d_plus", "unspecified")
     horizon_labels = {
         "24h": "تا ۲۴ ساعت",
@@ -475,7 +507,7 @@ def _factor_card(state: Mapping[str, object]) -> str | None:
 
 
 def _forecast_unit(state: Mapping[str, object]) -> str:
-    live_price = state.get("live_price") if isinstance(state.get("live_price"), Mapping) else {}
+    live_price = _as_mapping(state.get("live_price"))
     return html.escape(_text(live_price.get("quote_unit"), fallback="واحد شاخص", limit=24), quote=False)
 
 
@@ -496,12 +528,11 @@ def _model_forecast_card(state: Mapping[str, object]) -> str | None:
     for item in forecasts:
         if not isinstance(item, Mapping):
             continue
-        try:
-            horizon = int(item.get("horizon_days"))
-            point = float(item.get("point_value"))
-            lower = float(item.get("lower_value"))
-            upper = float(item.get("upper_value"))
-        except (TypeError, ValueError):
+        horizon = _safe_int(item.get("horizon_days"))
+        point = _safe_float(item.get("point_value"))
+        lower = _safe_float(item.get("lower_value"))
+        upper = _safe_float(item.get("upper_value"))
+        if horizon is None or point is None or lower is None or upper is None:
             continue
         probabilities = (
             f"🟢 {_percent(item.get('probability_up'))} · "
@@ -516,7 +547,7 @@ def _model_forecast_card(state: Mapping[str, object]) -> str | None:
         )
         if len(blocks) >= 3:
             break
-    agreement = state.get("model_agreement") if isinstance(state.get("model_agreement"), Mapping) else {}
+    agreement = _as_mapping(state.get("model_agreement"))
     if agreement and agreement.get("status") != "no_call":
         label = html.escape(_text(agreement.get("label"), fallback="نامشخص", limit=80), quote=False)
         blocks.append(f"🧮 توافق مدل‌ها: {label}")
@@ -524,9 +555,7 @@ def _model_forecast_card(state: Mapping[str, object]) -> str | None:
 
 
 def _scenario_card(report: Mapping[str, object]) -> str | None:
-    scenarios = report.get("scenarios")
-    if not isinstance(scenarios, list):
-        return None
+    scenarios = _as_list(report.get("scenarios"))
     icons = {"base": "🟡", "upside": "🟢", "downside": "🔴"}
     blocks: list[str] = []
     for item in scenarios:
@@ -534,14 +563,14 @@ def _scenario_card(report: Mapping[str, object]) -> str | None:
             continue
         triggers = _bullet_items(item.get("triggers"), limit=1, item_limit=100)
         invalidation = _text(item.get("invalidation"), fallback="", limit=100)
-        evidence_rows = item.get("evidence")
+        evidence_rows = _as_list(item.get("evidence"))
         evidence = next(
             (
                 candidate for candidate in evidence_rows
                 if isinstance(candidate, Mapping) and str(candidate.get("source_url") or "").startswith(("http://", "https://"))
             ),
             None,
-        ) if isinstance(evidence_rows, list) else None
+        )
         # Scenarios without observable trigger and invalidation stay in the
         # ledger but do not become a public channel assertion.  A fallback
         # scenario also needs a visible source; otherwise it is only a useful
@@ -564,9 +593,9 @@ def _scenario_card(report: Mapping[str, object]) -> str | None:
 
 
 def _quality_card(state: Mapping[str, object]) -> str | None:
-    coverage = state.get("coverage_score") if isinstance(state.get("coverage_score"), Mapping) else {}
-    budget = state.get("confidence_budget") if isinstance(state.get("confidence_budget"), Mapping) else {}
-    live_price = state.get("live_price") if isinstance(state.get("live_price"), Mapping) else {}
+    coverage = _as_mapping(state.get("coverage_score"))
+    budget = _as_mapping(state.get("confidence_budget"))
+    live_price = _as_mapping(state.get("live_price"))
     if not coverage and not budget:
         return None
     status_labels = {"complete": "کامل", "partial": "ناقص", "insufficient": "ناکافی"}
@@ -620,6 +649,7 @@ def _quality_card(state: Mapping[str, object]) -> str | None:
 def _event_matches_watch(*, title: object, url: object, watch_name: str) -> bool:
     """Keep public follow-up events scoped to the selected market."""
     watch = str(watch_name or "").casefold()
+    markers: tuple[str, ...]
     if any(marker in watch for marker in ("طلا", "gold", "xau")):
         markers = ("طلا", "gold", "xau", "اونس", "bullion", "سکه", "18k", "۱۸ عیار")
     elif any(marker in watch for marker in ("دلار", "usd", "dollar")):
@@ -664,7 +694,7 @@ def _monitor_card(state: Mapping[str, object], *, watch_name: str) -> str | None
             if len(blocks) >= 2:
                 break
     open_checks = state.get("open_checks")
-    live_price = state.get("live_price") if isinstance(state.get("live_price"), Mapping) else {}
+    live_price = _as_mapping(state.get("live_price"))
     if isinstance(open_checks, list):
         for item in open_checks:
             if not isinstance(item, Mapping) or str(item.get("status") or "open") != "open":
@@ -699,7 +729,7 @@ def render_followup_messages(*, report: Mapping[str, object], watch_name: str) -
     delivery boundary.  The current channel layout omits it from the cards
     because the price card already identifies the selected indicator.
     """
-    state = report.get("current_state") if isinstance(report.get("current_state"), Mapping) else {}
+    state = _as_mapping(report.get("current_state"))
     cards = [
         _factor_card(state),
         _model_forecast_card(state),
@@ -749,12 +779,11 @@ def _numeric_forecast_lines(state: Mapping[str, object], *, limit: int = 3) -> l
     for item in rows[:limit]:
         if not isinstance(item, Mapping):
             continue
-        try:
-            horizon = int(item.get("horizon_days"))
-            point = float(item.get("point_value"))
-            lower = float(item.get("lower_value"))
-            upper = float(item.get("upper_value"))
-        except (TypeError, ValueError):
+        horizon = _safe_int(item.get("horizon_days"))
+        point = _safe_float(item.get("point_value"))
+        lower = _safe_float(item.get("lower_value"))
+        upper = _safe_float(item.get("upper_value"))
+        if horizon is None or point is None or lower is None or upper is None:
             continue
         probs = f"↑ {_percent(item.get('probability_up'))} · ↓ {_percent(item.get('probability_down'))} · ـ {_percent(item.get('probability_flat'))}"
         def number(value: float) -> str:
@@ -770,9 +799,13 @@ def render_report_message(
     include_sources: bool = True,
 ) -> str:
     """Render the compact, evidence-first Bee CFO Telegram market brief."""
-    state = report.get("current_state") if isinstance(report.get("current_state"), Mapping) else {}
-    scenarios = report.get("scenarios") if isinstance(report.get("scenarios"), list) else []
-    citations = report.get("citations") if isinstance(report.get("citations"), list) else []
+    state = _as_mapping(report.get("current_state"))
+    scenarios = _as_list(report.get("scenarios"))
+    citations = _as_list(report.get("citations"))
+    price_comparison = _as_mapping(state.get("price_comparison"))
+    analysis_windows = _as_mapping(state.get("analysis_windows"))
+    price_window_hours = _safe_int(price_comparison.get("window_hours")) or 24
+    media_window_hours = _safe_int(analysis_windows.get("media_analysis_window_hours")) or 24
     valid_count, raw_count, source_count = _coverage(state, citations)
     quality = _quality_label(state, valid_count)
     quality_icon = "✅" if valid_count > 0 else "⚠️"
@@ -789,13 +822,13 @@ def render_report_message(
         f"پوشش: {_localized_digits(str(valid_count))}/{_localized_digits(str(raw_count))} شاهد معتبر · "
         f"{_localized_digits(str(source_count))} منبع",
         f"<b>📐 چارچوب زمانی گزارش</b>\n"
-        f"• مقایسه قیمت: {_localized_digits(window_label_fa((state.get('price_comparison') or {}).get('window_hours', 24)))}\n"
-        f"• تحلیل اخبار و دیدگاه رسانه‌ها: {_localized_digits(window_label_fa((state.get('analysis_windows') or {}).get('media_analysis_window_hours', 24)))}",
+        f"• مقایسه قیمت: {_localized_digits(window_label_fa(price_window_hours))}\n"
+        f"• تحلیل اخبار و دیدگاه رسانه‌ها: {_localized_digits(window_label_fa(media_window_hours))}",
         f"<b>۱) 🧭 جمع‌بندی سریع</b>\n{html.escape(summary, quote=False)}",
     ]
 
-    comparison = state.get("price_comparison") if isinstance(state.get("price_comparison"), Mapping) else {}
-    live_price = state.get("live_price") if isinstance(state.get("live_price"), Mapping) else {}
+    comparison = _as_mapping(state.get("price_comparison"))
+    live_price = _as_mapping(state.get("live_price"))
     if comparison or live_price:
         value = live_price.get("value", comparison.get("current_value"))
         price_line = f"• قیمت ثبت‌شده: {_localized_digits(str(value))}" if value is not None else "• قیمت ثبت‌شده: نامشخص"
@@ -821,16 +854,16 @@ def render_report_message(
     if media_lines:
         parts.append("<b>۶) 🗣 نظر رسانه‌ها درباره روند آتی</b>\n" + "\n\n".join(media_lines))
 
-    coverage = state.get("coverage_score") if isinstance(state.get("coverage_score"), Mapping) else {}
+    coverage = _as_mapping(state.get("coverage_score"))
     if coverage:
         coverage_status = {"complete": "کامل", "partial": "ناقص", "insufficient": "ناکافی"}.get(str(coverage.get("status")), "نامشخص")
         parts.append(f"<b>🧪 امتیاز پوشش داده</b> · {_percent(coverage.get('score'))} · {coverage_status}")
 
-    agreement = state.get("model_agreement") if isinstance(state.get("model_agreement"), Mapping) else {}
+    agreement = _as_mapping(state.get("model_agreement"))
     if agreement and agreement.get("status") != "no_call":
         parts.append(f"<b>🧮 توافق مدل‌ها</b> · {html.escape(_text(agreement.get('label'), limit=80), quote=False)}")
 
-    events = state.get("events") if isinstance(state.get("events"), list) else []
+    events = _as_list(state.get("events"))
     event_lines = []
     for event in events[:5]:
         if isinstance(event, Mapping):
@@ -849,7 +882,7 @@ def render_report_message(
         parts.append("<b>۷) 🎯 سناریوهای مشروط | افق ۷ روز</b>\n" + "\n\n".join(scenario_lines))
 
     changes: list[str] = []
-    for change in report.get("changes", []) if isinstance(report.get("changes"), list) else []:
+    for change in _as_list(report.get("changes")):
         if isinstance(change, Mapping):
             explanation = _text(change.get("explanation"), fallback="", limit=150)
             if explanation:
@@ -893,7 +926,7 @@ def render_report_diff_message(*, diff: Mapping[str, object], watch_name: str = 
         "🔎 <b>چرا گزارش تغییر کرد؟</b>",
         f"<b>{html.escape(_text(watch_name, limit=90), quote=False)}</b> · مقایسه شواهد و وضعیت ذخیره‌شده",
     ]
-    changed = diff.get("changed_fields") if isinstance(diff.get("changed_fields"), list) else []
+    changed = _as_list(diff.get("changed_fields"))
     if changed:
         lines = []
         for item in changed[:5]:
@@ -905,8 +938,8 @@ def render_report_diff_message(*, diff: Mapping[str, object], watch_name: str = 
             parts.append("<b>تغییرهای قابل ردیابی</b>\n" + "\n".join(lines))
     else:
         parts.append("تغییر معناداری در مؤلفه‌های ثبت‌شده دیده نشد.")
-    new_ids = diff.get("new_evidence_ids") if isinstance(diff.get("new_evidence_ids"), list) else []
-    evidence = diff.get("new_evidence") if isinstance(diff.get("new_evidence"), list) else []
+    new_ids = _as_list(diff.get("new_evidence_ids"))
+    evidence = _as_list(diff.get("new_evidence"))
     evidence_lines: list[str] = []
     for item in evidence[:3]:
         if not isinstance(item, Mapping):
@@ -938,7 +971,7 @@ def render_why_changed_message(
     reply and never calls a model or reads fresh market data.
     """
     base = render_report_diff_message(diff=diff, watch_name=watch_name)
-    citations = report.get("citations") if isinstance(report.get("citations"), list) else []
+    citations = _as_list(report.get("citations"))
     lines = _source_lines(citations, limit=3)
     if not lines:
         return base
@@ -962,9 +995,8 @@ def _price_title(indicator_key: object, indicator_name: object) -> tuple[str, st
 
 
 def _price_number(value: object) -> str:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
+    number = _safe_float(value)
+    if number is None:
         return "نامشخص"
     if number.is_integer():
         raw = f"{number:,.0f}"
@@ -976,9 +1008,8 @@ def _price_number(value: object) -> str:
 def _price_change(value: object, *, unit: str) -> str | None:
     if value is None:
         return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
+    number = _safe_float(value)
+    if number is None:
         return None
     sign = "+" if number > 0 else "-" if number < 0 else ""
     return f"{_price_number(abs(number))}{sign} {html.escape(unit, quote=False)}"
@@ -1003,9 +1034,9 @@ def render_price_message(*, snapshot: Mapping[str, object]) -> str:
     currency = str(snapshot.get("currency") or "").upper()
     unit = str(snapshot.get("quote_unit") or ("تومان" if currency == "IRR" else "دلار"))
     current = _price_number(snapshot.get("value"))
-    comparison = snapshot.get("comparison") if isinstance(snapshot.get("comparison"), Mapping) else {}
+    comparison = _as_mapping(snapshot.get("comparison"))
     comparison_line = None
-    comparison_hours = comparison.get("window_hours", 24)
+    comparison_hours = _safe_int(comparison.get("window_hours")) or 24
     if comparison.get("status") == "available":
         comparison_line = (
             f"مقایسه با {_localized_digits(window_label_fa(comparison_hours))} قبل: "

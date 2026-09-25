@@ -1,6 +1,7 @@
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ os.environ.setdefault("MARKET_INTELLIGENCE_REDIS_PASSWORD", "test-password")
 
 from app.bee_cfo.analysis import fallback_market_report  # noqa: E402
 from app.bee_cfo.audit import run_infrastructure_audit  # noqa: E402
+from app.bee_cfo.service import _governance_event_payload  # noqa: E402
 from app.bee_cfo.contracts import (  # noqa: E402
     detect_state_changes,
     state_fingerprint,
@@ -32,7 +34,7 @@ from app.bee_cfo.price import (  # noqa: E402
 )
 from app.bee_cfo.indicators import _catalog_option_readiness, _source_uat_state  # noqa: E402
 from app.bee_cfo.operations import assess_delivery_readiness  # noqa: E402
-from app.bee_cfo.windows import filter_evidence_by_lookback, normalize_analysis_windows, price_comparison  # noqa: E402
+from app.bee_cfo.windows import filter_evidence_by_lookback, normalize_analysis_windows, price_comparison, window_label_fa  # noqa: E402
 from app.bee_cfo.api import ConfigurationSyncRequest, IndicatorSelectionRequest  # noqa: E402
 from app.bee_cfo.researcher_adapter import (  # noqa: E402
     MarketEvidence,
@@ -99,6 +101,33 @@ class BeeCFOContractsTest(unittest.TestCase):
         self.assertEqual(6, windows["price_comparison_tolerance_hours"])
         with self.assertRaises(ValueError):
             normalize_analysis_windows({"media_analysis_window_hours": 0})
+        with self.assertRaises(ValueError):
+            normalize_analysis_windows({"price_comparison_window_hours": {"hours": 24}})
+        self.assertEqual("نامشخص", window_label_fa({"hours": 24}))
+
+    def test_price_comparison_ignores_non_scalar_values(self):
+        as_of = datetime(2026, 8, 24, 12, tzinfo=timezone.utc)
+        comparison = price_comparison(
+            [
+                {"observed_at": as_of - timedelta(hours=24), "value": {"price": 100}},
+                {"observed_at": as_of, "value": 105},
+            ],
+            as_of=as_of,
+            window_hours=24,
+            tolerance_hours=1,
+        )
+        self.assertEqual("unavailable", comparison["status"])
+        self.assertIsNone(comparison["baseline_value"])
+        decimal_comparison = price_comparison(
+            [
+                {"observed_at": as_of - timedelta(hours=24), "value": Decimal("100")},
+                {"observed_at": as_of, "value": Decimal("105")},
+            ],
+            as_of=as_of,
+            window_hours=24,
+            tolerance_hours=1,
+        )
+        self.assertEqual(5.0, decimal_comparison["change_value"])
 
     def test_price_comparison_is_time_based_and_fails_closed(self):
         as_of = datetime(2026, 8, 24, 12, tzinfo=timezone.utc)
@@ -476,6 +505,7 @@ class BeeCFOPriceContractTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "delivery held"):
             validate_quote_delta(22128200, 221282000)
         self.assertLess(validate_quote_delta(21746400, 22128200), 0.75)
+        self.assertEqual(0.0, validate_quote_delta(None, 22128200))
 
     def test_price_number_supports_persian_and_json_decimals(self):
         self.assertEqual(19000100, normalize_number("۱۹،۰۰۰،۱۰۰"))
@@ -610,6 +640,28 @@ class BeeCFOFactorForecastTest(unittest.TestCase):
         self.assertEqual(1, summary["sample_size"])
         self.assertIsNotNone(summary["mae"])
 
+    def test_forecast_evaluation_ignores_malformed_optional_probability_metrics(self):
+        evaluated = evaluate_price_forecast(
+            {
+                "baseline_value": 100,
+                "point_value": 101,
+                "probability_up": object(),
+                "probability_down": float("nan"),
+                "probability_flat": object(),
+            },
+            102,
+        )
+        self.assertEqual("up", evaluated["predicted_direction"])
+        self.assertGreaterEqual(evaluated["brier_score"], 0)
+        self.assertLessEqual(evaluated["brier_score"], 1)
+        summary = aggregate_calibration([
+            {"absolute_error": object(), "brier_score": "not-a-number"},
+            {"absolute_error": 2, "brier_score": 0.25},
+        ])
+        self.assertEqual(2, summary["sample_size"])
+        self.assertEqual(2.0, summary["mae"])
+        self.assertEqual(0.25, summary["mean_brier_score"])
+
 
 class BeeCFODiscoveryTest(unittest.TestCase):
     def test_same_domain_feed_declarations_become_draft_candidates(self):
@@ -630,6 +682,23 @@ class BeeCFOAuditTest(unittest.TestCase):
         self.assertEqual("adapter_boundary_ready", result["decision"]["separability"])
         self.assertIn("app.consultant_bee", result["decision"]["forbidden_dependencies"])
         self.assertFalse(result["isolation_contract"]["shared_runtime_state"])
+
+    def test_governance_events_use_their_own_payload_contract(self):
+        event = SimpleNamespace(
+            id="event-id",
+            assistant_id="assistant-id",
+            category="pilot_run",
+            event_key="report-id",
+            status="passed",
+            payload={"quality_gate": "passed"},
+            created_at=datetime(2026, 9, 25, tzinfo=timezone.utc),
+        )
+
+        result = _governance_event_payload(event)
+
+        self.assertEqual("pilot_run", result["category"])
+        self.assertEqual("report-id", result["event_key"])
+        self.assertEqual({"quality_gate": "passed"}, result["payload"])
 
 
 class BeeCFODeliveryTest(unittest.TestCase):
@@ -680,6 +749,46 @@ class BeeCFODeliveryTest(unittest.TestCase):
             watch_name="طلای ۱۸ عیار",
         )
         self.assertFalse(any(message.startswith("🔭") for message in messages))
+
+    def test_report_renderers_ignore_malformed_and_non_finite_persisted_values(self):
+        report = {
+            "confidence": float("nan"),
+            "current_state": {
+                "summary": {"unexpected": ["object"]},
+                "facts": ["یک داده محدود"],
+                "raw_evidence_count": "not-a-count",
+                "valid_evidence_count": float("inf"),
+                "source_count": [],
+                "price_comparison": {"window_hours": {"unexpected": "value"}, "status": "available"},
+                "analysis_windows": [],
+                "price_forecast": {
+                    "status": "available",
+                    "forecasts": [{
+                        "horizon_days": 7,
+                        "point_value": float("inf"),
+                        "lower_value": float("nan"),
+                        "upper_value": 120,
+                    }],
+                },
+                "coverage_score": {"status": "partial", "score": float("nan")},
+                "events": {"unexpected": "object"},
+                "media_perspectives": [None, "malformed"],
+            },
+            "scenarios": {"unexpected": "object"},
+            "citations": None,
+            "changes": "not-a-list",
+            "uncertainties": 17,
+        }
+
+        rendered = render_report_message(report=report, watch_name="طلای ۱۸ عیار")
+        followups = render_followup_messages(report=report, watch_name="طلای ۱۸ عیار")
+        media = render_media_outlook_messages(report=report, watch_name="طلای ۱۸ عیار")
+
+        self.assertIn("داده‌ی معتبر", rendered)
+        self.assertNotIn("nan", rendered.lower())
+        self.assertNotIn("inf", rendered.lower())
+        self.assertTrue(all("nan" not in message.lower() and "inf" not in message.lower() for message in followups))
+        self.assertEqual(2, len(media))
 
     def test_followup_monitor_card_filters_events_unrelated_to_selected_gold_market(self):
         messages = render_followup_messages(

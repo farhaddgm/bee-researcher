@@ -24,7 +24,10 @@ from app.openai_client import (  # noqa: E402
 )
 from app.pipeline_service import (  # noqa: E402
     _fallback_analysis,
+    _general_market_profile,
     _local_day_start_utc,
+    _payload_float,
+    _payload_int,
     _render_publication_message,
     analyze_pending_articles,
     create_publication_previews,
@@ -307,6 +310,17 @@ class OpenAIClientTest(unittest.IsolatedAsyncioTestCase):
 
 
 class WorkspaceSettingsTest(unittest.IsolatedAsyncioTestCase):
+    def test_business_free_context_and_payload_numbers_are_safe(self):
+        context = _general_market_profile(SimpleNamespace(name="Market Watch"))
+        self.assertEqual("Market Watch", context.business_name)
+        self.assertEqual("fa", context.output_language)
+        self.assertEqual([], context.competitors)
+        self.assertEqual(0.75, _payload_float("0.75"))
+        self.assertEqual(3, _payload_int("3"))
+        self.assertEqual(0, _payload_int(2.5))
+        self.assertEqual(0.0, _payload_float(object()))
+        self.assertEqual(0.0, _payload_float(float("inf")))
+
     def test_daily_budget_uses_workspace_calendar_day(self):
         now = datetime(2026, 8, 30, 21, 30, tzinfo=timezone.utc)
         # 21:30 UTC is already the next calendar day in Tokyo, while it is

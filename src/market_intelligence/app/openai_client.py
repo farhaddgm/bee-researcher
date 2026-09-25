@@ -493,7 +493,12 @@ class OpenAIClient:
         remain mandatory.
         """
         evidence_json = json.dumps(evidence, ensure_ascii=False)
-        max_chars = min(int(output_contract.get("max_input_chars", self.settings.analysis_max_input_chars)), self.settings.analysis_max_input_chars)
+        max_chars_value = output_contract.get("max_input_chars", self.settings.analysis_max_input_chars)
+        try:
+            requested_max_chars = int(max_chars_value) if isinstance(max_chars_value, (int, float, str)) else self.settings.analysis_max_input_chars
+        except (TypeError, ValueError, OverflowError):
+            requested_max_chars = self.settings.analysis_max_input_chars
+        max_chars = min(max(1, requested_max_chars), self.settings.analysis_max_input_chars)
         system_prompt = (
             "شما تحلیل‌گر بازار برای Bee CFO هستید. فقط وضعیت عمومی بازار را تحلیل کنید. "
             "از داده شخصی، پرتفوی، دارایی، هدف، افق یا تحمل ریسک کاربر استفاده نکنید و هیچ دستور خرید، فروش یا تخصیص سرمایه ندهید. "

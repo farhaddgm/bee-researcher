@@ -1,9 +1,13 @@
+import asyncio
+import hashlib
 import os
 import unittest
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
+
+from fastapi import HTTPException
 
 
 # Keep unittest discovery reproducible outside CI too.  This module imports
@@ -38,6 +42,8 @@ from app.admin import (
     user_portal_access_allowed,
     user_feedback_access_allowed,
     UserPortalAccessUpdate,
+    current_reader,
+    list_admin_incidents,
 )
 
 
@@ -89,6 +95,143 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
             # 02:30 local: it receives the following day's 02:00 boundary.
             created_after_cutoff = datetime(2026, 8, 30, 0, 30, tzinfo=timezone.utc)
             self.assertEqual(datetime(2026, 8, 31, 0, 0, tzinfo=timezone.utc), _reader_nightly_expiry(created_after_cutoff))
+
+    def test_reader_cutoff_is_stable_across_daylight_saving_transitions(self):
+        with patch("app.admin.get_settings", return_value=SimpleNamespace(timezone="Europe/Berlin")):
+            # The spring transition skips 02:00; the zone-aware boundary
+            # resolves to the first real instant after the gap (03:00 CEST).
+            spring_before = datetime(2026, 3, 29, 0, 30, tzinfo=timezone.utc)
+            self.assertEqual(datetime(2026, 3, 29, 1, 0, tzinfo=timezone.utc), _reader_nightly_expiry(spring_before))
+            spring_after = datetime(2026, 3, 29, 1, 30, tzinfo=timezone.utc)
+            self.assertEqual(datetime(2026, 3, 30, 0, 0, tzinfo=timezone.utc), _reader_nightly_expiry(spring_after))
+
+            # During the fall overlap, 02:00 resolves to its first occurrence;
+            # sessions created during the second occurrence go to tomorrow.
+            fall_before = datetime(2026, 10, 24, 23, 30, tzinfo=timezone.utc)
+            self.assertEqual(datetime(2026, 10, 25, 0, 0, tzinfo=timezone.utc), _reader_nightly_expiry(fall_before))
+            fall_after = datetime(2026, 10, 25, 1, 30, tzinfo=timezone.utc)
+            self.assertEqual(datetime(2026, 10, 26, 1, 0, tzinfo=timezone.utc), _reader_nightly_expiry(fall_after))
+
+    def test_reader_session_rejects_nightly_expiry_even_with_future_idle_deadline(self):
+        raw_token = "reader-session-e2e-token"
+        now = datetime.now(timezone.utc)
+        session_row = SimpleNamespace(
+            token_hash=hashlib.sha256(raw_token.encode()).hexdigest(),
+            created_at=now - timedelta(days=2),
+            expires_at=now + timedelta(hours=2),
+        )
+        reader = SimpleNamespace(
+            id=uuid.uuid4(), username="owner-account", role="owner", active=True,
+            preferences={},
+        )
+
+        class Result:
+            def one_or_none(self):
+                return session_row, reader
+
+        class Session:
+            def __init__(self):
+                self.delete = AsyncMock()
+                self.commit = AsyncMock()
+
+            async def execute(self, _statement):
+                return Result()
+
+        session = Session()
+
+        class SessionContext:
+            async def __aenter__(self):
+                return session
+
+            async def __aexit__(self, *_args):
+                return None
+
+        settings = SimpleNamespace(
+            timezone="Europe/Berlin",
+            admin_owner_username="owner-account",
+            admin_session_ttl_hours=6,
+        )
+        with (
+            patch("app.admin.SessionLocal", return_value=SessionContext()),
+            patch("app.admin.get_settings", return_value=settings),
+        ):
+            with self.assertRaises(HTTPException) as raised:
+                asyncio.run(current_reader(raw_token))
+        self.assertEqual(401, raised.exception.status_code)
+        self.assertEqual("session expired", raised.exception.detail)
+        session.delete.assert_awaited_once_with(session_row)
+        session.commit.assert_awaited_once()
+
+    def test_owner_incident_feed_surfaces_stale_collection_independently_of_readiness(self):
+        now = datetime.now(timezone.utc)
+        stale_no_run = SimpleNamespace(
+            id=uuid.uuid4(), name="Legacy Dotin", deleted_at=None, status="active", config={},
+        )
+        stale_old_run = SimpleNamespace(
+            id=uuid.uuid4(), name="Older workspace", deleted_at=None, status="active", config={},
+        )
+        newly_configured = SimpleNamespace(
+            id=uuid.uuid4(), name="New source grace period", deleted_at=None, status="active", config={},
+        )
+        disabled = SimpleNamespace(
+            id=uuid.uuid4(), name="Collection disabled", deleted_at=None, status="active",
+            config={"runtime": {"collection_enabled": False}},
+        )
+
+        class Result:
+            def __init__(self, *, values=None, scalar=None):
+                self.values = values
+                self.scalar = scalar
+
+            def scalars(self):
+                return self
+
+            def all(self):
+                return self.values
+
+            def scalar_one(self):
+                return self.scalar
+
+            def scalar_one_or_none(self):
+                return self.scalar
+
+        class Session:
+            def __init__(self):
+                self.responses = [
+                    Result(values=[stale_no_run, stale_old_run, newly_configured, disabled]),
+                    Result(values=[
+                        (stale_no_run.id, 1, now - timedelta(hours=37)),
+                        (stale_old_run.id, 1, now - timedelta(hours=60)),
+                        (newly_configured.id, 1, now - timedelta(hours=2)),
+                    ]),
+                    Result(values=[(stale_old_run.id, now - timedelta(hours=37))]),
+                ]
+
+            async def execute(self, _statement):
+                return self.responses.pop(0)
+
+        class SessionContext:
+            async def __aenter__(self):
+                return Session()
+
+            async def __aexit__(self, *_args):
+                return None
+
+        owner = SimpleNamespace(username="owner-account", role="owner", id=uuid.uuid4())
+        with (
+            patch("app.admin.list_admin_notifications", new=AsyncMock(return_value={"notifications": []})),
+            patch("app.admin._visible_project_scope_ids", new=AsyncMock(return_value=None)),
+            patch("app.admin.SessionLocal", return_value=SessionContext()),
+            patch("app.admin.get_settings", return_value=SimpleNamespace(admin_owner_username="owner-account")),
+        ):
+            response = asyncio.run(list_admin_incidents(owner))
+        freshness = {item["assistant_name"]: item for item in response["incidents"]}
+        self.assertEqual(2, response["open"])
+        self.assertEqual("critical", freshness["Legacy Dotin"]["severity"])
+        self.assertIsNone(freshness["Legacy Dotin"]["last_success_at"])
+        self.assertEqual("warning", freshness["Older workspace"]["severity"])
+        self.assertNotIn("New source grace period", freshness)
+        self.assertNotIn("Collection disabled", freshness)
 
     def test_only_owner_can_write_without_membership(self):
         self.assertFalse(workspace_write_allowed("admin", None))

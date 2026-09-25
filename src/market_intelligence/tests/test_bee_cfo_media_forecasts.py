@@ -8,6 +8,7 @@ from app.bee_cfo.media_forecasts import (
     classify_media_statement,
     extract_media_forecasts,
     mark_media_expiry,
+    normalize_media_weighting,
     parse_horizon,
 )
 from app.bee_cfo.researcher_adapter import MarketEvidence
@@ -32,6 +33,30 @@ def media(key: str, text: str, *, source: str | None = None) -> MarketEvidence:
 
 
 class BeeCFOMediaForecastTest(unittest.TestCase):
+    def test_malformed_weight_configuration_uses_safe_bounded_defaults(self):
+        normalized = normalize_media_weighting({
+            "component_weights": {"source": object(), "analyst": float("nan"), "article_quality": True},
+            "source_priors": {"bad": object(), "nan": float("inf"), "good": 1.5},
+            "minimum_independent_sources": [],
+            "minimum_sample": "2.5",
+            "expiry_hours": {"48h": {"hours": 24}},
+        })
+        weights = normalized["component_weights"]
+        self.assertAlmostEqual(1.0, sum(weights.values()))
+        self.assertEqual(1, normalized["minimum_independent_sources"])
+        self.assertEqual(20, normalized["minimum_sample"])
+        self.assertEqual(96, normalized["expiry_hours"]["48h"])
+        self.assertEqual({"good": 1.5}, normalized["source_priors"])
+
+        rows = extract_media_forecasts([
+            media("MEDIA-A", "Analysts forecast gold prices will rise over the next 48 hours."),
+        ])
+        rows[0]["confidence"] = object()
+        rows[0]["independence_weight"] = float("nan")
+        consensus = build_media_consensus(rows)
+        self.assertEqual("up", consensus["buckets"][0]["direction"])
+        self.assertTrue(0 <= consensus["buckets"][0]["confidence"] <= 1)
+
     def test_direction_requires_asset_context_and_does_not_read_lower_yields_as_bearish_gold(self):
         self.assertEqual(
             "up",
