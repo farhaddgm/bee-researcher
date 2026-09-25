@@ -204,7 +204,8 @@ jobs:
           output-file: artifacts/market-intelligence-sbom.cdx.json
           upload-artifact: true
       - name: Scan image and base OS
-        uses: aquasecurity/trivy-action@0.30.0
+        # Pin to the verified v0.36.0 release commit; immutable refs keep CI reproducible.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: bee-researcher-market-intelligence:${{ github.sha }}
           format: table
