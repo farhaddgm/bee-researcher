@@ -28,6 +28,10 @@
 - Market Intelligence image builds embed the source revision. Promotion trace
   artifacts bind the signed image digest to its commit, and an operator-side
   verifier checks the actual running container before declaring it promoted.
+- The production image now pins the refreshed official Python base digest and
+  removes build-only `pip`/`ensurepip` artifacts after dependency installation.
+  This avoids shipping vulnerable bootstrap-tool metadata in the runtime image;
+  the local Trivy 0.70.0 scan found zero HIGH/CRITICAL findings after the fix.
 - Reader-session tests cover the nightly cutoff across daylight-saving
   transitions and confirm that a future idle deadline cannot extend a session
   beyond the 02:00 service cutoff.
