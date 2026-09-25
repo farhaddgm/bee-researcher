@@ -84,6 +84,8 @@ class BeeCFOQualityGatesTest(unittest.TestCase):
         verifier = SimpleNamespace(value=125.0)
         self.assertFalse(reconcile_quotes(primary, verifier, max_relative_spread=0.10)["delivery_permitted"])
         self.assertTrue(reconcile_quotes(primary, None)["delivery_permitted"])
+        malformed = SimpleNamespace(value={"price": "not-a-number"})
+        self.assertEqual("invalid_primary", reconcile_quotes(malformed, None)["status"])
 
     def test_challenger_never_self_promotes_to_public_target(self):
         eligible = evaluate_champion_challenger({"status": "available", "sample_size": 20, "baseline_mae": 10, "ensemble_mae": 8})

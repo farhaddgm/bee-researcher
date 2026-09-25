@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+import math
+from collections.abc import Mapping, Sequence
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from sqlalchemy import select
@@ -92,6 +95,8 @@ from .canary import build_canary_preview
 from .shadow import build_shadow_run
 from .quote_control import evaluate_source_contract, source_contract_fingerprint
 from .contracts import (
+    SourceRegistration,
+    WatchRegistration,
     calibration_bucket,
     detect_state_changes,
     state_fingerprint,
@@ -163,27 +168,81 @@ def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
 
 
-def _normalized_source_policy(value: object) -> dict[str, object]:
-    policy = {**DEFAULT_SOURCE_POLICY, **dict(value or {})}
-    for key in ("quote_reconciliation", "canary_policy", "model_gate"):
-        configured = policy.get(key)
-        configured_values = dict(configured) if isinstance(configured, dict) else {}
-        policy[key] = {
-            **dict(DEFAULT_SOURCE_POLICY[key]),
-            **configured_values,
-        }
+def _object_mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _object_list(value: object) -> list[object]:
+    return value if isinstance(value, list) else []
+
+
+def _mapping_rows(value: object) -> list[dict[str, object]]:
+    return [dict(item) for item in _object_list(value) if isinstance(item, Mapping)]
+
+
+def _string_values(value: object) -> list[str]:
+    return [item for item in _object_list(value) if isinstance(item, str)]
+
+
+def _finite_number(value: object, *, default: float = 0.0) -> float:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        return default
     try:
-        policy["quote_reconciliation"]["max_relative_spread"] = max(
-            0.0,
-            min(1.0, float(policy["quote_reconciliation"].get("max_relative_spread", 0.10))),
-        )
-    except (TypeError, ValueError):
-        policy["quote_reconciliation"]["max_relative_spread"] = 0.10
-    policy["quote_reconciliation"]["require_verifier"] = bool(policy["quote_reconciliation"].get("require_verifier"))
-    policy["canary_policy"]["enforced"] = bool(policy["canary_policy"].get("enforced"))
-    policy["model_gate"]["candidate_publication_approved"] = bool(
-        policy["model_gate"].get("candidate_publication_approved")
+        number = float(value)
+    except (TypeError, ValueError, OverflowError, InvalidOperation):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _integer_value(value: object, *, default: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        return default
+    try:
+        number = float(value)
+        if not math.isfinite(number):
+            return default
+        return int(number)
+    except (TypeError, ValueError, OverflowError, InvalidOperation):
+        return default
+
+
+def _normalized_source_policy(value: object) -> dict[str, object]:
+    policy = dict(DEFAULT_SOURCE_POLICY)
+    if isinstance(value, Mapping):
+        policy.update({key: item for key, item in value.items() if isinstance(key, str)})
+
+    def nested_policy(name: str, defaults: dict[str, object]) -> dict[str, object]:
+        configured = policy.get(name)
+        result = dict(defaults)
+        if isinstance(configured, Mapping):
+            result.update({key: item for key, item in configured.items() if isinstance(key, str)})
+        return result
+
+    quote_reconciliation = nested_policy(
+        "quote_reconciliation",
+        {"revision": "bee-cfo-quote-control-1", "max_relative_spread": 0.10, "require_verifier": False},
     )
+    canary_policy = nested_policy("canary_policy", {"revision": "bee-cfo-canary-1", "enforced": False})
+    model_gate = nested_policy(
+        "model_gate",
+        {"revision": "bee-cfo-champion-challenger-1", "candidate_publication_approved": False},
+    )
+    raw_spread = quote_reconciliation.get("max_relative_spread", 0.10)
+    spread = 0.10
+    if isinstance(raw_spread, (str, int, float)) and not isinstance(raw_spread, bool):
+        try:
+            candidate = float(raw_spread)
+        except (TypeError, ValueError, OverflowError):
+            candidate = math.nan
+        if math.isfinite(candidate):
+            spread = max(0.0, min(1.0, candidate))
+    quote_reconciliation["max_relative_spread"] = spread
+    quote_reconciliation["require_verifier"] = bool(quote_reconciliation.get("require_verifier"))
+    canary_policy["enforced"] = bool(canary_policy.get("enforced"))
+    model_gate["candidate_publication_approved"] = bool(model_gate.get("candidate_publication_approved"))
+    policy["quote_reconciliation"] = quote_reconciliation
+    policy["canary_policy"] = canary_policy
+    policy["model_gate"] = model_gate
     policy["analysis_windows"] = normalize_analysis_windows(policy.get("analysis_windows"))
     return policy
 
@@ -309,6 +368,19 @@ def _event_payload(item: BeeCFOMarketEvent) -> dict[str, object]:
     }
 
 
+def _governance_event_payload(item: BeeCFOGovernanceEvent) -> dict[str, object]:
+    """Serialize the governance ledger without treating it as a market event."""
+    return {
+        "id": str(item.id),
+        "assistant_id": str(item.assistant_id),
+        "category": item.category,
+        "event_key": item.event_key,
+        "status": item.status,
+        "payload": item.payload,
+        "created_at": _iso(item.created_at),
+    }
+
+
 def _coverage_payload(item: BeeCFOCoverageSnapshot) -> dict[str, object]:
     return {
         "id": str(item.id), "report_id": str(item.report_id), "indicator_key": item.indicator_key,
@@ -348,10 +420,10 @@ def _media_forecast_payload(item: BeeCFOMediaForecast) -> dict[str, object]:
 def _report_payload(
     report: BeeCFOReport,
     *,
-    forecasts: list[BeeCFOForecast] | None = None,
-    factors: list[BeeCFOFactorAttribution] | None = None,
-    price_forecasts: list[BeeCFOPriceForecast] | None = None,
-    media_forecasts: list[BeeCFOMediaForecast] | None = None,
+    forecasts: Sequence[BeeCFOForecast] | None = None,
+    factors: Sequence[BeeCFOFactorAttribution] | None = None,
+    price_forecasts: Sequence[BeeCFOPriceForecast] | None = None,
+    media_forecasts: Sequence[BeeCFOMediaForecast] | None = None,
 ) -> dict[str, object]:
     return {
         "id": str(report.id),
@@ -735,7 +807,7 @@ async def sync_configuration(assistant_id: uuid.UUID, payload: dict[str, Any]) -
 
     activate_sources = bool(payload.get("activate_sources", False))
     activate_watches = bool(payload.get("activate_watches", False))
-    normalized_sources: list[dict[str, object]] = []
+    normalized_sources: list[SourceRegistration] = []
     source_keys: set[str] = set()
     for raw_source in raw_sources:
         if not isinstance(raw_source, dict):
@@ -745,13 +817,13 @@ async def sync_configuration(assistant_id: uuid.UUID, payload: dict[str, Any]) -
             source_payload.pop("status", None)
         if activate_sources:
             source_payload["status"] = "active"
-        normalized = validate_source_registration(source_payload)
-        if normalized["source_key"] in source_keys:
-            raise ValueError(f"duplicate source key: {normalized['source_key']}")
-        source_keys.add(str(normalized["source_key"]))
-        normalized_sources.append(normalized)
+        normalized_source = validate_source_registration(source_payload)
+        if normalized_source["source_key"] in source_keys:
+            raise ValueError(f"duplicate source key: {normalized_source['source_key']}")
+        source_keys.add(normalized_source["source_key"])
+        normalized_sources.append(normalized_source)
 
-    normalized_watches: list[dict[str, object]] = []
+    normalized_watches: list[WatchRegistration] = []
     watch_keys: set[str] = set()
     for raw_watch in raw_watches:
         if not isinstance(raw_watch, dict):
@@ -759,26 +831,26 @@ async def sync_configuration(assistant_id: uuid.UUID, payload: dict[str, Any]) -
         watch_payload = dict(raw_watch)
         if activate_watches:
             watch_payload["status"] = "active"
-        normalized = validate_watch_registration(watch_payload)
-        if normalized["watch_key"] in watch_keys:
-            raise ValueError(f"duplicate watch key: {normalized['watch_key']}")
-        watch_keys.add(str(normalized["watch_key"]))
-        missing = sorted(set(normalized["source_keys"]) - source_keys)
+        normalized_watch = validate_watch_registration(watch_payload)
+        if normalized_watch["watch_key"] in watch_keys:
+            raise ValueError(f"duplicate watch key: {normalized_watch['watch_key']}")
+        watch_keys.add(normalized_watch["watch_key"])
+        missing = sorted(set(normalized_watch["source_keys"]) - source_keys)
         if missing:
             raise ValueError(
-                f"watch {normalized['watch_key']} references sources outside this sync: {', '.join(missing)}"
+                f"watch {normalized_watch['watch_key']} references sources outside this sync: {', '.join(missing)}"
             )
-        if normalized["status"] == "active":
+        if normalized_watch["status"] == "active":
             active_keys = {
                 str(source["source_key"])
                 for source in normalized_sources
                 if source["status"] == "active"
             }
-            if not set(normalized["source_keys"]) & active_keys:
+            if not set(normalized_watch["source_keys"]) & active_keys:
                 raise ValueError(
-                    f"watch {normalized['watch_key']} must reference an active source"
+                    f"watch {normalized_watch['watch_key']} must reference an active source"
                 )
-        normalized_watches.append(normalized)
+        normalized_watches.append(normalized_watch)
 
     profile_status = str(payload.get("status", "testing")).strip().lower()
     if profile_status not in {"draft", "testing", "active", "paused"}:
@@ -826,34 +898,34 @@ async def sync_configuration(assistant_id: uuid.UUID, payload: dict[str, Any]) -
         profile.revision = str(payload.get("revision") or "bee-cfo-sheet-sync-1")[:64]
 
         source_rows: list[BeeCFOSource] = []
-        for normalized in normalized_sources:
+        for source_config in normalized_sources:
             source = await session.scalar(
                 select(BeeCFOSource).where(
                     BeeCFOSource.assistant_id == assistant_id,
-                    BeeCFOSource.source_key == normalized["source_key"],
+                    BeeCFOSource.source_key == source_config["source_key"],
                 )
             )
             if source is None:
-                source = BeeCFOSource(assistant_id=assistant_id, **normalized)
+                source = BeeCFOSource(assistant_id=assistant_id, **source_config)
                 session.add(source)
             else:
-                for key, value in normalized.items():
+                for key, value in source_config.items():
                     setattr(source, key, value)
             source_rows.append(source)
 
         watch_rows: list[BeeCFOWatch] = []
-        for normalized in normalized_watches:
+        for watch_config in normalized_watches:
             watch = await session.scalar(
                 select(BeeCFOWatch).where(
                     BeeCFOWatch.assistant_id == assistant_id,
-                    BeeCFOWatch.watch_key == normalized["watch_key"],
+                    BeeCFOWatch.watch_key == watch_config["watch_key"],
                 )
             )
             if watch is None:
-                watch = BeeCFOWatch(assistant_id=assistant_id, **normalized)
+                watch = BeeCFOWatch(assistant_id=assistant_id, **watch_config)
                 session.add(watch)
             else:
-                for key, value in normalized.items():
+                for key, value in watch_config.items():
                     setattr(watch, key, value)
             watch_rows.append(watch)
 
@@ -929,9 +1001,9 @@ async def run_report(
         ).scalars().all()
         previous = previous_snapshots[0] if previous_snapshots else None
         indicator_key = str((watch.indicator_keys or [""])[0])
-        price_rows = []
+        price_rows: list[BeeCFOPriceSnapshot] = []
         if indicator_key:
-            price_rows = (
+                price_rows = list((
                 await session.execute(
                     select(BeeCFOPriceSnapshot)
                     .where(
@@ -941,7 +1013,7 @@ async def run_report(
                     .order_by(BeeCFOPriceSnapshot.observed_at.asc())
                     .limit(500)
                 )
-            ).scalars().all()
+                ).scalars().all())
         price_observations = [
             {
                 "observed_at": row.observed_at,
@@ -963,11 +1035,11 @@ async def run_report(
     evidence = await adapter.load_evidence(assistant_id=assistant_id, watch=watch)
     as_of = datetime.now(timezone.utc).replace(microsecond=0)
     source_policy = _normalized_source_policy(profile.source_policy)
-    analysis_windows = source_policy["analysis_windows"]
+    analysis_windows = normalize_analysis_windows(source_policy.get("analysis_windows"))
     analysis_evidence_rows, analysis_window = filter_evidence_by_lookback(
         evidence,
         as_of=as_of,
-        hours=int(analysis_windows["media_analysis_window_hours"]),
+        hours=analysis_windows["media_analysis_window_hours"],
     )
     analysis_evidence_rows = list(analysis_evidence_rows)
     evidence_clusters = cluster_evidence(analysis_evidence_rows)
@@ -1012,7 +1084,7 @@ async def run_report(
     factor_bundle = build_factor_attributions(analysis_evidence_rows)
     price_forecast_bundle = build_price_forecasts(price_observations, as_of=as_of)
     challenger = price_forecast_bundle.get("champion_challenger")
-    model_gate = source_policy["model_gate"]
+    model_gate = _object_mapping(source_policy.get("model_gate"))
     price_forecast_bundle["publication"] = {
         "revision": str(model_gate.get("revision") or "bee-cfo-champion-challenger-1")[:64],
         "candidate_publication_approved": bool(model_gate.get("candidate_publication_approved")),
@@ -1040,13 +1112,18 @@ async def run_report(
     generated["current_state"]["collected_evidence_count"] = len(evidence)
     generated["current_state"]["excluded_evidence_count"] = max(0, len(evidence) - len(analysis_evidence_rows))
     generated["current_state"]["analysis_evidence_count"] = len(analysis_evidence_rows)
-    media_rows = generated["current_state"].get("media_perspectives") or []
-    media_rows = [dict(item) for item in media_rows if isinstance(item, dict)]
+    raw_media_rows = generated["current_state"].get("media_perspectives")
+    media_rows: list[dict[str, object]] = (
+        [dict(item) for item in raw_media_rows if isinstance(item, Mapping)]
+        if isinstance(raw_media_rows, list)
+        else []
+    )
     media_weighting = normalize_media_weighting((profile.source_policy or {}).get("media_weighting"))
+    raw_expiry_hours = media_weighting.get("expiry_hours")
     mark_media_expiry(
         media_rows,
         now=as_of,
-        expiry_hours=media_weighting.get("expiry_hours") if isinstance(media_weighting, dict) else None,
+        expiry_hours=raw_expiry_hours if isinstance(raw_expiry_hours, Mapping) else None,
     )
     media_consensus = build_media_consensus(media_rows, weighting=media_weighting, now=as_of)
     media_history = build_media_history(
@@ -1081,13 +1158,18 @@ async def run_report(
     generated["current_state"]["price_comparison"] = price_comparison(
         price_observations,
         as_of=as_of,
-        window_hours=int(analysis_windows["price_comparison_window_hours"]),
-        tolerance_hours=int(analysis_windows["price_comparison_tolerance_hours"]),
+        window_hours=analysis_windows["price_comparison_window_hours"],
+        tolerance_hours=analysis_windows["price_comparison_tolerance_hours"],
     )
     generated["current_state"]["benchmark"] = relative_benchmark_contract(indicator_key)
     generated["current_state"]["benchmark_playbook"] = benchmark_playbook()
     generated["current_state"]["synonym_terms"] = expand_indicator_terms(indicator_key)
-    latest = max((item.published_at or item.discovered_at for item in analysis_evidence_rows if item.published_at or item.discovered_at), default=None)
+    evidence_timestamps = [
+        timestamp
+        for item in analysis_evidence_rows
+        if (timestamp := item.published_at or item.discovered_at) is not None
+    ]
+    latest = max(evidence_timestamps, default=None)
     age_hours = ((as_of - latest).total_seconds() / 3600) if latest else 999.0
     freshness = 1.0 if age_hours <= 24 else 0.65 if age_hours <= 72 else 0.25 if analysis_evidence_rows else 0.0
     source_count = len({item.source_key for item in analysis_evidence_rows})
@@ -1114,8 +1196,8 @@ async def run_report(
     generated["current_state"]["price_source_health"] = price_source_health
     generated["current_state"]["confidence_budget"] = build_confidence_budget(
         coverage=coverage,
-        model_agreement=generated["current_state"]["model_agreement"],
-        media_pulse=generated["current_state"]["media_pulse"],
+        model_agreement=_object_mapping(generated["current_state"].get("model_agreement")),
+        media_pulse=_object_mapping(generated["current_state"].get("media_pulse")),
         forecast=price_forecast_bundle,
         source_health=price_source_health,
         evidence_count=len(analysis_evidence_rows),
@@ -1137,21 +1219,23 @@ async def run_report(
         price_source_count=len(attempted_price_sources) if isinstance(attempted_price_sources, list) else 0,
         model_calls=1 if model != "fallback" else 0,
     )
-    generated["current_state"]["price_change_percent"] = generated["current_state"]["price_comparison"].get("change_percent")
+    generated["current_state"]["price_change_percent"] = _object_mapping(
+        generated["current_state"].get("price_comparison")
+    ).get("change_percent")
     event_rows = extract_event_ledger(analysis_evidence_rows, watch_key=watch.watch_key, as_of=as_of)
     generated["current_state"]["event_count"] = len(event_rows)
     generated["current_state"]["events"] = event_rows[:12]
     generated["current_state"]["open_checks"] = build_open_checks(
         current_state=generated["current_state"],
         report_as_of=as_of.isoformat(),
-        forecasts=generated.get("scenarios") if isinstance(generated.get("scenarios"), list) else (),
+        forecasts=[dict(item) for item in generated["scenarios"]],
         live_uat_required=True,
     )
     generated["current_state"]["alert_maturity"] = classify_alert_maturity(
         candidate={"kind": "report_state", "watch_key": watch.watch_key},
         independent_sources=usable_source_count,
-        source_quality=float(price_source_health.get("score", 0) or 0) if isinstance(price_source_health, dict) else 0.0,
-        stale="freshness" in coverage.get("missing", []),
+        source_quality=_finite_number(_object_mapping(price_source_health).get("score")),
+        stale="freshness" in _string_values(coverage.get("missing")),
     )
     changes = list(generated.get("changes") or [])
     changes.extend(detect_state_changes(previous.current_state if previous else None, generated["current_state"]))
@@ -1236,7 +1320,7 @@ async def run_report(
             watch_id=watch.id,
             forecast_id=str(item.get("forecast_id") or uuid.uuid4().hex),
             article_id=str(item.get("article_id") or "unknown"),
-            statement_index=int(item.get("statement_index") or 0),
+            statement_index=_integer_value(item.get("statement_index")),
             source_key=str(item.get("source_key") or "unknown"),
             source_name=str(item.get("source_name") or "رسانه"),
             source_url=str(item.get("source_url") or ""),
@@ -1247,13 +1331,13 @@ async def run_report(
             stance=str(item.get("stance") or "unknown"),
             horizon_key=str(item.get("horizon_key") or "unspecified"),
             horizon_label=str(item.get("horizon_label") or item.get("horizon") or "بدون افق مشخص"),
-            horizon_days=int(item["horizon_days"]) if item.get("horizon_days") is not None else None,
+            horizon_days=_integer_value(item.get("horizon_days")) if item.get("horizon_days") is not None else None,
             horizon_explicit=bool(item.get("horizon_explicit")),
-            confidence=float(item.get("confidence") or 0),
+            confidence=_finite_number(item.get("confidence")),
             conflict_status=str(item.get("conflict_status") or "clear"),
             conflict_group=str(item.get("conflict_group") or "") or None,
             narrative_key=str(item.get("narrative_key") or "") or None,
-            independence_weight=float(item.get("independence_weight") or 1),
+            independence_weight=_finite_number(item.get("independence_weight"), default=1.0),
             status=str(item.get("status") or "active"),
             provenance={
                 "extraction_revision": "bee-cfo-media-ledger-1",
@@ -1261,7 +1345,11 @@ async def run_report(
                 "expires_at": item.get("expires_at"),
                 "temporal_status": item.get("temporal_status"),
                 "claim_lifecycle": next(
-                    (claim for claim in claim_lifecycle["claims"] if claim.get("forecast_id") == item.get("forecast_id")),
+                    (
+                        claim
+                        for claim in _mapping_rows(_object_mapping(claim_lifecycle).get("claims"))
+                        if claim.get("forecast_id") == item.get("forecast_id")
+                    ),
                     None,
                 ),
             },
@@ -1281,39 +1369,39 @@ async def run_report(
             direction=str(item["direction"]),
             strength=str(item["strength"]),
             score=item.get("score"),
-            evidence_count=int(item["evidence_count"]),
+            evidence_count=_integer_value(item.get("evidence_count")),
             source_keys=item["source_keys"],
             evidence=item["evidence"],
             horizon=str(item["horizon"]),
             invalidation=str(item["invalidation"]),
             attribution_kind=str(item["attribution_kind"]),
-            confidence=float(item["confidence"]),
+            confidence=_finite_number(item.get("confidence")),
             model_revision=str(factor_bundle["model_revision"]),
         )
-        for item in factor_bundle["factors"]
+        for item in _mapping_rows(factor_bundle.get("factors"))
     ]
     numeric_forecast_rows: list[BeeCFOPriceForecast] = []
     if price_forecast_bundle["status"] == "available" and indicator_key:
-        for item in price_forecast_bundle["forecasts"]:
+        for item in _mapping_rows(price_forecast_bundle.get("forecasts")):
             numeric_forecast_rows.append(
                 BeeCFOPriceForecast(
                     assistant_id=assistant_id,
                     report_id=report.id,
                     watch_id=watch.id,
                     indicator_key=indicator_key,
-                    horizon_days=int(item["horizon_days"]),
+                    horizon_days=_integer_value(item.get("horizon_days")),
                     forecast_for=datetime.fromisoformat(str(item["forecast_for"])),
                     data_cutoff=datetime.fromisoformat(str(item["data_cutoff"])) if item.get("data_cutoff") else None,
                     baseline_value=item["baseline_value"],
                     point_value=item["point_value"],
                     lower_value=item["lower_value"],
                     upper_value=item["upper_value"],
-                    probability_up=float(item["probability_up"]),
-                    probability_down=float(item["probability_down"]),
-                    probability_flat=float(item["probability_flat"]),
+                    probability_up=_finite_number(item.get("probability_up")),
+                    probability_down=_finite_number(item.get("probability_down")),
+                    probability_flat=_finite_number(item.get("probability_flat")),
                     method=str(item["method"]),
                     model_revision=str(item["model_revision"]),
-                    sample_size=int(item["sample_size"]),
+                    sample_size=_integer_value(item.get("sample_size")),
                     quality_status=str(item["quality_status"]),
                     components=item["components"],
                     metrics=item["metrics"],
@@ -1359,12 +1447,12 @@ async def run_report(
             kind=str(item["kind"]),
             explanation=str(item["explanation"]),
             delta={
-                **item["delta"],
+                **_object_mapping(item.get("delta")),
                 "maturity": classify_alert_maturity(
                     candidate=item,
                     independent_sources=usable_source_count,
-                    source_quality=float(price_source_health.get("score", 0) or 0) if isinstance(price_source_health, dict) else 0.0,
-                    stale="freshness" in coverage.get("missing", []),
+                    source_quality=_finite_number(_object_mapping(price_source_health).get("score")),
+                    stale="freshness" in _string_values(coverage.get("missing")),
                 ),
             },
         )
@@ -1376,8 +1464,8 @@ async def run_report(
             "maturity": classify_alert_maturity(
                 candidate=item,
                 independent_sources=usable_source_count,
-                source_quality=float(price_source_health.get("score", 0) or 0) if isinstance(price_source_health, dict) else 0.0,
-                stale="freshness" in coverage.get("missing", []),
+                source_quality=_finite_number(_object_mapping(price_source_health).get("score")),
+                stale="freshness" in _string_values(coverage.get("missing")),
             ),
         }
         for item in rule_candidates
@@ -1386,10 +1474,10 @@ async def run_report(
         assistant_id=assistant_id,
         report_id=report.id,
         indicator_key=indicator_key or None,
-        score=float(coverage["score"]),
+        score=_finite_number(coverage.get("score")),
         status=str(coverage["status"]),
-        components=coverage["components"],
-        missing=coverage["missing"],
+        components=dict(_object_mapping(coverage.get("components"))),
+        missing=_string_values(coverage.get("missing")),
     )
     event_model_rows = [
         BeeCFOMarketEvent(
@@ -1405,7 +1493,7 @@ async def run_report(
             source_keys=item["source_keys"],
             source_urls=item["source_urls"],
             published_at=datetime.fromisoformat(str(item["published_at"])) if item.get("published_at") else None,
-            novelty_score=float(item.get("novelty_score", 0)),
+            novelty_score=_finite_number(item.get("novelty_score")),
             status=str(item.get("status", "observed")),
             metadata_json=item.get("metadata", {}),
         )
@@ -1474,7 +1562,7 @@ async def run_report(
         "event_count": len(event_rows),
         "rule_alert_count": len(rule_alerts),
         "media_forecast_count": len(media_forecast_rows),
-        "media_conflict_count": int(media_consensus.get("conflict_count", 0)),
+        "media_conflict_count": _integer_value(media_consensus.get("conflict_count")),
         "evidence_quality_gate": generated["current_state"]["evidence_quality_gate"],
     }
 
@@ -1534,10 +1622,11 @@ async def report_diff(
         previous_state = previous.current_state if previous is not None else None
         result = build_report_diff(previous_state, current_state)
         current_cards = current_state.get("evidence_cards") if isinstance(current_state.get("evidence_cards"), list) else []
-        new_ids = set(str(item) for item in result.get("new_evidence_ids", []) if item)
+        new_ids = {item for item in _string_values(result.get("new_evidence_ids")) if item}
+        current_cards = _mapping_rows(current_state.get("evidence_cards"))
         result["new_evidence"] = [
             item for item in current_cards
-            if isinstance(item, dict) and str(item.get("evidence_id")) in new_ids
+            if str(item.get("evidence_id") or "") in new_ids
         ][:3]
         watch = await session.get(BeeCFOWatch, current.watch_id)
         result["telegram_message"] = render_report_diff_message(
@@ -1586,7 +1675,7 @@ async def evidence_quality_for_report(assistant_id: uuid.UUID, *, report_id: uui
             .limit(1)
         )
         if existing is not None:
-            return {"status": "already_recorded", "run": _event_payload(existing), "pilot": await pilot_status(assistant_id)}
+            return {"status": "already_recorded", "run": _governance_event_payload(existing), "pilot": await pilot_status(assistant_id)}
     state = dict(report.current_state or {})
     gate = state.get("evidence_quality_gate")
     if not isinstance(gate, dict):
@@ -1698,8 +1787,8 @@ async def upsert_alert_rule(assistant_id: uuid.UUID, payload: dict[str, object])
             row = BeeCFOAlertRule(assistant_id=assistant_id, watch_id=watch_id, rule_key=rule_key, kind=kind)
             session.add(row)
         row.kind = kind
-        row.threshold = float(payload["threshold"]) if payload.get("threshold") is not None else None
-        row.config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+        row.threshold = _finite_number(payload.get("threshold")) if payload.get("threshold") is not None else None
+        row.config = dict(_object_mapping(payload.get("config")))
         row.status = status
         row.revision = str(payload.get("revision") or "bee-cfo-alerts-1")[:64]
         await session.commit()
@@ -1764,34 +1853,36 @@ async def media_scorecards(assistant_id: uuid.UUID, *, source_key: str | None = 
         outcomes = (await session.execute(outcome_query)).scalars().all()
         profile = await session.scalar(select(BeeCFOProfile).where(BeeCFOProfile.assistant_id == assistant_id))
     media_weighting = normalize_media_weighting((profile.source_policy or {}).get("media_weighting") if profile else None)
-    minimum_sample = int(media_weighting.get("minimum_sample", 20))
+    minimum_sample = _integer_value(media_weighting.get("minimum_sample"), default=20)
+    source_priors = _object_mapping(media_weighting.get("source_priors"))
+    analyst_priors = _object_mapping(media_weighting.get("analyst_priors"))
     scorecards = [{"source_key": key, **source_scorecard(values, minimum_sample=minimum_sample)} for key, values in sorted(grouped.items())]
     by_horizon: dict[str, list[dict[str, object]]] = {}
     by_analyst: dict[str, list[dict[str, object]]] = {}
     by_source_horizon: dict[tuple[str, str], list[dict[str, object]]] = {}
     by_source_analyst: dict[tuple[str, str], list[dict[str, object]]] = {}
-    for row in outcomes:
-        item = {"direction_hit": row.direction_hit, "brier_score": row.brier_score, "outcome": row.outcome, "source_key": row.source_key}
-        by_horizon.setdefault(row.horizon_key, []).append(item)
-        if row.analyst_name:
-            by_analyst.setdefault(row.analyst_name, []).append(item)
-            by_source_analyst.setdefault((row.source_key, row.analyst_name), []).append(item)
-        by_source_horizon.setdefault((row.source_key, row.horizon_key), []).append(item)
+    for outcome in outcomes:
+        item: dict[str, object] = {"direction_hit": outcome.direction_hit, "brier_score": outcome.brier_score, "outcome": outcome.outcome, "source_key": outcome.source_key}
+        by_horizon.setdefault(outcome.horizon_key, []).append(item)
+        if outcome.analyst_name:
+            by_analyst.setdefault(outcome.analyst_name, []).append(item)
+            by_source_analyst.setdefault((outcome.source_key, outcome.analyst_name), []).append(item)
+        by_source_horizon.setdefault((outcome.source_key, outcome.horizon_key), []).append(item)
     return {
         "assistant_id": str(assistant_id),
         "minimum_sample": minimum_sample,
         "weighting_revision": media_weighting.get("revision"),
         "scorecards": [
-            {**item, "source_prior": (media_weighting.get("source_priors") or {}).get(item["source_key"], 1.0)}
+            {**item, "source_prior": source_priors.get(str(item["source_key"]), 1.0)}
             for item in scorecards
         ],
         "horizon_scorecards": [{"horizon_key": key, **source_scorecard(values, minimum_sample=minimum_sample)} for key, values in sorted(by_horizon.items())],
         "analyst_scorecards": [
-            {"analyst_name": key, "analyst_prior": (media_weighting.get("analyst_priors") or {}).get(key, 1.0), **source_scorecard(values, minimum_sample=minimum_sample)}
+            {"analyst_name": key, "analyst_prior": analyst_priors.get(key, 1.0), **source_scorecard(values, minimum_sample=minimum_sample)}
             for key, values in sorted(by_analyst.items())
         ],
         "source_horizon_scorecards": [
-            {"source_key": source, "horizon_key": horizon, "source_prior": (media_weighting.get("source_priors") or {}).get(source, 1.0), **source_scorecard(values, minimum_sample=minimum_sample)}
+            {"source_key": source, "horizon_key": horizon, "source_prior": source_priors.get(source, 1.0), **source_scorecard(values, minimum_sample=minimum_sample)}
             for (source, horizon), values in sorted(by_source_horizon.items())
         ],
         "source_analyst_scorecards": [
@@ -1961,9 +2052,9 @@ async def infrastructure_audit(assistant_id: uuid.UUID) -> dict[str, object]:
             audit = BeeCFOInfrastructureAudit(assistant_id=assistant_id, status=result["status"], decision=result["decision"], isolation_contract=result["isolation_contract"], checked_at=datetime.now(timezone.utc))
             session.add(audit)
         else:
-            audit.status = result["status"]
-            audit.decision = result["decision"]
-            audit.isolation_contract = result["isolation_contract"]
+            audit.status = str(result["status"])
+            audit.decision = dict(_object_mapping(result["decision"]))
+            audit.isolation_contract = dict(_object_mapping(result["isolation_contract"]))
             audit.checked_at = datetime.now(timezone.utc)
         await session.commit()
     return result
@@ -2003,7 +2094,7 @@ async def record_pilot_run(
     assistant_id: uuid.UUID,
     *,
     report_id: uuid.UUID,
-    checks: dict[str, object],
+    checks: Mapping[str, object],
 ) -> dict[str, object]:
     """Record one manual shadow-pilot observation without delivering it."""
     async with SessionLocal() as session:
@@ -2022,7 +2113,7 @@ async def record_pilot_run(
         "watch_id": str(report.watch_id),
         "report_as_of": _iso(report.as_of),
         "occurred_at": datetime.now(timezone.utc).isoformat(),
-        "checks": {key: bool(provided.get(key)) for key in assessment["required_checks"]},
+        "checks": {key: bool(provided.get(key)) for key in _string_values(assessment.get("required_checks"))},
         **assessment,
     }
     event = await _append_governance_event(
@@ -2068,7 +2159,7 @@ async def _pilot_observation_window(assistant_id: uuid.UUID, *, watch_id: uuid.U
             report_watch_ids = {str(report_id): report_watch_id for report_id, report_watch_id in report_rows}
     latest: datetime | None = None
     for event in events:
-        payload_watch_id = str((event.payload or {}).get("watch_id") or "")
+        payload_watch_id = str(_object_mapping(event.payload).get("watch_id") or "")
         report_watch_id = report_watch_ids.get(event.event_key)
         if payload_watch_id == str(watch_id) or report_watch_id == watch_id:
             latest = event.created_at
@@ -2106,29 +2197,34 @@ async def run_verified_pilot(
         report_kind="on_demand",
         force=force,
     )
-    report = result.get("report") if isinstance(result.get("report"), dict) else None
-    if report is None:
+    report = _object_mapping(result.get("report"))
+    report_id_value = report.get("id")
+    if not report_id_value:
         raise ValueError("pilot report was not produced")
-    report_id = uuid.UUID(str(report["id"]))
+    try:
+        report_id = uuid.UUID(str(report_id_value))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("pilot report did not return a valid id") from exc
     profile = await get_or_create_profile(assistant_id)
     source_policy = _normalized_source_policy(profile.source_policy)
-    analysis_windows = source_policy["analysis_windows"]
+    analysis_windows = _object_mapping(source_policy.get("analysis_windows"))
+    quote_policy = _object_mapping(source_policy.get("quote_reconciliation"))
     quote = await capture_price_snapshot(
         assistant_id,
         settings=await settings_for_assistant(get_settings(), assistant_id),
-        comparison_window_hours=int(analysis_windows["price_comparison_window_hours"]),
-        comparison_tolerance_hours=int(analysis_windows["price_comparison_tolerance_hours"]),
-        max_relative_spread=float(source_policy["quote_reconciliation"]["max_relative_spread"]),
-        require_verifier=bool(source_policy["quote_reconciliation"]["require_verifier"]),
+        comparison_window_hours=_integer_value(analysis_windows.get("price_comparison_window_hours"), default=24),
+        comparison_tolerance_hours=_integer_value(analysis_windows.get("price_comparison_tolerance_hours"), default=2),
+        max_relative_spread=_finite_number(quote_policy.get("max_relative_spread"), default=0.10),
+        require_verifier=bool(quote_policy.get("require_verifier")),
     )
     quality = await evidence_quality_for_report(assistant_id, report_id=report_id)
     canary_result = await prepare_canary(assistant_id, report_id=report_id)
-    canary_preview = canary_result.get("preview") if isinstance(canary_result.get("preview"), dict) else {}
+    canary_preview = _object_mapping(canary_result.get("preview"))
     shadow = await record_shadow_run(assistant_id, report_id=report_id)
     checks = build_verified_pilot_checks(
-        report=report,
+        report=_object_mapping(report),
         price_snapshot=quote,
-        quality_gate=quality.get("quality_gate") if isinstance(quality.get("quality_gate"), dict) else {},
+        quality_gate=_object_mapping(quality.get("quality_gate")),
         canary_preview=canary_preview,
         shadow_run=shadow,
     )
@@ -2139,9 +2235,9 @@ async def run_verified_pilot(
         "report_id": str(report_id),
         "report_status": result.get("status"),
         "checks": {"report_available": True, **checks},
-        "quote_source_key": (quote.get("price_source_health") or {}).get("selected_source"),
+        "quote_source_key": _object_mapping(quote.get("price_source_health")).get("selected_source"),
         "canary_status": canary_preview.get("status"),
-        "shadow_status": (shadow.get("run") or {}).get("status"),
+        "shadow_status": _object_mapping(shadow.get("run")).get("status"),
         "pilot_run": recorded.get("run"),
         "pilot": recorded.get("pilot"),
         "observation": observation,
@@ -2411,7 +2507,10 @@ async def prepare_canary(assistant_id: uuid.UUID, *, report_id: uuid.UUID) -> di
             "report_hash": preview["report_hash"],
             "checks": preview["checks"],
             "evidence": preview["evidence"],
-            "message_counts": {key: len(value) for key, value in preview["preview"].items()},
+            "message_counts": {
+                key: len(_object_list(value))
+                for key, value in _object_mapping(preview.get("preview")).items()
+            },
             "outbound_message_sent": False,
         },
     )
@@ -2594,7 +2693,7 @@ async def update_attention_policy(assistant_id: uuid.UUID, payload: dict[str, ob
 
 
 async def evaluate_attention_candidate(assistant_id: uuid.UUID, candidate: dict[str, object]) -> dict[str, object]:
-    policy = (await get_attention_policy(assistant_id))["policy"]
+    policy = _object_mapping((await get_attention_policy(assistant_id)).get("policy"))
     now = datetime.now(timezone.utc)
     dedup_key = str(candidate.get("dedup_key") or "").strip()
     if not dedup_key:
@@ -2614,7 +2713,7 @@ async def evaluate_attention_candidate(assistant_id: uuid.UUID, candidate: dict[
     prior_candidates = [item for item in recent if item.event_key != "policy"]
     duplicate_seen = any(
         item.event_key == dedup_key
-        and item.created_at >= now - timedelta(hours=int(policy["dedup_hours"]))
+        and item.created_at >= now - timedelta(hours=_integer_value(policy.get("dedup_hours"), default=24))
         for item in prior_candidates
     )
     decision = evaluate_attention_budget(
@@ -2637,7 +2736,7 @@ async def evaluate_attention_candidate(assistant_id: uuid.UUID, candidate: dict[
 async def market_pack_readiness(assistant_id: uuid.UUID) -> dict[str, object]:
     ledger = await source_ledger(assistant_id)
     by_indicator: dict[str, list[dict[str, object]]] = {}
-    for row in ledger["sources"]:
+    for row in _mapping_rows(ledger.get("sources")):
         by_indicator.setdefault(str(row["indicator_key"]), []).append(row)
     packs = []
     for pack in MARKET_PACKS:
@@ -2645,8 +2744,7 @@ async def market_pack_readiness(assistant_id: uuid.UUID) -> dict[str, object]:
         approved = [
             row for row in rows
             if row.get("decision_status") == "approved"
-            and isinstance(row.get("decision"), dict)
-            and row["decision"].get("uat_status") == "passed"
+            and _object_mapping(row.get("decision")).get("uat_status") == "passed"
         ]
         packs.append(
             {
@@ -2692,11 +2790,11 @@ async def why_changed(
     current_state = dict(report.current_state or {})
     previous_state = dict(previous.current_state or {}) if previous else None
     diff = build_report_diff(previous_state, current_state)
-    new_ids = {str(item) for item in diff.get("new_evidence_ids", []) if item}
-    current_cards = current_state.get("evidence_cards") if isinstance(current_state.get("evidence_cards"), list) else []
+    new_ids = {item for item in _string_values(diff.get("new_evidence_ids")) if item}
+    current_cards = _mapping_rows(current_state.get("evidence_cards"))
     diff["new_evidence"] = [
         item for item in current_cards
-        if isinstance(item, dict) and str(item.get("evidence_id")) in new_ids
+        if str(item.get("evidence_id") or "") in new_ids
     ][:3]
     message = render_why_changed_message(
         diff=diff,
@@ -2713,7 +2811,7 @@ async def why_changed(
             "previous_report_id": str(previous.id) if previous else None,
             "requestor": str(requestor)[:128],
             "no_model_rerun": True,
-            "evidence_count": len(current_payload.get("citations") or []),
+            "evidence_count": len(_object_list(current_payload.get("citations"))),
         },
     )
     return {
@@ -2779,7 +2877,9 @@ async def deliver_report(
     settings = await settings_for_assistant(get_settings(), assistant_id)
     profile = await get_or_create_profile(assistant_id)
     source_policy = _normalized_source_policy(profile.source_policy)
-    analysis_windows = source_policy["analysis_windows"]
+    analysis_windows = _object_mapping(source_policy.get("analysis_windows"))
+    quote_policy = _object_mapping(source_policy.get("quote_reconciliation"))
+    canary_policy = _object_mapping(source_policy.get("canary_policy"))
     destination = settings.telegram_channel_id
     if settings.telegram_bot_token is None or not destination:
         return {
@@ -2829,7 +2929,7 @@ async def deliver_report(
                 "capacity": capacity,
                 "outbound_message_sent": False,
             }
-        if bool(source_policy["canary_policy"].get("enforced")):
+        if bool(canary_policy.get("enforced")):
             preview = build_canary_preview(report=_report_payload(report), watch_name=watch.name)
             approval = await session.scalar(
                 select(BeeCFOGovernanceEvent)
@@ -2884,7 +2984,7 @@ async def deliver_report(
         )
         previously_sent = bool(ledger and ledger.status == "sent")
         repeat_delivery = bool(repeat and previously_sent)
-        if previously_sent and price_already_sent and not repeat_delivery:
+        if ledger is not None and previously_sent and price_already_sent and not repeat_delivery:
             return {
                 "status": "duplicate",
                 "report_id": str(report.id),
@@ -2909,11 +3009,11 @@ async def deliver_report(
             session.add(ledger)
         elif ledger.status != "sent":
             ledger.status = "pending"
-            ledger.attempt = int(ledger.attempt or 0) + 1
+            ledger.attempt = _integer_value(ledger.attempt) + 1
             ledger.error_message = None
             ledger.renderer_revision = BEE_CFO_RENDERER_REVISION
         elif repeat_delivery:
-            ledger.attempt = int(ledger.attempt or 0) + 1
+            ledger.attempt = _integer_value(ledger.attempt) + 1
             ledger.error_message = None
             ledger.renderer_revision = BEE_CFO_RENDERER_REVISION
         await session.commit()
@@ -2932,12 +3032,12 @@ async def deliver_report(
             price_snapshot = await capture_price_snapshot(
                 assistant_id,
                 settings=settings,
-                comparison_window_hours=int(analysis_windows["price_comparison_window_hours"]),
-                comparison_tolerance_hours=int(analysis_windows["price_comparison_tolerance_hours"]),
-                max_relative_spread=float(source_policy["quote_reconciliation"].get("max_relative_spread", 0.10)),
-                require_verifier=bool(source_policy["quote_reconciliation"].get("require_verifier", False)),
+                comparison_window_hours=_integer_value(analysis_windows.get("price_comparison_window_hours"), default=24),
+                comparison_tolerance_hours=_integer_value(analysis_windows.get("price_comparison_tolerance_hours"), default=2),
+                max_relative_spread=_finite_number(quote_policy.get("max_relative_spread"), default=0.10),
+                require_verifier=bool(quote_policy.get("require_verifier")),
             )
-            live_state = dict(report_payload.get("current_state") or {})
+            live_state = dict(_object_mapping(report_payload.get("current_state")))
             live_state["live_price"] = price_snapshot
             live_state["price_comparison"] = price_snapshot.get("comparison") or live_state.get("price_comparison")
             report_payload["current_state"] = live_state
@@ -3102,7 +3202,7 @@ async def run_scheduled_reports(*, assistant_id: uuid.UUID, now: datetime | None
     results = []
     for watch in watches:
         result = await run_report(assistant_id=assistant_id, watch_id=watch.id, report_kind="scheduled")
-        report_payload = result.get("report") if isinstance(result.get("report"), dict) else {}
+        report_payload = _object_mapping(result.get("report"))
         report_id = report_payload.get("id")
         if report_id:
             result["delivery"] = await deliver_report(

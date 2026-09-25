@@ -1,0 +1,15 @@
+{
+  "name": "bee-researcher-browser-smoke",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "admin:inventory": "node scripts/capture_admin_screenshots.mjs",
+    "admin:interactions": "node scripts/capture_admin_interactions.mjs",
+    "admin:locales": "node scripts/verify_admin_locales.mjs",
+    "user:e2e": "node scripts/verify_user_portal.mjs",
+    "admin:support:e2e": "node scripts/verify_admin_support.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.55.1"
+  }
+}

@@ -138,7 +138,12 @@ def build_factor_attributions(evidence: Iterable[MarketEvidence]) -> dict[str, o
             "attribution_kind": kind,
             "conflict": conflict,
         })
-    factors.sort(key=lambda item: (-float(item["score"]), str(item["factor_key"])))
+    def factor_sort_key(item: dict[str, object]) -> tuple[float, str]:
+        score = item.get("score")
+        numeric_score = float(score) if isinstance(score, (int, float)) else 0.0
+        return (-numeric_score, str(item.get("factor_key", "")))
+
+    factors.sort(key=factor_sort_key)
     status = "available" if factors else "no_call"
     limitations = [
         "این کارت‌ها نسبت‌دادن شواهد و هم‌حرکتی هستند، نه اثبات رابطه علّی یا سهم عددی هر عامل.",

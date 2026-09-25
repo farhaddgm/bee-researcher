@@ -178,9 +178,12 @@ def _json_ld_article(parser: _ArticleParser) -> dict[str, object]:
     for document in parser.json_ld_documents:
         for item in _walk_json_ld(document):
             item_type = item.get("@type")
-            types = {item_type.lower()} if isinstance(item_type, str) else {
-                str(value).lower() for value in item_type or []
-            }
+            if isinstance(item_type, str):
+                types = {item_type.lower()}
+            elif isinstance(item_type, list):
+                types = {str(value).lower() for value in item_type}
+            else:
+                types = set()
             if types & ARTICLE_TYPES:
                 return item
     return {}
@@ -230,9 +233,10 @@ def extract_article_document(
         or str(article_json.get("url") or article_json.get("mainEntityOfPage") or "")
         or response_url
     )
-    if isinstance(article_json.get("mainEntityOfPage"), dict):
+    main_entity = article_json.get("mainEntityOfPage")
+    if isinstance(main_entity, dict):
         canonical_candidate = str(
-            article_json["mainEntityOfPage"].get("@id") or response_url
+            main_entity.get("@id") or response_url
         )
     canonical_url = normalize_item_url(urljoin(response_url, canonical_candidate))
     try:

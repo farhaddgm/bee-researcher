@@ -10,10 +10,12 @@ without changing the reporting boundary.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from collections import Counter
 from datetime import datetime, timezone
-from typing import Iterable, Mapping
+from decimal import Decimal
+from typing import Iterable, Mapping, Sequence
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .researcher_adapter import MarketEvidence
@@ -76,6 +78,27 @@ BENCHMARK_PLAYBOOK: tuple[dict[str, object], ...] = (
 
 def benchmark_playbook() -> list[dict[str, object]]:
     return [dict(item) for item in BENCHMARK_PLAYBOOK]
+
+
+def _number(value: object, *, default: float | None = None) -> float | None:
+    """Read untrusted JSON numerics without accepting bools or non-finite values."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str, Decimal)):
+        return default
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return parsed if math.isfinite(parsed) else default
+
+
+def _mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _string_values(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple, set, frozenset)):
+        return []
+    return [str(item) for item in value if isinstance(item, str)]
 
 _EVENT_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("central_bank", ("فدرال رزرو", "بانک مرکزی", "central bank", "fed", "rate decision", "نرخ بهره")),
@@ -168,7 +191,7 @@ def compute_novelty_metrics(evidence: list[MarketEvidence], clusters: list[list[
     }
 
 
-def build_media_pulse(perspectives: list[Mapping[str, object]], novelty: Mapping[str, object]) -> dict[str, object]:
+def build_media_pulse(perspectives: Sequence[Mapping[str, object]], novelty: Mapping[str, object]) -> dict[str, object]:
     explicit = [item for item in perspectives if item.get("evidence_type") == "explicit_opinion"]
     counts = Counter(str(item.get("stance") or "unknown") for item in explicit)
     if counts.get("up", 0) and counts.get("down", 0):
@@ -210,14 +233,26 @@ def compute_coverage_score(*, quote: bool, source_health: float, freshness: floa
 def model_agreement(price_forecast: Mapping[str, object]) -> dict[str, object]:
     if price_forecast.get("status") != "available":
         return {"status": "no_call", "label": "داده/مدل کافی نیست", "agreement": None, "methods": []}
-    rows = price_forecast.get("forecasts") if isinstance(price_forecast.get("forecasts"), list) else []
+    rows = price_forecast.get("forecasts")
+    if not isinstance(rows, list):
+        rows = []
     directions: list[str] = []
     methods: list[str] = []
     for row in rows:
         if not isinstance(row, Mapping):
             continue
-        probs = {"up": float(row.get("probability_up", 0)), "down": float(row.get("probability_down", 0)), "flat": float(row.get("probability_flat", 0))}
-        directions.append(max(probs, key=probs.get))
+        raw_probabilities = {
+            direction: _number(row.get(f"probability_{direction}"))
+            for direction in ("up", "down", "flat")
+        }
+        valid_probabilities = {
+            direction: probability
+            for direction, probability in raw_probabilities.items()
+            if probability is not None
+        }
+        if not valid_probabilities:
+            continue
+        directions.append(max(valid_probabilities, key=lambda direction: valid_probabilities[direction]))
         methods.append(str(row.get("method") or "unknown"))
     unique = set(directions)
     agreement = len(unique) <= 1 if directions else None
@@ -265,16 +300,33 @@ def evaluate_media_outcome(*, expected_stance: str, actual_direction: str | None
     actual = str(actual_direction or "").lower()
     if expected not in {"up", "down", "flat"} or actual not in {"up", "down", "flat"}:
         return {"outcome": "not_evaluable", "direction_hit": None, "brier_score": None}
-    p = max(0.0, min(1.0, float(probability))) if probability is not None else (1.0 if expected == actual else 0.0)
-    return {"outcome": "hit" if expected == actual else "miss", "direction_hit": expected == actual, "brier_score": round((p - (1.0 if actual == expected else 0.0)) ** 2, 6)}
+    direction_hit = expected == actual
+    parsed_probability = _number(probability) if probability is not None else (1.0 if direction_hit else 0.0)
+    brier_score = None
+    if parsed_probability is not None:
+        probability_value = max(0.0, min(1.0, parsed_probability))
+        brier_score = round((probability_value - (1.0 if direction_hit else 0.0)) ** 2, 6)
+    return {
+        "outcome": "hit" if direction_hit else "miss",
+        "direction_hit": direction_hit,
+        "brier_score": brier_score,
+    }
 
 
-def source_scorecard(rows: list[Mapping[str, object]], *, minimum_sample: int = 20) -> dict[str, object]:
+def source_scorecard(rows: Sequence[Mapping[str, object]], *, minimum_sample: int = 20) -> dict[str, object]:
     minimum = max(1, int(minimum_sample))
     if len(rows) < minimum:
         return {"status": "insufficient_sample", "sample_size": len(rows), "minimum_sample": minimum, "direction_hit_rate": None, "brier_score": None, "calibration": None}
-    hits = [row.get("direction_hit") for row in rows if isinstance(row.get("direction_hit"), bool)]
-    briers = [float(row["brier_score"]) for row in rows if row.get("brier_score") is not None]
+    hits: list[bool] = []
+    for row in rows:
+        hit = row.get("direction_hit")
+        if isinstance(hit, bool):
+            hits.append(hit)
+    briers = [
+        parsed
+        for row in rows
+        if (parsed := _number(row.get("brier_score"))) is not None
+    ]
     return {"status": "available", "sample_size": len(rows), "minimum_sample": minimum, "direction_hit_rate": round(sum(hits) / len(hits), 4) if hits else None, "brier_score": round(sum(briers) / len(briers), 4) if briers else None, "calibration": "review_required"}
 
 
@@ -293,30 +345,30 @@ def evaluate_alert_rule(rule: Mapping[str, object], *, current: Mapping[str, obj
     if str(rule.get("status") or "draft") != "active":
         return None
     kind = str(rule.get("kind") or "")
-    threshold = float(rule.get("threshold") or 0)
+    threshold = _number(rule.get("threshold"), default=0.0) or 0.0
     if kind == "price_change_pct":
-        value = abs(float(current.get("price_change_percent") or 0))
+        value = abs(_number(current.get("price_change_percent"), default=0.0) or 0.0)
         if value < threshold:
             return None
         explanation = f"تغییر قیمت در پنجره‌ی پایش از آستانه‌ی {threshold:g}٪ عبور کرد ({value:.2f}٪)."
     elif kind == "volatility_jump":
-        value = float(current.get("volatility_ratio") or 0)
+        value = _number(current.get("volatility_ratio"), default=0.0) or 0.0
         if value < threshold:
             return None
         explanation = f"نسبت نوسان به {value:.2f} رسید و از آستانه‌ی {threshold:g} عبور کرد."
     elif kind == "media_stance_shift":
-        before = ((previous or {}).get("media_pulse") or {}).get("direction")
-        after = (current.get("media_pulse") or {}).get("direction")
+        before = _mapping(_mapping(previous).get("media_pulse")).get("direction")
+        after = _mapping(current.get("media_pulse")).get("direction")
         if not before or not after or before == after:
             return None
         explanation = f"جهت توصیفی مواضع رسانه‌ها از {before} به {after} تغییر کرد؛ این هشدار علت بازار را ادعا نمی‌کند."
     elif kind == "stale_quote":
-        missing = set((current.get("coverage_score") or {}).get("missing") or [])
+        missing = set(_string_values(_mapping(current.get("coverage_score")).get("missing")))
         if "quote" not in missing:
             return None
         explanation = "قیمت معتبر یا تازه در این نوبت در دسترس نیست؛ گزارش باید با برچسب ناقص منتشر شود."
     elif kind == "source_failover":
-        missing = set((current.get("coverage_score") or {}).get("missing") or [])
+        missing = set(_string_values(_mapping(current.get("coverage_score")).get("missing")))
         if "source_health" not in missing:
             return None
         explanation = "سلامت منبع اصلی کافی نیست؛ مسیر failover یا تأیید منبع جایگزین لازم است."

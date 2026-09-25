@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from collections.abc import Mapping
+from decimal import Decimal
+from typing import Any, TypedDict
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.fetchers import validate_public_url_syntax
@@ -60,9 +62,12 @@ def validate_schedule_slots(value: object) -> list[dict[str, object]]:
     for item in value:
         if not isinstance(item, dict):
             raise ValueError("schedule_slots must contain objects")
+        raw_weekday = item.get("weekday")
+        if not isinstance(raw_weekday, (str, bytes, bytearray, int, float, Decimal)):
+            raise ValueError("schedule slot weekday must be an integer from 0 to 6")
         try:
-            weekday = int(item.get("weekday"))
-        except (TypeError, ValueError) as exc:
+            weekday = int(raw_weekday)
+        except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError("schedule slot weekday must be an integer from 0 to 6") from exc
         time_value = str(item.get("time", "")).strip()
         if weekday < 0 or weekday > 6 or len(time_value) != 5 or time_value[2] != ":":
@@ -107,7 +112,7 @@ def validate_output_contract(value: object) -> dict[str, object]:
     }
 
 
-def validate_source_registration(payload: dict[str, Any]) -> dict[str, object]:
+def validate_source_registration(payload: dict[str, Any]) -> SourceRegistration:
     # The shared fetch catalog currently accepts sixteen-character keys.  The
     # Bee CFO registry keeps the same bound so the adapter cannot truncate or
     # silently remap provenance when it syncs an operational source.
@@ -152,11 +157,17 @@ def validate_source_registration(payload: dict[str, Any]) -> dict[str, object]:
         "freshness_hours": freshness_hours,
         "language": str(payload.get("language", "fa"))[:16],
         "region": str(payload.get("region", "global"))[:32],
-        "metadata_json": payload.get("metadata_json") if isinstance(payload.get("metadata_json"), dict) else {},
+        "metadata_json": {
+            key: value
+            for key, value in payload.get("metadata_json", {}).items()
+            if isinstance(key, str)
+        }
+        if isinstance(payload.get("metadata_json"), Mapping)
+        else {},
     }
 
 
-def validate_watch_registration(payload: dict[str, Any]) -> dict[str, object]:
+def validate_watch_registration(payload: dict[str, Any]) -> WatchRegistration:
     watch_key = _require_text(payload.get("watch_key"), "watch_key", max_length=64)
     name = _require_text(payload.get("name"), "name", max_length=200)
     market = _require_text(payload.get("market"), "market", max_length=80)
@@ -184,7 +195,57 @@ def validate_watch_registration(payload: dict[str, Any]) -> dict[str, object]:
     }
 
 
-def validate_market_report(payload: dict[str, Any]) -> dict[str, object]:
+class MarketScenario(TypedDict):
+    key: str
+    title: str
+    probability: float
+    horizon: str
+    expected_change: str
+    triggers: list[str]
+    invalidation: str
+    evidence: object
+
+
+class MarketReport(TypedDict):
+    current_state: dict[str, object]
+    scenarios: list[MarketScenario]
+    changes: list[object]
+    uncertainties: list[object]
+    citations: list[object]
+    confidence: float
+
+
+class SourceRegistration(TypedDict):
+    source_key: str
+    name: str
+    homepage_url: str
+    fetch_url: str
+    adapter: str
+    origin: str
+    discovery_path: str
+    authority: str
+    status: str
+    priority: int
+    freshness_hours: int
+    language: str
+    region: str
+    metadata_json: dict[str, object]
+
+
+class WatchRegistration(TypedDict):
+    watch_key: str
+    name: str
+    market: str
+    asset_class: str
+    region: str
+    currency: str | None
+    description: str
+    indicator_keys: list[str]
+    source_keys: list[str]
+    status: str
+
+
+def validate_market_report(payload: dict[str, Any]) -> MarketReport:
     if not isinstance(payload, dict):
         raise ValueError("market report must be an object")
     current_state = payload.get("current_state")
@@ -252,7 +313,7 @@ def validate_market_report(payload: dict[str, Any]) -> dict[str, object]:
         )
     scenario_keys: set[str] = set()
     probability_total = 0.0
-    normalized_scenarios: list[dict[str, object]] = []
+    normalized_scenarios: list[MarketScenario] = []
     for scenario in scenarios:
         if not isinstance(scenario, dict):
             raise ValueError("each scenario must be an object")
@@ -260,9 +321,12 @@ def validate_market_report(payload: dict[str, Any]) -> dict[str, object]:
         if key in scenario_keys:
             raise ValueError("scenario keys must be unique")
         scenario_keys.add(key)
+        raw_probability = scenario.get("probability")
+        if not isinstance(raw_probability, (str, bytes, bytearray, int, float, Decimal)):
+            raise ValueError("scenario probability must be numeric")
         try:
-            probability = float(scenario.get("probability"))
-        except (TypeError, ValueError) as exc:
+            probability = float(raw_probability)
+        except (TypeError, ValueError, OverflowError) as exc:
             raise ValueError("scenario probability must be numeric") from exc
         if probability < 0 or probability > 1:
             raise ValueError("scenario probability must be between 0 and 1")
@@ -305,9 +369,9 @@ def validate_market_report(payload: dict[str, Any]) -> dict[str, object]:
     return {
         "current_state": normalized_current_state,
         "scenarios": normalized_scenarios,
-        "changes": changes,
-        "uncertainties": uncertainties,
-        "citations": citations,
+        "changes": list(changes),
+        "uncertainties": list(uncertainties),
+        "citations": list(citations),
         "confidence": round(confidence, 6),
     }
 

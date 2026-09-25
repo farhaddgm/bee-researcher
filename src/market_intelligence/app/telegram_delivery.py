@@ -25,7 +25,7 @@ def _normalize_message_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
-def _fa_digits(value: str) -> str:
+def _fa_digits(value: str | int) -> str:
     return str(value).translate(str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹"))
 
 
@@ -179,10 +179,13 @@ def render_analysis_message(
         # vocabulary. Rendering is text-only and keeps Telegram HTML escaped.
         defaults = {"title": 150, "summary": 350, "business_connection": 300, "opportunity": 250, "risk": 250, "source": 120, "source_url": 120, "published_at": 80, "feedback": 80, "footer": 80}
         def block_limit(block: dict[str, object], block_type: str) -> int:
+            raw_value = block.get("max_chars")
+            if not isinstance(raw_value, (str, int, float)):
+                return defaults[block_type]
             try:
-                value = int(block.get("max_chars") or 0)
-            except (TypeError, ValueError):
-                value = 0
+                value = int(raw_value)
+            except (TypeError, ValueError, OverflowError):
+                return defaults[block_type]
             return min(max(value, 20), 1200) if value else defaults[block_type]
 
         def block_emoji(block: dict[str, object], fallback: str) -> str:

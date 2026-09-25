@@ -1,0 +1,5 @@
+# The project contains intentionally compact legacy compatibility modules.
+# Keep the CI gate focused on correctness failures (syntax, undefined names,
+# and invalid assertions) until the larger style-only migration is scheduled.
+[lint]
+select = ["E9", "F63", "F7", "F82"]

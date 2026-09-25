@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable, Mapping
+from decimal import Decimal
+from typing import Any, Iterable, Mapping, TypeVar, TypedDict
 
 
 DEFAULT_PRICE_COMPARISON_WINDOW_HOURS = 24
@@ -9,19 +10,35 @@ DEFAULT_MEDIA_ANALYSIS_WINDOW_HOURS = 24 * 7
 DEFAULT_PRICE_COMPARISON_TOLERANCE_HOURS = 6
 MAX_ANALYSIS_WINDOW_HOURS = 24 * 30
 ANALYSIS_WINDOWS_REVISION = "bee-cfo-analysis-windows-1"
+_EvidenceT = TypeVar("_EvidenceT")
+
+
+class AnalysisWindows(TypedDict):
+    price_comparison_window_hours: int
+    media_analysis_window_hours: int
+    price_comparison_tolerance_hours: int
+    price_baseline_policy: str
+    evidence_timestamp_policy: str
+    revision: str
 
 
 def _hours(value: object, *, field: str, default: int) -> int:
+    candidate = value if value is not None else default
+    # Configuration values arrive from JSON, where the supported scalar
+    # representations are strings and numbers. Validate before coercion so
+    # arbitrary objects cannot silently supply a custom __int__ implementation.
+    if not isinstance(candidate, (str, bytes, bytearray, int, float, Decimal)):
+        raise ValueError(f"{field} must be an integer number of hours")
     try:
-        result = int(value if value is not None else default)
-    except (TypeError, ValueError) as exc:
+        result = int(candidate)
+    except (TypeError, ValueError, OverflowError) as exc:
         raise ValueError(f"{field} must be an integer number of hours") from exc
     if result < 1 or result > MAX_ANALYSIS_WINDOW_HOURS:
         raise ValueError(f"{field} must be between 1 and {MAX_ANALYSIS_WINDOW_HOURS} hours")
     return result
 
 
-def normalize_analysis_windows(value: object = None) -> dict[str, object]:
+def normalize_analysis_windows(value: object = None) -> AnalysisWindows:
     """Normalize Bee CFO's two independent time windows.
 
     These settings live inside Bee CFO's profile source policy.  They are not
@@ -59,7 +76,7 @@ def normalize_analysis_windows(value: object = None) -> dict[str, object]:
     }
 
 
-def merge_analysis_windows(value: object = None) -> dict[str, object]:
+def merge_analysis_windows(value: object = None) -> AnalysisWindows:
     """Backward-compatible alias used by profile/configuration merge paths."""
     return normalize_analysis_windows(value)
 
@@ -79,17 +96,17 @@ def _evidence_timestamp(item: object) -> datetime | None:
 
 
 def filter_evidence_by_lookback(
-    evidence: Iterable[object],
+    evidence: Iterable[_EvidenceT],
     *,
     as_of: datetime,
     hours: int,
-) -> tuple[list[object], dict[str, object]]:
+) -> tuple[list[_EvidenceT], dict[str, object]]:
     """Filter analysis evidence to the configured window without look-ahead."""
     evidence_rows = list(evidence)
     normalized_hours = _hours(hours, field="media_analysis_window_hours", default=DEFAULT_MEDIA_ANALYSIS_WINDOW_HOURS)
     end = as_utc(as_of) or as_of.replace(tzinfo=timezone.utc)
     start = end - timedelta(hours=normalized_hours)
-    included: list[object] = []
+    included: list[_EvidenceT] = []
     missing_timestamp = 0
     excluded_out_of_window = 0
     for item in evidence_rows:
@@ -146,8 +163,11 @@ def price_comparison(
         observed = as_utc(observed if isinstance(observed, datetime) else None)
         if observed is None or observed > report_time:
             continue
+        raw_value = item.get("value")
+        if not isinstance(raw_value, (str, bytes, bytearray, int, float, Decimal)):
+            continue
         try:
-            value = float(item.get("value"))
+            value = float(raw_value)
         except (TypeError, ValueError):
             continue
         parsed.append((observed, value, item))
@@ -197,9 +217,11 @@ def price_comparison(
 
 
 def window_label_fa(hours: object) -> str:
+    if not isinstance(hours, (str, bytes, bytearray, int, float, Decimal)):
+        return "نامشخص"
     try:
         value = int(hours)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return "نامشخص"
     if value % 24 == 0:
         days = value // 24

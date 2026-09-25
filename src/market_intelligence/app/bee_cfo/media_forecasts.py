@@ -9,10 +9,11 @@ different horizons, or an internal conflict without losing evidence.
 
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 import hashlib
 import math
 import re
-from typing import Mapping
+from typing import Mapping, Sequence
 
 from .researcher_adapter import MarketEvidence
 
@@ -28,6 +29,14 @@ HORIZON_LABELS = {
 HORIZON_ORDER = ("24h", "48h", "3_7d", "8_30d", "30d_plus", "unspecified")
 HORIZON_DAYS = {"24h": 1, "48h": 2, "3_7d": 7, "8_30d": 30, "30d_plus": 90, "unspecified": None}
 HORIZON_EXPIRY_HOURS = {"24h": 72, "48h": 96, "3_7d": 14 * 24, "8_30d": 45 * 24, "30d_plus": 120 * 24, "unspecified": 72}
+_DEFAULT_COMPONENT_WEIGHTS: dict[str, float] = {
+    "source": 0.20,
+    "analyst": 0.15,
+    "article_quality": 0.20,
+    "independence": 0.20,
+    "horizon_fit": 0.10,
+    "recency": 0.15,
+}
 
 _PERSIAN_DIGITS = str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789")
 _OUTLOOK_MARKERS = (
@@ -53,14 +62,7 @@ _BOILERPLATE_MARKERS = (
 
 def default_media_weighting() -> dict[str, object]:
     return {
-        "component_weights": {
-            "source": 0.20,
-            "analyst": 0.15,
-            "article_quality": 0.20,
-            "independence": 0.20,
-            "horizon_fit": 0.10,
-            "recency": 0.15,
-        },
+        "component_weights": dict(_DEFAULT_COMPONENT_WEIGHTS),
         "source_priors": {},
         "analyst_priors": {},
         "minimum_independent_sources": 1,
@@ -76,12 +78,10 @@ def normalize_media_weighting(value: object) -> dict[str, object]:
         return base
     raw_components = value.get("component_weights")
     if isinstance(raw_components, Mapping):
-        components = {}
-        for key in base["component_weights"]:
-            try:
-                components[key] = max(0.0, min(1.0, float(raw_components.get(key, base["component_weights"][key]))))
-            except (TypeError, ValueError):
-                components[key] = base["component_weights"][key]
+        components: dict[str, float] = {}
+        for key, default in _DEFAULT_COMPONENT_WEIGHTS.items():
+            number = _number(raw_components.get(key, default))
+            components[key] = max(0.0, min(1.0, number)) if number is not None else default
         total = sum(components.values())
         if total > 0:
             base["component_weights"] = {key: round(value / total, 6) for key, value in components.items()}
@@ -89,36 +89,48 @@ def normalize_media_weighting(value: object) -> dict[str, object]:
         raw = value.get(field)
         if isinstance(raw, Mapping):
             base[field] = {
-                str(key)[:120]: max(0.1, min(2.0, float(item)))
+                str(key)[:120]: _bounded_prior(item)
                 for key, item in raw.items()
                 if str(key).strip()
                 and _is_number(item)
             }
-    try:
-        base["minimum_independent_sources"] = max(1, min(10, int(value.get("minimum_independent_sources", 1))))
-    except (TypeError, ValueError):
-        pass
-    try:
-        base["minimum_sample"] = max(20, min(500, int(value.get("minimum_sample", 20))))
-    except (TypeError, ValueError):
-        pass
+    minimum_sources = _integer(value.get("minimum_independent_sources", 1))
+    if minimum_sources is not None:
+        base["minimum_independent_sources"] = max(1, min(10, minimum_sources))
+    minimum_sample = _integer(value.get("minimum_sample", 20))
+    if minimum_sample is not None:
+        base["minimum_sample"] = max(20, min(500, minimum_sample))
     raw_expiry = value.get("expiry_hours")
     if isinstance(raw_expiry, Mapping):
+        expiry_policy: dict[str, int] = dict(HORIZON_EXPIRY_HOURS)
         for key in HORIZON_ORDER:
-            try:
-                base["expiry_hours"][key] = max(24, min(24 * 365, int(raw_expiry.get(key, base["expiry_hours"][key]))))
-            except (TypeError, ValueError):
-                continue
+            hours = _integer(raw_expiry.get(key, expiry_policy[key]))
+            if hours is not None:
+                expiry_policy[key] = max(24, min(24 * 365, hours))
+        base["expiry_hours"] = expiry_policy
     base["revision"] = str(value.get("revision") or base["revision"])[:64]
     return base
 
 
-def _is_number(value: object) -> bool:
+def _number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        return None
     try:
-        float(value)
-        return True
-    except (TypeError, ValueError):
-        return False
+        result = float(value)
+    except (TypeError, ValueError, OverflowError, InvalidOperation):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _integer(value: object) -> int | None:
+    number = _number(value)
+    if number is None or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _is_number(value: object) -> bool:
+    return _number(value) is not None
 
 
 def _clean(value: object) -> str:
@@ -315,7 +327,7 @@ def extract_media_forecasts(evidence: list[MarketEvidence]) -> list[dict[str, ob
             )
     _mark_syndication(rows)
     _mark_conflicts(rows)
-    return sorted(rows, key=lambda row: (str(row.get("source_key")), str(row.get("article_id")), int(row.get("statement_index") or 0)))
+    return sorted(rows, key=lambda row: (str(row.get("source_key")), str(row.get("article_id")), _integer(row.get("statement_index")) or 0))
 
 
 def mark_media_expiry(
@@ -333,10 +345,9 @@ def mark_media_expiry(
     policy = dict(HORIZON_EXPIRY_HOURS)
     if isinstance(expiry_hours, Mapping):
         for key in HORIZON_ORDER:
-            try:
-                policy[key] = max(24, min(24 * 365, int(expiry_hours.get(key, policy[key]))))
-            except (TypeError, ValueError):
-                continue
+            configured_hours = _integer(expiry_hours.get(key, policy[key]))
+            if configured_hours is not None:
+                policy[key] = max(24, min(24 * 365, configured_hours))
     reference = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
     for row in rows:
         if row.get("evidence_type") != "explicit_opinion":
@@ -419,7 +430,7 @@ def _recency_weight(published_at: object, *, now: datetime, horizon_days: int | 
 
 
 def build_media_consensus(
-    rows: list[Mapping[str, object]],
+    rows: Sequence[Mapping[str, object]],
     *,
     weighting: Mapping[str, object] | None = None,
     now: datetime | None = None,
@@ -427,9 +438,12 @@ def build_media_consensus(
     """Return transparent, horizon-specific descriptive media consensus."""
     config = normalize_media_weighting(weighting)
     now = now or datetime.now(timezone.utc)
-    components = config["component_weights"]
-    source_priors = config["source_priors"]
-    analyst_priors = config["analyst_priors"]
+    raw_components = config.get("component_weights")
+    components: Mapping[str, object] = raw_components if isinstance(raw_components, Mapping) else {}
+    raw_source_priors = config.get("source_priors")
+    source_priors: Mapping[str, object] = raw_source_priors if isinstance(raw_source_priors, Mapping) else {}
+    raw_analyst_priors = config.get("analyst_priors")
+    analyst_priors: Mapping[str, object] = raw_analyst_priors if isinstance(raw_analyst_priors, Mapping) else {}
     explicit = [
         row for row in rows
         if row.get("evidence_type") == "explicit_opinion"
@@ -452,10 +466,10 @@ def build_media_consensus(
         for row in bucket:
             source = str(row.get("source_key") or "")
             analyst = str(row.get("analyst_name") or "")
-            source_prior = _bounded_prior(source_priors.get(source, 1.0) if isinstance(source_priors, Mapping) else 1.0)
-            analyst_prior = _bounded_prior(analyst_priors.get(analyst, 1.0) if analyst and isinstance(analyst_priors, Mapping) else 1.0)
-            article_quality = max(0.15, min(1.0, float(row.get("confidence", 0.5) or 0.5)))
-            independence = max(0.1, min(1.0, float(row.get("independence_weight", 1.0) or 1.0)))
+            source_prior = _bounded_prior(source_priors.get(source, 1.0))
+            analyst_prior = _bounded_prior(analyst_priors.get(analyst, 1.0) if analyst else 1.0)
+            article_quality = _bounded_rate(row.get("confidence") or 0.5, default=0.5, low=0.15, high=1.0)
+            independence = _bounded_rate(row.get("independence_weight") or 1.0, default=1.0, low=0.1, high=1.0)
             horizon_fit = 1.0 if row.get("horizon_explicit") else 0.5
             recency = _recency_weight(row.get("published_at"), now=now, horizon_days=HORIZON_DAYS.get(horizon_key))
             values = {
@@ -466,7 +480,10 @@ def build_media_consensus(
                 "horizon_fit": horizon_fit,
                 "recency": recency,
             }
-            weight = sum(float(components[key]) * values[key] for key in components)
+            weight = sum(
+                (_number(components.get(key)) or 0.0) * component_value
+                for key, component_value in values.items()
+            )
             group_size = len(source_horizon_groups[(source, horizon_key)])
             if row.get("conflict_status") == "internal_conflict":
                 weight *= 0.75 / max(1, group_size)
@@ -478,10 +495,14 @@ def build_media_consensus(
         ordered = sorted(probabilities.items(), key=lambda item: item[1], reverse=True)
         top = ordered[0] if ordered else ("unknown", 0.0)
         second = ordered[1][1] if len(ordered) > 1 else 0.0
-        independent_sources = len({str(row.get("source_key")) for row in bucket if float(row.get("independence_weight", 1) or 1) >= 0.75})
+        independent_sources = len({
+            str(row.get("source_key"))
+            for row in bucket
+            if _bounded_rate(row.get("independence_weight") or 1, default=1.0, low=0.1, high=1.0) >= 0.75
+        })
         conflict_count = len({str(row.get("conflict_group")) for row in bucket if row.get("conflict_group")})
         margin = round(top[1] - second, 6)
-        minimum_sources = int(config["minimum_independent_sources"])
+        minimum_sources = _integer(config.get("minimum_independent_sources")) or 1
         if not total or independent_sources < minimum_sources:
             direction = "no_call"
         elif margin < 0.15 or conflict_count:
@@ -517,14 +538,17 @@ def build_media_consensus(
 
 
 def _bounded_prior(value: object) -> float:
-    try:
-        return max(0.1, min(2.0, float(value)))
-    except (TypeError, ValueError):
-        return 1.0
+    number = _number(value)
+    return max(0.1, min(2.0, number)) if number is not None else 1.0
+
+
+def _bounded_rate(value: object, *, default: float, low: float, high: float) -> float:
+    number = _number(value)
+    return max(low, min(high, number)) if number is not None else default
 
 
 def build_media_history(
-    current_rows: list[Mapping[str, object]],
+    current_rows: Sequence[Mapping[str, object]],
     previous_states: list[Mapping[str, object]] | None = None,
     *,
     now: datetime | None = None,

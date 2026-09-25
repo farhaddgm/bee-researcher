@@ -11,8 +11,10 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import re
-from typing import Iterable, Mapping, Sequence
+from decimal import Decimal, InvalidOperation
+from typing import Iterable, Mapping, Sequence, TypedDict
 
 
 OPERATIONS_REVISION = "bee-cfo-ops-2"
@@ -34,11 +36,23 @@ _GAP_LABELS = {
 }
 
 
-def _clamp(value: object, low: float = 0.0, high: float = 1.0) -> float:
+def _finite_number(value: object, default: float = 0.0) -> float:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        return default
     try:
-        return round(max(low, min(high, float(value))), 4)
-    except (TypeError, ValueError):
-        return low
+        number = float(value)
+    except (TypeError, ValueError, OverflowError, InvalidOperation):
+        return default
+    return number if math.isfinite(number) else default
+
+
+def _nonnegative_count(value: object) -> int:
+    number = _finite_number(value, default=-1.0)
+    return int(number) if number >= 0 and number.is_integer() else 0
+
+
+def _clamp(value: object, low: float = 0.0, high: float = 1.0) -> float:
+    return round(max(low, min(high, _finite_number(value, default=low))), 4)
 
 
 def _as_datetime(value: object) -> datetime | None:
@@ -77,21 +91,30 @@ def assess_evidence_quality(current_state: Mapping[str, object]) -> dict[str, ob
     from .evidence import verify_evidence_pack
 
     state = dict(current_state or {})
-    coverage = state.get("coverage_score") if isinstance(state.get("coverage_score"), Mapping) else {}
+    raw_coverage = state.get("coverage_score")
+    coverage: Mapping[str, object] = raw_coverage if isinstance(raw_coverage, Mapping) else {}
     pack = verify_evidence_pack(state.get("evidence_pack"))
-    evidence_count = int(state.get("analysis_evidence_count") or 0)
-    media = state.get("media_perspectives") if isinstance(state.get("media_perspectives"), list) else []
-    invalid_media = [item for item in media if isinstance(item, Mapping) and not str(item.get("source_url") or "").startswith("https://")]
+    evidence_count = _nonnegative_count(state.get("analysis_evidence_count"))
+    raw_media = state.get("media_perspectives")
+    media: list[object] = raw_media if isinstance(raw_media, list) else []
+    invalid_media = [
+        item for item in media
+        if isinstance(item, Mapping) and not str(item.get("source_url") or "").startswith("https://")
+    ]
     no_call_reasons: list[dict[str, str]] = []
-    forecast = state.get("price_forecast") if isinstance(state.get("price_forecast"), Mapping) else {}
+    raw_forecast = state.get("price_forecast")
+    forecast: Mapping[str, object] = raw_forecast if isinstance(raw_forecast, Mapping) else {}
     if forecast.get("status") in {"no_call", "limited"}:
         no_call_reasons.append({"component": "price_forecast", "reason": str(forecast.get("reason") or forecast.get("status"))})
-    for item in coverage.get("missing", []) if isinstance(coverage.get("missing"), list) else []:
+    raw_missing = coverage.get("missing")
+    missing: list[object] = raw_missing if isinstance(raw_missing, list) else []
+    for item in missing:
         no_call_reasons.append({"component": str(item), "reason": "missing_or_unavailable_input"})
+    coverage_score = _finite_number(coverage.get("score"), default=0.0)
     checks = {
         "evidence_pack_intact": bool(pack.get("ready")),
-        "citable_evidence_present": evidence_count > 0 and int(pack.get("entry_count") or 0) > 0,
-        "coverage_sufficient": str(coverage.get("status") or "") in {"partial", "complete"} and float(coverage.get("score") or 0) >= 0.45,
+        "citable_evidence_present": evidence_count > 0 and _nonnegative_count(pack.get("entry_count")) > 0,
+        "coverage_sufficient": str(coverage.get("status") or "") in {"partial", "complete"} and coverage_score >= 0.45,
         "media_links_valid": not invalid_media,
         "no_call_reasons_disclosed": bool(no_call_reasons) or bool(forecast) or bool(coverage),
     }
@@ -102,7 +125,7 @@ def assess_evidence_quality(current_state: Mapping[str, object]) -> dict[str, ob
         "publication_permitted": not blockers,
         "checks": checks,
         "blockers": blockers,
-        "coverage": {"score": coverage.get("score"), "status": coverage.get("status"), "missing": coverage.get("missing", [])},
+        "coverage": {"score": coverage.get("score"), "status": coverage.get("status"), "missing": missing},
         "evidence": pack,
         "invalid_media_link_count": len(invalid_media),
         "no_call_reasons": no_call_reasons,
@@ -133,8 +156,8 @@ def build_confidence_budget(
         "forecast_quality": _clamp(1.0 if forecast.get("status") == "available" else 0.35 if forecast.get("status") == "limited" else 0.0),
         "model_agreement": _clamp(1.0 if agreement.get("status") == "agreement" else 0.55 if agreement.get("status") == "mixed" else 0.25),
         "media_explicitness": _clamp(
-            float(pulse.get("explicit_opinion_count", 0) or 0)
-            / max(1.0, float(pulse.get("coverage_volume", 0) or 0))
+            _finite_number(pulse.get("explicit_opinion_count"), default=0.0)
+            / max(1.0, _finite_number(pulse.get("coverage_volume"), default=0.0))
         ),
     }
     weights = {
@@ -164,7 +187,7 @@ def build_confidence_budget(
         "components": components,
         "weights": weights,
         "missing": missing,
-        "basis": {"evidence_count": max(0, int(evidence_count)), "source_count": max(0, int(source_count))},
+        "basis": {"evidence_count": max(0, evidence_count), "source_count": max(0, source_count)},
     }
 
 
@@ -263,7 +286,8 @@ def build_open_checks(
     """Build a deterministic review queue from the report itself."""
 
     checks: list[dict[str, object]] = []
-    coverage = current_state.get("coverage_score") if isinstance(current_state.get("coverage_score"), Mapping) else {}
+    raw_coverage = current_state.get("coverage_score")
+    coverage: Mapping[str, object] = raw_coverage if isinstance(raw_coverage, Mapping) else {}
     recorded_gaps = current_state.get("coverage_gaps")
     gaps = recorded_gaps if isinstance(recorded_gaps, list) else build_coverage_gaps(coverage)
     for gap in gaps:
@@ -279,7 +303,9 @@ def build_open_checks(
             "next_action": "هر دو مقاله و افق زمانی آن‌ها را جداگانه نگه دار؛ یکی را حذف نکن",
             "severity": "important",
         })
-    if (current_state.get("model_agreement") or {}).get("status") == "disagreement":
+    raw_agreement = current_state.get("model_agreement")
+    agreement: Mapping[str, object] = raw_agreement if isinstance(raw_agreement, Mapping) else {}
+    if agreement.get("status") == "disagreement":
         checks.append({
             "check_key": "forecast:model_disagreement",
             "kind": "model_disagreement",
@@ -362,8 +388,12 @@ def build_report_diff(previous: Mapping[str, object] | None, current: Mapping[st
         new = _stable(current.get(field))
         if old != new:
             changed.append({"field": field, "before": old, "after": new})
-    old_cards = {str(item.get("evidence_id")) for item in (before.get("evidence_cards") or []) if isinstance(item, Mapping)}
-    new_cards = {str(item.get("evidence_id")) for item in (current.get("evidence_cards") or []) if isinstance(item, Mapping)}
+    raw_old_cards = before.get("evidence_cards")
+    old_card_items: list[object] = raw_old_cards if isinstance(raw_old_cards, list) else []
+    raw_new_cards = current.get("evidence_cards")
+    new_card_items: list[object] = raw_new_cards if isinstance(raw_new_cards, list) else []
+    old_cards = {str(item.get("evidence_id")) for item in old_card_items if isinstance(item, Mapping)}
+    new_cards = {str(item.get("evidence_id")) for item in new_card_items if isinstance(item, Mapping)}
     return {
         "revision": OPERATIONS_REVISION,
         "status": "baseline" if previous is None else "changed" if changed or old_cards != new_cards else "unchanged",
@@ -393,7 +423,8 @@ def build_replay_payload(reports: Sequence[Mapping[str, object]], cutoff: object
     selected = dict(eligible[0]) if eligible else None
     selected_state = selected.get("current_state") if isinstance(selected, Mapping) and isinstance(selected.get("current_state"), Mapping) else {}
     evidence_pack = selected_state.get("evidence_pack") if isinstance(selected_state, Mapping) else {}
-    entries = evidence_pack.get("entries") if isinstance(evidence_pack, Mapping) and isinstance(evidence_pack.get("entries"), list) else []
+    raw_entries = evidence_pack.get("entries") if isinstance(evidence_pack, Mapping) else None
+    entries: list[object] = raw_entries if isinstance(raw_entries, list) else []
     source_manifest = [
         {
             "evidence_id": item.get("evidence_id"), "source_key": item.get("source_key"),
@@ -467,6 +498,19 @@ def build_capacity_budget(
     }
 
 
+class DeliveryReadinessMode(TypedDict):
+    status: str
+    ready: bool
+    blockers: list[str]
+    mode: str
+
+
+class DeliveryReadiness(TypedDict):
+    revision: str
+    manual_pilot: DeliveryReadinessMode
+    scheduled_delivery: DeliveryReadinessMode
+
+
 def assess_delivery_readiness(
     *,
     profile_status: object,
@@ -480,7 +524,7 @@ def assess_delivery_readiness(
     telegram_token_configured: bool,
     telegram_destination_configured: bool,
     output_contract_valid: bool = True,
-) -> dict[str, object]:
+) -> DeliveryReadiness:
     """Separate a controlled manual pilot from automatic publication.
 
     A manual pilot must be able to deliver one explicitly requested report

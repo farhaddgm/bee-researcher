@@ -10,6 +10,7 @@ from redis.asyncio import Redis
 from redis.exceptions import RedisError
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import Settings, get_settings
 from app.database import SessionLocal
@@ -420,7 +421,7 @@ async def run_source_health_probe(
     """
     settings = get_settings()
     async with SessionLocal() as session:
-        conditions = [Source.enabled.is_(True)]
+        conditions: list[ColumnElement[bool]] = [Source.enabled.is_(True)]
         if assistant_id is not None:
             conditions.append(Source.assistant_id == assistant_id)
         if degraded_only:
@@ -600,7 +601,11 @@ async def run_source_probe(
                 "matched_terms": list(best[3]) if best else [],
             }
         )
-    results.sort(key=lambda row: float(row["relevance_score"]), reverse=True)
+    def relevance_sort_key(row: dict[str, object]) -> float:
+        score = row.get("relevance_score")
+        return float(score) if isinstance(score, (int, float)) else 0.0
+
+    results.sort(key=relevance_sort_key, reverse=True)
     related = sum(row["state"] == "related" for row in results)
     near = sum(row["state"] == "near_threshold" for row in results)
     error = current_source.last_error if current_source is not None else None

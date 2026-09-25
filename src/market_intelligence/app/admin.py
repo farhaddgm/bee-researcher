@@ -6,18 +6,20 @@ import difflib
 import hashlib
 import hmac
 import json
+import math
 import re
 import secrets
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Literal
+from collections.abc import Mapping
+from datetime import datetime, timedelta, timezone, tzinfo
+from typing import Any, Literal
 from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Cookie, HTTPException, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
-from sqlalchemy import case, delete, func, or_, select, text, update
+from sqlalchemy import case, delete, func, or_, select, text, true, update
 from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
@@ -55,6 +57,41 @@ _WORKSPACE_WRITE_ROLES = frozenset({"admin", "owner", "assistant_admin", "editor
 _ROLE_RANK = {"viewer": 1, "analyst": 2, "editor": 3, "assistant_admin": 4, "admin": 5, "owner": 6}
 DEFAULT_ASSISTANT_ID = uuid.UUID("00000000-0000-0000-0000-000000000001")
 OUTPUT_LANGUAGE_CODES = ("source", "fa", "en", "tr", "ar", "it", "es", "de", "fr")
+
+
+def _object_mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _object_list(value: object) -> list[object]:
+    return list(value) if isinstance(value, (list, tuple)) else []
+
+
+def _mapping_rows(value: object) -> list[dict[str, object]]:
+    return [dict(item) for item in _object_list(value) if isinstance(item, Mapping)]
+
+
+def _string_values(value: object) -> list[str]:
+    return [item for item in _object_list(value) if isinstance(item, str)]
+
+
+def _safe_int_value(value: object, *, default: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
+
+def _safe_float_value(value: object, *, default: float = 0.0) -> float:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        return default
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return number if math.isfinite(number) else default
 
 # Collection/analysis controls are deliberately a separate contract from
 # publication controls.  They are owner-only even when a project editor may
@@ -714,7 +751,7 @@ class AssistantRuntimeSettingsUpdate(BaseModel):
         slots: set[tuple[int, str]] = set()
         for item in value:
             try:
-                weekday = int(item["weekday"])
+                weekday = _safe_int_value(item.get("weekday"), default=-1)
                 time = str(item["time"])
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError("each schedule slot requires weekday and time") from exc
@@ -733,7 +770,7 @@ class AssistantRuntimeSettingsUpdate(BaseModel):
         slots: set[tuple[int, str]] = set()
         for item in value:
             try:
-                weekday = int(item["weekday"])
+                weekday = _safe_int_value(item.get("weekday"), default=-1)
                 slot_time = str(item["time"])
             except (KeyError, TypeError, ValueError) as exc:
                 raise ValueError("each collection slot requires weekday and time") from exc
@@ -1011,7 +1048,7 @@ def _reader_nightly_expiry(created_at: datetime) -> datetime:
     """
     configured_timezone = getattr(get_settings(), "timezone", "Europe/Berlin")
     try:
-        zone = ZoneInfo(configured_timezone)
+        zone: tzinfo = ZoneInfo(configured_timezone)
     except (ZoneInfoNotFoundError, TypeError):
         zone = timezone.utc
     aware_created_at = created_at
@@ -1119,7 +1156,7 @@ async def reader_login(request: LoginRequest, response: Response) -> dict[str, o
         # immediately when the account has no User-service grant.
         async with SessionLocal() as session:
             await session.execute(
-                AdminSession.__table__.delete().where(
+                delete(AdminSession).where(
                     AdminSession.token_hash == hashlib.sha256(raw.encode()).hexdigest()
                 )
             )
@@ -1182,7 +1219,7 @@ async def reader_logout(response: Response, token: str | None) -> dict[str, str]
     if token:
         async with SessionLocal() as session:
             await session.execute(
-                AdminSession.__table__.delete().where(
+                delete(AdminSession).where(
                     AdminSession.token_hash == hashlib.sha256(token.encode()).hexdigest()
                 )
             )
@@ -1716,7 +1753,7 @@ async def list_support_tickets(
 
 
 async def create_support_ticket(payload: SupportTicketCreate, user: AdminUser) -> dict[str, object]:
-    subject = (payload.other_subject if payload.category == "other" else payload.subject or SUPPORT_CATEGORY_SUBJECTS[payload.category]).strip()
+    subject = str(payload.other_subject or "" if payload.category == "other" else payload.subject or SUPPORT_CATEGORY_SUBJECTS[payload.category]).strip()
     if len(subject) < 3:
         raise HTTPException(status_code=422, detail="support ticket subject is required")
     body = payload.body.strip()
@@ -1923,7 +1960,7 @@ async def login(request: LoginRequest, response: Response) -> dict[str, object]:
 async def logout(response: Response, token: str | None) -> dict[str, str]:
     if token:
         async with SessionLocal() as session:
-            await session.execute(AdminSession.__table__.delete().where(AdminSession.token_hash == hashlib.sha256(token.encode()).hexdigest()))
+            await session.execute(delete(AdminSession).where(AdminSession.token_hash == hashlib.sha256(token.encode()).hexdigest()))
             await session.commit()
     response.delete_cookie(COOKIE, path="/")
     response.delete_cookie(CSRF_COOKIE, path="/")
@@ -1943,7 +1980,7 @@ async def change_password(user: AdminUser, payload: ChangePasswordRequest) -> di
         # A password rotation is a credential-compromise boundary. Revoke the
         # current session and every other session so the new password is the
         # only remaining authentication path.
-        await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == user.id))
+        await session.execute(delete(AdminSession).where(AdminSession.user_id == user.id))
         await session.commit()
     await _audit(user.id, "admin.password.change")
     return {"status": "password_changed"}
@@ -1961,7 +1998,7 @@ async def change_user_password(user_id: uuid.UUID, payload: AdminUserPasswordUpd
         if is_owner(item) and not is_owner(user):
             raise HTTPException(status_code=403, detail="the owner password can only be changed by the owner")
         item.password_hash = _hash_password(payload.new_password)
-        await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == user_id))
+        await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         await session.commit()
     await _audit(user.id, "admin_user.password.rotate", details={"user_id": str(user_id)})
     return {"status": "password_changed", "user_id": str(user_id)}
@@ -2003,7 +2040,14 @@ async def assistant_readiness(assistant_id: uuid.UUID, user: AdminUser) -> dict[
         topic_count = int((await session.execute(select(func.count(Topic.id)).where(Topic.assistant_id == assistant_id))).scalar_one())
         profile_count = int((await session.execute(select(func.count(BusinessProfile.id)).where(BusinessProfile.assistant_id == assistant_id))).scalar_one())
     config = assistant.config or {}
-    telegram = config.get("telegram") or {}
+    # Readiness must reflect the same *effective* destinations used by the
+    # delivery pipeline.  The original workspace predates per-assistant
+    # Telegram settings and intentionally inherits server-managed channels;
+    # inspecting only the JSON stored on the workspace made it look unready
+    # even though publishing was correctly configured.  Keep this in sync
+    # through _telegram_config, which also preserves isolation for new
+    # workspaces and explicit empty overrides.
+    telegram = _telegram_config(config, assistant_id=assistant_id)
     runtime = config.get("runtime") or {}
     # A market-news assistant may operate without a business profile.  An
     # empty workspace business name is the explicit opt-in to general-market
@@ -2069,8 +2113,8 @@ async def feedback_learning_center(assistant_id: uuid.UUID, user: AdminUser, *, 
     report = await feedback_daily_report(days=days, assistant_id=assistant_id)
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     by_source: list[dict[str, object]] = []
-    for row in report.get("by_source", []):
-        count = int(row.get("count") or 0)
+    for row in _mapping_rows(report.get("by_source")):
+        count = _safe_int_value(row.get("count"))
         by_source.append({"source": row.get("source") or "unknown", "samples": count, "precision": None})
     # Source-level precision needs the same joins as the report. Keep it
     # bounded and read-only so this screen cannot change production ranking.
@@ -2123,7 +2167,7 @@ async def rollback_feedback_ranking(user: AdminUser) -> dict[str, object]:
         )).scalars().first()
         result = job.result if job is not None and isinstance(job.result, dict) else {}
         changes = result.get("score_changes") if isinstance(result, dict) else None
-        if not changes:
+        if job is None or not changes:
             raise HTTPException(status_code=409, detail="no reversible feedback ranking change is available")
         restored = 0
         for change in changes:
@@ -2148,16 +2192,16 @@ async def list_event_clusters(assistant_id: uuid.UUID, user: AdminUser, *, limit
             select(EventCluster).where(EventCluster.assistant_id == assistant_id).order_by(EventCluster.updated_at.desc()).limit(max(1, min(limit, 100)))
         )).scalars().all()
         cluster_ids = [row.id for row in rows]
-        members = []
+        members: list[Any] = []
         if cluster_ids:
-            members = (await session.execute(
+            members.extend((await session.execute(
                 select(ClusterMember, NormalizedArticle, SourceItem, Source)
                 .join(NormalizedArticle, NormalizedArticle.id == ClusterMember.article_id)
                 .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
                 .join(Source, Source.id == SourceItem.source_id)
                 .where(ClusterMember.assistant_id == assistant_id, ClusterMember.cluster_id.in_(cluster_ids))
                 .order_by(NormalizedArticle.published_at.desc())
-            )).all()
+            )).all())
     grouped: dict[uuid.UUID, list[dict[str, object]]] = {row.id: [] for row in rows}
     for member, article, _item, source in members:
         grouped.setdefault(member.cluster_id, []).append({
@@ -2203,6 +2247,8 @@ async def update_privacy_settings(assistant_id: uuid.UUID, payload: PrivacySetti
     assistant = await _require_project_admin(assistant_id, user)
     async with SessionLocal() as session:
         item = await session.get(AssistantWorkspace, assistant_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="assistant not found")
         config = dict(item.config or {})
         current = _privacy_defaults(config)
         current.update(payload.model_dump(exclude_none=True))
@@ -2226,7 +2272,7 @@ async def export_assistant_data(assistant_id: uuid.UUID, user: AdminUser) -> dic
         counts = {}
         for label, model in (("articles", NormalizedArticle), ("analyses", ArticleAnalysis), ("publications", Publication), ("feedback", Feedback), ("clusters", EventCluster)):
             counts[label] = int((await session.scalar(select(func.count(model.id)).where(model.assistant_id == assistant_id))) or 0)
-    payload = {
+    payload: dict[str, object] = {
         "export_version": "1",
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "assistant": {"id": str(assistant.id), "slug": assistant.slug, "name": assistant.name, "business_name": assistant.business_name, "description": assistant.description},
@@ -2532,8 +2578,6 @@ async def update_assistant(assistant_id: uuid.UUID, payload: AssistantUpdate, us
             changes["slug"] = str(changes["slug"]).strip().lower()
         for key, value in changes.items():
             setattr(item, key, value)
-        if is_owner(item):
-            item.role = "owner"
         try:
             await session.commit()
         except IntegrityError as exc:
@@ -2591,7 +2635,10 @@ async def permanently_delete_assistant(assistant_id: uuid.UUID, user: AdminUser)
             raise HTTPException(status_code=404, detail="deleted assistant not found")
         slug = item.slug
         for table in _ASSISTANT_DATA_DELETE_ORDER:
-            await session.execute(text(f"DELETE FROM market_intelligence.{table} WHERE assistant_id = :assistant_id"), {"assistant_id": str(assistant_id)})
+            workspace_table = AssistantWorkspace.metadata.tables[f"market_intelligence.{table}"]
+            await session.execute(
+                delete(workspace_table).where(workspace_table.c.assistant_id == assistant_id)
+            )
         await session.delete(item)
         await session.commit()
     await _audit(user.id, "assistant.permanent_delete", details={"assistant_id": str(assistant_id), "slug": slug})
@@ -2633,6 +2680,12 @@ async def update_source(source_id: uuid.UUID, payload: SourceUpdate, user: Admin
             if not workspace_write_allowed(user.role, member.role if member else None):
                 raise HTTPException(status_code=403, detail="workspace access denied")
         changes = payload.model_dump(exclude_none=True)
+        collection_affecting_fields = {"enabled", "homepage_url", "fetch_url", "adapter", "access_policy", "credential_ref", "account_ref"}
+        if collection_affecting_fields.intersection(changes):
+            # Give a newly enabled/reconfigured connector one full monitoring
+            # window to produce its first successful run before raising a
+            # collection outage alert.
+            item.updated_at = datetime.now(timezone.utc)
         for key, value in changes.items(): setattr(item, key, value)
         await session.commit()
     await _audit(
@@ -2796,14 +2849,14 @@ def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] |
     """Resolve a known public source without depending on an external model."""
     requested = str(name or "").strip().casefold()
     for entry in _LOCAL_MEDIA_DIRECTORY:
-        aliases = [str(value).casefold() for value in entry["aliases"]]
+        aliases = [value.casefold() for value in _string_values(entry.get("aliases"))]
         if requested in aliases or any(alias in requested or requested in alias for alias in aliases):
             return {
                 "name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
                 "fetch_url": str(entry["fetch_url"]), "adapter": str(entry["adapter"]),
                 "language": str(entry["language"]), "region": str(entry["region"]),
                 "output_language": "source",
-                "priority": int(entry["priority"]), "access_notes": "Public feed from Bee Researcher directory.",
+                "priority": _safe_int_value(entry.get("priority")), "access_notes": "Public feed from Bee Researcher directory.",
                 "research_notes": "Resolved from the local public-media directory; connection is verified before registration.",
                 "fit_reason": str(entry["summary"]), "example_article": "", "overlap_notes": "",
                 "match_status": "match", "match_explanation": "نام با یک رسانهٔ عمومی شناخته‌شده تطبیق داده شد.",
@@ -2817,11 +2870,11 @@ def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] |
     query_tokens = _media_query_tokens(f"{name} {instruction}")
     ranked: list[tuple[int, int, dict[str, object]]] = []
     for entry in _LOCAL_MEDIA_DIRECTORY:
-        tag_tokens = _media_query_tokens(" ".join(map(str, entry.get("tags") or ())))
-        alias_tokens = _media_query_tokens(" ".join(map(str, entry.get("aliases") or ())))
+        tag_tokens = _media_query_tokens(" ".join(_string_values(entry.get("tags"))))
+        alias_tokens = _media_query_tokens(" ".join(_string_values(entry.get("aliases"))))
         score = len(query_tokens & tag_tokens) * 3 + len(query_tokens & alias_tokens) * 5
         if score >= 6:
-            ranked.append((score, int(entry.get("priority") or 0), entry))
+            ranked.append((score, _safe_int_value(entry.get("priority")), entry))
     if ranked:
         ranked.sort(key=lambda row: (-row[0], -row[1], str(row[2].get("name") or "")))
         score, _priority, entry = ranked[0]
@@ -2829,7 +2882,7 @@ def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] |
             "name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
             "fetch_url": str(entry["fetch_url"]), "adapter": str(entry["adapter"]),
             "language": str(entry["language"]), "region": str(entry["region"]),
-            "output_language": "source", "priority": int(entry["priority"]),
+            "output_language": "source", "priority": _safe_int_value(entry.get("priority")),
             "access_notes": "Public feed from Bee Researcher directory.",
             "research_notes": "The closest public-media directory match was selected from the supplied keyword; review it before registration.",
             "fit_reason": str(entry["summary"]), "example_article": "", "overlap_notes": "",
@@ -2861,12 +2914,12 @@ def _local_source_suggestions(keyword: str, instruction: str = "") -> dict[str, 
     query_tokens = _media_query_tokens(keyword) | _media_query_tokens(instruction)
     ranked: list[tuple[int, dict[str, object]]] = []
     for entry in _LOCAL_MEDIA_DIRECTORY:
-        entry_tokens = _media_query_tokens(" ".join(map(str, entry["tags"])))
-        alias_tokens = _media_query_tokens(" ".join(map(str, entry["aliases"])))
+        entry_tokens = _media_query_tokens(" ".join(_string_values(entry.get("tags"))))
+        alias_tokens = _media_query_tokens(" ".join(_string_values(entry.get("aliases"))))
         score = len(query_tokens & entry_tokens) * 3 + len(query_tokens & alias_tokens) * 5
         if score:
             ranked.append((score, entry))
-    ranked.sort(key=lambda pair: (-pair[0], -int(pair[1]["priority"])))
+    ranked.sort(key=lambda pair: (-pair[0], -_safe_int_value(pair[1].get("priority"))))
     suggestions = []
     # Pick one candidate from each available coverage bucket first.  This
     # prevents five near-identical local sources from crowding out a useful
@@ -2875,8 +2928,8 @@ def _local_source_suggestions(keyword: str, instruction: str = "") -> dict[str, 
     seen_buckets: set[tuple[str, str, str]] = set()
     for score, entry in ranked:
         source_type = (
-            "finance_media" if _media_query_tokens(" ".join(map(str, entry.get("tags") or ()))) & {"پرداخت", "بانکداری", "فین", "fintech", "banking", "payments", "payment"}
-            else "technology_media" if _media_query_tokens(" ".join(map(str, entry.get("tags") or ()))) & {"فناوری", "technology", "ai", "هوش", "استارتاپ", "startup"}
+            "finance_media" if _media_query_tokens(" ".join(_string_values(entry.get("tags")))) & {"پرداخت", "بانکداری", "فین", "fintech", "banking", "payments", "payment"}
+            else "technology_media" if _media_query_tokens(" ".join(_string_values(entry.get("tags")))) & {"فناوری", "technology", "ai", "هوش", "استارتاپ", "startup"}
             else "specialist_public_media"
         )
         bucket = (str(entry.get("language") or "unknown"), str(entry.get("region") or "Global"), source_type)
@@ -2890,7 +2943,7 @@ def _local_source_suggestions(keyword: str, instruction: str = "") -> dict[str, 
         # A deterministic confidence is deliberately conservative: it is a
         # discovery ranking, not a claim that the source has already passed
         # the connection/readability probe.
-        confidence = min(0.96, 0.58 + (float(score) / 20.0) + (0.04 if int(entry["priority"]) >= 4 else 0.0))
+        confidence = min(0.96, 0.58 + (float(score) / 20.0) + (0.04 if _safe_int_value(entry.get("priority")) >= 4 else 0.0))
         suggestions.append({
             "name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
             "summary": str(entry["summary"]),
@@ -2898,8 +2951,8 @@ def _local_source_suggestions(keyword: str, instruction: str = "") -> dict[str, 
             "language": str(entry.get("language") or "unknown"),
             "region": str(entry.get("region") or "Global"),
             "source_type": (
-                "finance_media" if _media_query_tokens(" ".join(map(str, entry.get("tags") or ()))) & {"پرداخت", "بانکداری", "فین", "fintech", "banking", "payments", "payment"}
-                else "technology_media" if _media_query_tokens(" ".join(map(str, entry.get("tags") or ()))) & {"فناوری", "technology", "ai", "هوش", "استارتاپ", "startup"}
+                "finance_media" if _media_query_tokens(" ".join(_string_values(entry.get("tags")))) & {"پرداخت", "بانکداری", "فین", "fintech", "banking", "payments", "payment"}
+                else "technology_media" if _media_query_tokens(" ".join(_string_values(entry.get("tags")))) & {"فناوری", "technology", "ai", "هوش", "استارتاپ", "startup"}
                 else "specialist_public_media"
             ),
             "confidence": round(confidence, 2),
@@ -3004,19 +3057,10 @@ async def draft_assistant(payload: AssistantDraftRequest, user: AdminUser) -> di
     draft["business_name"] = str(draft.get("business_name") or ("پروژه جدید" if payload.language.startswith("fa") else "New business"))[:160]
     draft["slug"] = _mission_slug(str(draft.get("slug") or draft.get("name") or mission))
     draft["mission"] = mission
-    raw_settings = draft.get("settings") if isinstance(draft.get("settings"), dict) else {}
-    try:
-        freshness = min(max(int(raw_settings.get("freshness_window_days", 3)), 1), 7)
-    except (TypeError, ValueError):
-        freshness = 3
-    try:
-        threshold = min(max(float(raw_settings.get("relevance_threshold", 0.45)), 0.0), 1.0)
-    except (TypeError, ValueError):
-        threshold = 0.45
-    try:
-        max_items = min(max(int(raw_settings.get("max_items_per_run", 7)), 1), 7)
-    except (TypeError, ValueError):
-        max_items = 7
+    raw_settings = _object_mapping(draft.get("settings"))
+    freshness = min(max(_safe_int_value(raw_settings.get("freshness_window_days"), default=3), 1), 7)
+    threshold = min(max(_safe_float_value(raw_settings.get("relevance_threshold"), default=0.45), 0.0), 1.0)
+    max_items = min(max(_safe_int_value(raw_settings.get("max_items_per_run"), default=7), 1), 7)
     draft["settings"] = {
         "freshness_window_days": freshness,
         "relevance_threshold": threshold,
@@ -3032,8 +3076,8 @@ async def draft_assistant(payload: AssistantDraftRequest, user: AdminUser) -> di
             "schedule_slots": [],
         },
         "shortcut_mission": mission,
-        "suggested_sources": [str(x)[:240] for x in (draft.get("source_suggestions") or [])[:20]],
-        "suggested_topics": [str(x)[:240] for x in (draft.get("topic_suggestions") or [])[:20]],
+        "suggested_sources": [value[:240] for value in _string_values(draft.get("source_suggestions"))[:20]],
+        "suggested_topics": [value[:240] for value in _string_values(draft.get("topic_suggestions"))[:20]],
     }
     return {"status": "draft", "expires_in_seconds": 300, "draft": draft}
 
@@ -3122,7 +3166,8 @@ async def _source_suggestions(
             ),
             timeout=50,
         )
-        rows = result.get("suggestions") if isinstance(result, dict) else []
+        result_data = _object_mapping(result)
+        rows = _mapping_rows(result_data.get("suggestions"))
         return {
             "suggestions": [
                 {
@@ -3130,14 +3175,14 @@ async def _source_suggestions(
                     "language": str(row.get("language") or "unknown"),
                     "region": str(row.get("region") or "Global"),
                     "source_type": str(row.get("source_type") or "specialist_public_media"),
-                    "confidence": min(max(float(row.get("confidence", 0.55)), 0.0), 1.0),
-                    "evidence": [str(value)[:2048] for value in (row.get("evidence") or [])[:3] if str(value).strip()],
+                    "confidence": min(max(_safe_float_value(row.get("confidence"), default=0.55), 0.0), 1.0),
+                    "evidence": [value[:2048] for value in _string_values(row.get("evidence"))[:3] if value.strip()],
                 }
                 for row in rows[:5]
-                if isinstance(row, dict) and str(row.get("name") or "").strip() and str(row.get("homepage_url") or "").strip()
+                if str(row.get("name") or "").strip() and str(row.get("homepage_url") or "").strip()
             ],
-            "message": str(result.get("message") or "").strip()[:600] if isinstance(result, dict) else "",
-            "alternatives": [str(value).strip()[:160] for value in (result.get("alternatives") or [])[:3] if str(value).strip()] if isinstance(result, dict) else [],
+            "message": str(result_data.get("message") or "").strip()[:600],
+            "alternatives": [value.strip()[:160] for value in _string_values(result_data.get("alternatives"))[:3] if value.strip()],
         }
     except Exception:
         return {
@@ -3181,9 +3226,9 @@ async def _assistant_media_context(assistant_id: uuid.UUID) -> dict[str, object]
 
 def _draft_alternatives(draft: dict[str, object], context: dict[str, object]) -> list[str]:
     """Combine model alternatives with close existing names without guessing URLs."""
-    alternatives = [str(value).strip()[:160] for value in (draft.get("alternatives") or [])[:3] if str(value).strip()]
+    alternatives = [value.strip()[:160] for value in _string_values(draft.get("alternatives"))[:3] if value.strip()]
     requested = str(draft.get("name") or "").strip()
-    known = [str(value).strip() for value in (context.get("existing_media") or []) if str(value).strip()]
+    known = [value.strip() for value in _string_values(context.get("existing_media")) if value.strip()]
     for value in difflib.get_close_matches(requested, known, n=3, cutoff=0.45):
         if value not in alternatives:
             alternatives.append(value)
@@ -3318,13 +3363,13 @@ def _normalise_template_blocks(blocks: list[dict[str, object]]) -> list[dict[str
         guidance = str(raw.get("guidance") or "").strip()[:400]
         emoji = str(raw.get("emoji") or "").strip()[:16]
         try:
-            max_chars = int(raw.get("max_chars", 0) or 0)
+            max_chars = _safe_int_value(raw.get("max_chars"))
         except (TypeError, ValueError):
             max_chars = 0
         max_chars = min(max(max_chars, 20), 1200) if max_chars else 0
         # Keep at most one blank line between consecutive rendered blocks.
         try:
-            spacing_after = int(raw.get("spacing_after", 1) or 0)
+            spacing_after = _safe_int_value(raw.get("spacing_after"), default=1)
         except (TypeError, ValueError):
             spacing_after = 1
         spacing_after = min(max(spacing_after, 0), 1)
@@ -3493,7 +3538,7 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
     if not keyword:
         raise HTTPException(status_code=422, detail="media keyword is required")
     discovery = await _source_suggestions(keyword, payload.instruction.strip())
-    candidates = discovery["suggestions"]
+    candidates = _mapping_rows(discovery.get("suggestions"))
     suggestions = []
     async with SessionLocal() as session:
         item = await session.get(AssistantWorkspace, assistant_id, with_for_update=True)
@@ -3505,7 +3550,7 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
         existing_names = {str(source.name or "").strip().casefold() for source in existing_sources}
         existing_homepages = {str(source.homepage_url or "").strip().rstrip("/").casefold() for source in existing_sources}
         pending_homepages = {
-            str((row.get("draft") or {}).get("homepage_url") or "").strip().rstrip("/").casefold()
+            str(_object_mapping(row.get("draft")).get("homepage_url") or "").strip().rstrip("/").casefold()
             for row in rows if row.get("status", "pending") == "pending"
         }
         for candidate in candidates[:5]:
@@ -3514,7 +3559,7 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
             homepage_key = candidate_homepage.rstrip("/").casefold()
             if not candidate_name or not candidate_homepage or candidate_name.casefold() in existing_names or homepage_key in existing_homepages or homepage_key in pending_homepages:
                 continue
-            suggestion = {
+            suggestion: dict[str, object] = {
                 "id": str(uuid.uuid4()),
                 "keyword": keyword,
                 "name": candidate_name,
@@ -3529,11 +3574,11 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
                     "language": str(candidate.get("language") or "unknown")[:16],
                     "region": str(candidate.get("region") or "Global")[:32],
                     "source_type": str(candidate.get("source_type") or "specialist_public_media")[:48],
-                    "confidence": min(max(float(candidate.get("confidence", 0.55)), 0.0), 1.0),
-                    "evidence": [str(value)[:2048] for value in (candidate.get("evidence") or [])[:3] if str(value).strip()],
+                    "confidence": min(max(_safe_float_value(candidate.get("confidence"), default=0.55), 0.0), 1.0),
+                    "evidence": [value[:2048] for value in _string_values(candidate.get("evidence"))[:3] if value.strip()],
                 },
             }
-            if suggestion["name"] and suggestion["draft"]["homepage_url"]:
+            if candidate_name and candidate_homepage:
                 rows.insert(0, suggestion)
                 pending_homepages.add(homepage_key)
                 suggestions.append(suggestion)
@@ -3546,7 +3591,7 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
         "count": len(suggestions),
         "suggestions": suggestions,
         "message": str(discovery.get("message") or "").strip()[:600],
-        "alternatives": [str(value)[:160] for value in (discovery.get("alternatives") or [])[:3]],
+        "alternatives": [value[:160] for value in _string_values(discovery.get("alternatives"))[:3]],
     }
 
 
@@ -3592,8 +3637,7 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
         # Discovery cards intentionally contain only a short summary and
         # website. Resolve the operational feed/adapter details lazily at
         # approval time, outside any database transaction.
-        original_draft = suggestion.get("draft") if isinstance(suggestion.get("draft"), dict) else {}
-        draft = dict(original_draft)
+        draft = dict(_object_mapping(suggestion.get("draft")))
         context = await _assistant_media_context(assistant_id)
         if not str(draft.get("fetch_url") or "").strip():
             enriched = await _catalog_draft(
@@ -3623,7 +3667,7 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
                 raise HTTPException(status_code=404, detail="source suggestion not found")
             if suggestion.get("status") != "pending":
                 return suggestion
-            latest_draft = suggestion.get("draft") if isinstance(suggestion.get("draft"), dict) else {}
+            latest_draft = _object_mapping(suggestion.get("draft"))
             draft = {
                 **draft,
                 **{key: value for key, value in latest_draft.items() if value not in (None, "")},
@@ -3659,7 +3703,7 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
                 language=str(draft.get("language") or "fa")[:16],
                 output_language=(str(draft.get("output_language") or "source") if str(draft.get("output_language") or "source") in OUTPUT_LANGUAGE_CODES else "source"),
                 region=str(draft.get("region") or "IR")[:16],
-                priority=min(max(int(draft.get("priority") or 3), 1), 5),
+                priority=min(max(_safe_int_value(draft.get("priority"), default=3), 1), 5),
                 access_notes=str(draft.get("access_notes") or ""),
                 robots_policy="respect",
                 health_status="unknown",
@@ -3773,7 +3817,7 @@ async def create_public_social_source(
             adapter=str(descriptor["adapter"]),
             language=str(descriptor["language"]),
             region=str(descriptor["region"]),
-            priority=int(descriptor["priority"]),
+            priority=_safe_int_value(descriptor.get("priority")),
             enabled=enabled,
             access_policy="public_only",
             access_notes=str(descriptor["access_notes"]),
@@ -4202,13 +4246,13 @@ def _clean_knowledge(payload: dict[str, object]) -> dict[str, list[str]]:
 async def get_business_knowledge(assistant_id: uuid.UUID, user: AdminUser) -> dict[str, object]:
     assistant = await _require_assistant_access(assistant_id, user)
     config = assistant.config or {}
-    knowledge = config.get("business_knowledge") if isinstance(config.get("business_knowledge"), dict) else {}
+    knowledge = _object_mapping(config.get("business_knowledge"))
     return {
         "assistant_id": str(assistant_id),
-        "revision": int(knowledge.get("revision") or 0),
+        "revision": _safe_int_value(knowledge.get("revision")),
         "updated_at": knowledge.get("updated_at"),
-        "knowledge": _clean_knowledge(knowledge),
-        "history": list(knowledge.get("history") or [])[-10:],
+        "knowledge": _clean_knowledge(dict(knowledge)),
+        "history": _object_list(knowledge.get("history"))[-10:],
     }
 
 
@@ -4218,14 +4262,19 @@ async def update_business_knowledge(assistant_id: uuid.UUID, payload: BusinessKn
     incoming = _clean_knowledge(payload.model_dump())
     async with SessionLocal() as session:
         item = await session.get(AssistantWorkspace, assistant_id, with_for_update=True)
+        if item is None:
+            raise HTTPException(status_code=404, detail="assistant not found")
         config = dict(item.config or {})
-        previous = config.get("business_knowledge") if isinstance(config.get("business_knowledge"), dict) else {}
-        history = list(previous.get("history") or [])
+        previous = _object_mapping(config.get("business_knowledge"))
+        history = _object_list(previous.get("history"))
         if previous:
-            history.append({"revision": int(previous.get("revision") or 0), "updated_at": previous.get("updated_at"), "knowledge": _clean_knowledge(previous)})
-        knowledge = {**incoming, "revision": int(previous.get("revision") or 0) + 1, "updated_at": now, "history": history[-10:]}
+            history.append({"revision": _safe_int_value(previous.get("revision")), "updated_at": previous.get("updated_at"), "knowledge": _clean_knowledge(dict(previous))})
+        knowledge = {**incoming, "revision": _safe_int_value(previous.get("revision")) + 1, "updated_at": now, "history": history[-10:]}
         config["business_knowledge"] = knowledge
-        item.config = _sanitize_template_config(config)
+        sanitized_config = _sanitize_template_config(config)
+        if not isinstance(sanitized_config, dict):
+            raise RuntimeError("sanitized business knowledge configuration is not an object")
+        item.config = sanitized_config
         await session.commit()
     await _audit(user.id, "business_knowledge.update", assistant_id=assistant_id, details={"revision": knowledge["revision"]})
     return {"assistant_id": str(assistant_id), "revision": knowledge["revision"], "updated_at": now, "knowledge": incoming}
@@ -4368,8 +4417,10 @@ async def preview_assistant_runtime_settings(
         for key in ("max_items_per_run", "freshness_window_days", "telegram_silent_notifications", "analysis_model", "schedule_slots", "timezone", "active_business_id", "collection_enabled", "collection_schedule_slots", "collection_max_items_per_source", "collection_max_items_per_run", "collection_max_items_per_day")
         if current.get(key) != proposed.get(key)
     }
-    slots = proposed.get("schedule_slots") or []
-    publication_cap = int(proposed.get("max_items_per_run") or 0)
+    slots = _object_list(proposed.get("schedule_slots"))
+    collection_slots = _object_list(proposed.get("collection_schedule_slots"))
+    publication_cap = _safe_int_value(proposed.get("max_items_per_run"))
+    collection_limits = _object_mapping(current.get("limits"))
     return {
         "assistant_id": str(assistant_id),
         "safe": True,
@@ -4377,16 +4428,16 @@ async def preview_assistant_runtime_settings(
         "telegram_send_attempted": False,
         "changes": changes,
         "estimated_publications_per_day": len(slots) * publication_cap,
-        "estimated_collection_slots_per_day": round(len(proposed.get("collection_schedule_slots") or []) / 7, 1),
+        "estimated_collection_slots_per_day": round(len(collection_slots) / 7, 1),
         "estimated_collection_items_per_day": min(
-            int(proposed.get("collection_max_items_per_day") or get_settings().processing_max_items_per_day),
-            int(proposed.get("collection_max_items_per_run") or get_settings().pipeline_max_candidates_per_run)
-            * max(1, round(len(proposed.get("collection_schedule_slots") or []) / 7)),
+            _safe_int_value(proposed.get("collection_max_items_per_day"), default=get_settings().processing_max_items_per_day),
+            _safe_int_value(proposed.get("collection_max_items_per_run"), default=get_settings().pipeline_max_candidates_per_run)
+            * max(1, round(len(collection_slots) / 7)),
         ),
-        "processing_max_items_per_day": int(current.get("processing_max_items_per_day") or get_settings().processing_max_items_per_day),
+        "processing_max_items_per_day": _safe_int_value(current.get("processing_max_items_per_day"), default=get_settings().processing_max_items_per_day),
         "constraints": {
-            "max_publications_per_slot": int((current.get("limits") or {}).get("max_items_per_run", 7)),
-            "max_freshness_window_days": int((current.get("limits") or {}).get("max_freshness_window_days", 7)),
+            "max_publications_per_slot": _safe_int_value(collection_limits.get("max_items_per_run"), default=7),
+            "max_freshness_window_days": _safe_int_value(collection_limits.get("max_freshness_window_days"), default=7),
             "schedule_slots_max": 168,
             "collection_schedule_slots_max": 168,
             "collection_max_items_per_source": 200,
@@ -4446,16 +4497,16 @@ async def publication_explanation(assistant_id: uuid.UUID, analysis_id: uuid.UUI
             select(ArticleTopic, Topic).join(Topic, Topic.id == ArticleTopic.topic_id).where(ArticleTopic.assistant_id == assistant_id, ArticleTopic.article_id == article.id).order_by(ArticleTopic.combined_score.desc())
         )).all()
         cluster_ids = [value for value in (await session.execute(select(ClusterMember.cluster_id).where(ClusterMember.assistant_id == assistant_id, ClusterMember.article_id == article.id))).scalars().all()]
-        related_rows = []
+        related_rows: list[Any] = []
         if cluster_ids:
-            related_rows = (await session.execute(
+            related_rows.extend((await session.execute(
                 select(NormalizedArticle.title, Source.name, NormalizedArticle.canonical_url)
                 .join(ClusterMember, ClusterMember.article_id == NormalizedArticle.id)
                 .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
                 .join(Source, Source.id == SourceItem.source_id)
                 .where(ClusterMember.assistant_id == assistant_id, ClusterMember.cluster_id.in_(cluster_ids), NormalizedArticle.id != article.id)
                 .limit(20)
-            )).all()
+            )).all())
     quality = quality_projection(article, source, len(related_rows) + 1)
     return {
         "assistant_id": str(assistant_id),
@@ -4485,7 +4536,7 @@ async def create_share_link(assistant_id: uuid.UUID, payload: ShareLinkCreateReq
             if len(valid) != len(ids):
                 raise HTTPException(status_code=422, detail="one or more publications are outside this project")
         else:
-            ids = (await session.execute(select(Publication.id).where(Publication.assistant_id == assistant_id, Publication.status.in_(["published", "edited", "preview"])).order_by(Publication.created_at.desc()).limit(50))).scalars().all()
+            ids = list((await session.execute(select(Publication.id).where(Publication.assistant_id == assistant_id, Publication.status.in_(["published", "edited", "preview"])).order_by(Publication.created_at.desc()).limit(50))).scalars().all())
         link_id = str(uuid.uuid4())
         config = dict(assistant.config or {})
         links = list(config.get("share_links") or [])
@@ -4720,8 +4771,8 @@ async def save_news_view(assistant_id: uuid.UUID, payload: NewsViewRequest, user
         if item is None:
             raise HTTPException(status_code=404, detail="user not found")
         preferences = dict(item.preferences or {})
-        grouped = preferences.get("news_views") if isinstance(preferences.get("news_views"), dict) else {}
-        views = [dict(value) for value in (grouped.get(str(assistant_id), []) if isinstance(grouped, dict) else []) if isinstance(value, dict)]
+        grouped = dict(_object_mapping(preferences.get("news_views")))
+        views = _mapping_rows(grouped.get(str(assistant_id)))
         view_id = str(payload.view_id or uuid.uuid4())
         updated = {"id": view_id, "name": payload.name.strip(), "filters": payload.filters, "is_default": bool(payload.is_default), "updated_at": now}
         replaced = False
@@ -4752,8 +4803,8 @@ async def delete_news_view(assistant_id: uuid.UUID, view_id: uuid.UUID, user: Ad
         if item is None:
             raise HTTPException(status_code=404, detail="user not found")
         preferences = dict(item.preferences or {})
-        grouped = preferences.get("news_views") if isinstance(preferences.get("news_views"), dict) else {}
-        views = list(grouped.get(str(assistant_id), []) if isinstance(grouped, dict) else [])
+        grouped = dict(_object_mapping(preferences.get("news_views")))
+        views = _mapping_rows(grouped.get(str(assistant_id)))
         remaining = [value for value in views if str(value.get("id")) != str(view_id)]
         grouped[str(assistant_id)] = remaining
         preferences["news_views"] = grouped
@@ -4782,7 +4833,7 @@ async def bulk_publications(assistant_id: uuid.UUID, payload: PublicationBulkReq
             audit["bulk_action_by"] = str(user.username)
             audit["bulk_previous_status"] = item.status
             if payload.action == "label":
-                audit["label"] = payload.label.strip()
+                audit["label"] = (payload.label or "").strip()
             elif payload.action == "archive":
                 item.status = "archived"
             elif payload.action == "reject":
@@ -4819,16 +4870,105 @@ async def undo_bulk_publications(assistant_id: uuid.UUID, payload: PublicationBu
 
 
 async def list_admin_incidents(user: AdminUser, assistant_id: uuid.UUID | None = None) -> dict[str, object]:
-    """Expose the notification inbox as actionable, severity-tagged incidents."""
+    """Expose actionable notifications plus missing-collection freshness alerts.
+
+    ``/ready`` reports process health, not whether every assistant is still
+    collecting. Owner-only synthetic incidents close that observability gap
+    without making one workspace's pipeline state visible to other members.
+    They are recomputed from successful job history, so clearing a notification
+    cannot accidentally hide an ongoing collection outage.
+    """
     payload = await list_admin_notifications(user)
     incidents: list[dict[str, object]] = []
-    for item in payload.get("notifications", []):
+    for item in _mapping_rows(payload.get("notifications")):
         if assistant_id and str(item.get("assistant_id")) != str(assistant_id):
             continue
         message = str(item.get("message") or "")
         lower = message.lower()
         severity = "critical" if any(word in lower for word in ("بحرانی", "critical", "failed", "خطا")) else ("warning" if any(word in lower for word in ("هشدار", "warning", "نیازمند")) else "info")
         incidents.append({**item, "severity": severity, "status": "closed" if item.get("read") else "open", "suggested_action": "health_check" if "رسانه" in message or "media" in lower else "review"})
+    if is_owner(user):
+        now = datetime.now(timezone.utc)
+        stale_after = timedelta(hours=36)
+        async with SessionLocal() as session:
+            scope = await _visible_project_scope_ids(session, user)
+            statement = select(AssistantWorkspace).where(
+                AssistantWorkspace.deleted_at.is_(None),
+                AssistantWorkspace.status == "active",
+            )
+            if assistant_id is not None:
+                statement = statement.where(AssistantWorkspace.id == assistant_id)
+            if scope is not None:
+                statement = statement.where(AssistantWorkspace.id.in_(scope))
+            workspaces = (await session.execute(statement.order_by(AssistantWorkspace.name))).scalars().all()
+            workspace_ids = [workspace.id for workspace in workspaces]
+            source_counts: dict[uuid.UUID, int] = {}
+            source_monitoring_since: dict[uuid.UUID, datetime] = {}
+            last_success_by_workspace: dict[uuid.UUID, datetime] = {}
+            if workspace_ids:
+                source_rows = (await session.execute(
+                    select(Source.assistant_id, func.count(Source.id), func.max(Source.updated_at))
+                    .where(
+                        Source.assistant_id.in_(workspace_ids),
+                        Source.enabled.is_(True),
+                    )
+                    .group_by(Source.assistant_id)
+                )).all()
+                source_counts = {source_assistant_id: int(count) for source_assistant_id, count, _ in source_rows}
+                source_monitoring_since = {
+                    source_assistant_id: updated_at
+                    for source_assistant_id, _, updated_at in source_rows
+                    if updated_at is not None
+                }
+                success_rows = (await session.execute(
+                    select(JobRun.assistant_id, func.max(JobRun.finished_at))
+                    .where(
+                        JobRun.assistant_id.in_(workspace_ids),
+                        JobRun.job_type == "market_pipeline",
+                        JobRun.status == "succeeded",
+                        JobRun.finished_at.is_not(None),
+                    )
+                    .group_by(JobRun.assistant_id)
+                )).all()
+                last_success_by_workspace = {
+                    assistant_id: finished_at
+                    for assistant_id, finished_at in success_rows
+                    if finished_at is not None
+                }
+            for workspace in workspaces:
+                runtime = (workspace.config or {}).get("runtime") or {}
+                if runtime.get("collection_enabled", True) is False:
+                    continue
+                source_count = source_counts.get(workspace.id, 0)
+                if source_count == 0:
+                    continue
+                finished_at = last_success_by_workspace.get(workspace.id)
+                baselines = [
+                    value for value in (finished_at, source_monitoring_since.get(workspace.id))
+                    if value is not None
+                ]
+                if not baselines:
+                    continue
+                monitoring_baseline = max(baselines)
+                if (now - monitoring_baseline) <= stale_after:
+                    continue
+                incidents.append({
+                    "id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"bee-researcher:collection-stale:{workspace.id}")),
+                    "assistant_id": str(workspace.id),
+                    "assistant_name": workspace.name,
+                    "message_key": "collection_stale",
+                    "last_success_at": finished_at.isoformat() if finished_at else None,
+                    "source_count": source_count,
+                    "severity": "critical" if finished_at is None else "warning",
+                    "status": "open",
+                    "suggested_action": "freshness",
+                    "is_freshness_alert": True,
+                })
+    incidents.sort(key=lambda item: (
+        bool(item.get("is_freshness_alert")),
+        item.get("severity") == "critical",
+        str(item.get("created_at") or item.get("last_success_at") or ""),
+    ), reverse=True)
     return {"count": len(incidents), "open": sum(1 for item in incidents if item.get("status") == "open"), "incidents": incidents[:100]}
 
 
@@ -4868,7 +5008,7 @@ async def list_admin_users(user: AdminUser) -> dict[str, object]:
         if scope is not None and assistant.id not in scope:
             continue
         by_user.setdefault(member.user_id, []).append({"assistant_id": str(assistant.id), "assistant_name": assistant.name, "role": member.role})
-    visible_rows = rows if is_owner(user) else [
+    visible_rows = list(rows) if is_owner(user) else [
         x for x in rows
         if can_view_admin_user(user, x)
         and (x.id == user.id or by_user.get(x.id))
@@ -5055,7 +5195,7 @@ async def update_admin_user(user_id: uuid.UUID, payload: AdminUserUpdate, user: 
             await session.rollback()
             raise HTTPException(status_code=409, detail="username already exists") from exc
         if changes.get("active") is False:
-            await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == user_id))
+            await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
             await session.commit()
     await _audit(user.id, "admin_user.update", details={"user_id": str(user_id), "fields": sorted(changes)})
     return {"id": str(item.id), "username": item.username, "role": item.role, "active": item.active, "updated_fields": sorted(changes)}
@@ -5092,7 +5232,7 @@ async def manage_admin_user(user_id: uuid.UUID, payload: AdminUserManageUpdate, 
                 # scope above; project admins may manage credentials there.
                 pass
             item.password_hash = _hash_password(payload.new_password)
-            await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == user_id))
+            await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         changes = payload.model_dump(exclude_none=True, exclude={"new_password", "current_password", "assistant_ids", "user_portal_access", "user_feedback_access"})
         if "username" in changes:
             changes["username"] = changes["username"].strip().lower()
@@ -5125,7 +5265,7 @@ async def manage_admin_user(user_id: uuid.UUID, payload: AdminUserManageUpdate, 
             if effective_role in {"admin", "assistant_admin"} and not selected:
                 raise HTTPException(status_code=422, detail="an admin user must have at least one project assignment")
             if effective_role == "owner":
-                await session.execute(AssistantMember.__table__.delete().where(AssistantMember.user_id == user_id))
+                await session.execute(delete(AssistantMember).where(AssistantMember.user_id == user_id))
             else:
                 assistants_rows = (await session.execute(select(AssistantWorkspace).where(AssistantWorkspace.id.in_(selected)))).scalars().all()
                 if len(assistants_rows) != len(selected):
@@ -5144,7 +5284,7 @@ async def manage_admin_user(user_id: uuid.UUID, payload: AdminUserManageUpdate, 
                 for assistant_id in selected - existing:
                     session.add(AssistantMember(assistant_id=assistant_id, user_id=user_id, role=member_role))
         if payload.active is False:
-            await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == user_id))
+            await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         try:
             await session.commit()
         except Exception as exc:
@@ -5174,8 +5314,8 @@ async def delete_admin_user(user_id: uuid.UUID, user: AdminUser) -> dict[str, st
                 raise HTTPException(status_code=409, detail="the last active admin cannot be deleted")
         # Explicit deletes keep the operation safe on installations upgraded
         # before the FK cascade was applied and make access removal obvious.
-        await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == user_id))
-        await session.execute(AssistantMember.__table__.delete().where(AssistantMember.user_id == user_id))
+        await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
+        await session.execute(delete(AssistantMember).where(AssistantMember.user_id == user_id))
         username = item.username
         await session.delete(item)
         await session.commit()
@@ -5197,11 +5337,11 @@ async def list_active_sessions(user: AdminUser, current_token: str | None) -> di
             select(AdminSession, AdminUser)
             .join(AdminUser, AdminUser.id == AdminSession.user_id)
             .where(AdminSession.expires_at > datetime.now(timezone.utc))
-            .where(AdminSession.user_id.in_(visible_user_ids) if visible_user_ids is not None else True)
+            .where(AdminSession.user_id.in_(visible_user_ids) if visible_user_ids is not None else true())
             .order_by(AdminSession.created_at.desc())
         )).all()
         if scope is not None:
-            rows = [(item, account) for item, account in rows if can_view_admin_user(user, account)]
+            rows = [row for row in rows if can_view_admin_user(user, row[1])]
     return {
         "count": len(rows),
         "sessions": [{

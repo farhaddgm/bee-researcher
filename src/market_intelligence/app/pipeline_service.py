@@ -6,15 +6,17 @@ import logging
 import math
 import re
 import uuid
-from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
-from typing import Any
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone, tzinfo
+from decimal import Decimal, InvalidOperation
+from collections.abc import Mapping, Sequence
+from typing import Any, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import and_, case, delete, distinct, exists, func, or_, select, update
+from sqlalchemy import and_, case, delete, distinct, exists, func, or_, select, true, update
+from sqlalchemy.engine import Row
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from app.article_extraction import ArticleDocument, ArticleFetcher
@@ -68,8 +70,53 @@ LOGGER = logging.getLogger(__name__)
 REVIEW_MARGIN = 0.10
 
 
+class BusinessContext(Protocol):
+    business_name: str
+    description: str
+    products_services: str
+    target_customers: str
+    markets: str
+    revenue_model: str
+    strategic_goals: str
+    competitors: list
+    sensitivities: list
+    output_language: str
+    output_tone: str
+
+
+@dataclass
+class GeneralMarketContext:
+    business_name: str
+    description: str
+    products_services: str = ""
+    target_customers: str = ""
+    markets: str = ""
+    revenue_model: str = ""
+    strategic_goals: str = ""
+    competitors: list = field(default_factory=list)
+    sensitivities: list = field(default_factory=list)
+    output_language: str = "fa"
+    output_tone: str = "کوتاه، تحلیلی و اجرایی"
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _payload_float(value: object, *, default: float = 0.0) -> float:
+    """Parse only JSON-like numeric scalars from generated/fallback payloads."""
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        return default
+    try:
+        result = float(value)
+    except (TypeError, ValueError, OverflowError, InvalidOperation):
+        return default
+    return result if math.isfinite(result) else default
+
+
+def _payload_int(value: object, *, default: int = 0) -> int:
+    parsed = _payload_float(value, default=float("nan"))
+    return int(parsed) if math.isfinite(parsed) and parsed.is_integer() else default
 
 
 def _render_publication_message(
@@ -103,7 +150,9 @@ def _render_publication_message(
     )
 
 
-def _template_has_image(blocks: list[dict[str, object]] | None) -> bool:
+def _template_has_image(blocks: object) -> bool:
+    if not isinstance(blocks, list):
+        return False
     return any(
         isinstance(block, dict)
         and str(block.get("type") or "") == "image"
@@ -241,27 +290,18 @@ async def _profile_for_assistant(session, assistant_id: uuid.UUID | None) -> Bus
     return (await session.execute(statement)).scalars().first()
 
 
-def _general_market_profile(assistant: AssistantWorkspace | None) -> SimpleNamespace:
+def _general_market_profile(assistant: AssistantWorkspace | None) -> GeneralMarketContext:
     """Return a read-only profile-shaped context for business-free workspaces.
 
     The analysis contract expects the same fields whether a business profile
-    exists or not.  A small in-memory namespace keeps the pipeline path
+    exists or not.  A small in-memory context keeps the pipeline path
     uniform without inserting a fake profile into the database or leaking the
     legacy deployment business into a new assistant.
     """
     name = str(getattr(assistant, "name", "") or "").strip() or "این دستیار"
-    return SimpleNamespace(
+    return GeneralMarketContext(
         business_name=name,
         description="تمرکز بر پایش عمومی بازار و اخبار موضوعات انتخاب‌شده.",
-        products_services="",
-        target_customers="",
-        markets="",
-        revenue_model="",
-        strategic_goals="",
-        competitors=[],
-        sensitivities=[],
-        output_language="fa",
-        output_tone="کوتاه، تحلیلی و اجرایی",
     )
 
 
@@ -328,7 +368,7 @@ async def _finish_job(
     job_id: uuid.UUID,
     *,
     status: str,
-    result: dict[str, object],
+    result: Mapping[str, object],
     error: str | None = None,
 ) -> None:
     async with SessionLocal() as session:
@@ -338,7 +378,7 @@ async def _finish_job(
             .values(
                 status=status,
                 finished_at=_utcnow(),
-                result=result,
+                result=dict(result),
                 error_message=error,
             )
         )
@@ -354,7 +394,7 @@ async def extract_pending_articles(
     async with SessionLocal() as session:
         sources = (
             await session.execute(
-                select(Source).where(Source.enabled.is_(True)).where(Source.assistant_id == assistant_id if assistant_id else True).order_by(
+                select(Source).where(Source.enabled.is_(True)).where(Source.assistant_id == assistant_id if assistant_id is not None else true()).order_by(
                     Source.priority.desc(), Source.source_key
                 )
             )
@@ -373,7 +413,7 @@ async def extract_pending_articles(
                     )
                     .where(
                         SourceItem.source_id == source.id,
-                        SourceItem.assistant_id == assistant_id if assistant_id else True,
+                        SourceItem.assistant_id == assistant_id if assistant_id is not None else true(),
                         _freshness_condition(SourceItem.published_at, settings),
                         NormalizedArticle.id.is_(None),
                     )
@@ -396,7 +436,7 @@ async def extract_pending_articles(
                 )
                 .where(
                     NormalizedArticle.id.is_(None),
-                    SourceItem.assistant_id == assistant_id if assistant_id else True,
+                    SourceItem.assistant_id == assistant_id if assistant_id is not None else true(),
                     _freshness_condition(SourceItem.published_at, settings),
                 )
                 .order_by(
@@ -526,14 +566,14 @@ async def score_pending_articles(
     async with SessionLocal() as session:
         topics = (
             await session.execute(
-                select(Topic).where(Topic.enabled.is_(True)).where(Topic.assistant_id == assistant_id if assistant_id else True).order_by(Topic.topic_key)
+                select(Topic).where(Topic.enabled.is_(True)).where(Topic.assistant_id == assistant_id if assistant_id is not None else true()).order_by(Topic.topic_key)
             )
         ).scalars().all()
         article_statement = (
             select(NormalizedArticle)
             .where(
                 NormalizedArticle.extraction_status.in_(["complete", "partial"]),
-                NormalizedArticle.assistant_id == assistant_id if assistant_id else True,
+                NormalizedArticle.assistant_id == assistant_id if assistant_id is not None else true(),
                 _freshness_condition(NormalizedArticle.published_at, settings),
             )
             .order_by(NormalizedArticle.extracted_at.desc())
@@ -671,22 +711,25 @@ async def cluster_pending_articles(settings: Settings, *, limit: int, assistant_
                 select(NormalizedArticle)
                 .join(ArticleTopic, ArticleTopic.article_id == NormalizedArticle.id)
                 .outerjoin(ClusterMember, ClusterMember.article_id == NormalizedArticle.id)
-                .where(ArticleTopic.selected.is_(True), ClusterMember.id.is_(None), NormalizedArticle.assistant_id == assistant_id if assistant_id else True, _freshness_condition(NormalizedArticle.published_at, settings))
+                .where(ArticleTopic.selected.is_(True), ClusterMember.id.is_(None), NormalizedArticle.assistant_id == assistant_id if assistant_id is not None else true(), _freshness_condition(NormalizedArticle.published_at, settings))
                 .group_by(NormalizedArticle.id)
                 .order_by(NormalizedArticle.extracted_at.desc())
                 .limit(limit)
             )
         ).scalars().all()
-        existing = (
+        existing_rows = (
             await session.execute(
                 select(EventCluster, NormalizedArticle)
                 .join(
                     NormalizedArticle,
                     NormalizedArticle.id == EventCluster.representative_article_id,
                 )
-                .where(EventCluster.updated_at >= _utcnow() - timedelta(days=14), EventCluster.assistant_id == assistant_id if assistant_id else True)
+                .where(EventCluster.updated_at >= _utcnow() - timedelta(days=14), EventCluster.assistant_id == assistant_id if assistant_id is not None else true())
             )
         ).all()
+        existing: list[tuple[EventCluster, NormalizedArticle]] = [
+            (cluster, representative) for cluster, representative in existing_rows
+        ]
 
         new_clusters = 0
         joined_clusters = 0
@@ -752,7 +795,7 @@ async def cluster_pending_articles(settings: Settings, *, limit: int, assistant_
     }
 
 
-def _profile_payload(profile: BusinessProfile) -> dict[str, object]:
+def _profile_payload(profile: BusinessContext) -> dict[str, object]:
     return {
         "business_name": profile.business_name,
         "description": profile.description,
@@ -768,7 +811,7 @@ def _profile_payload(profile: BusinessProfile) -> dict[str, object]:
     }
 
 
-def _source_output_language(source: Source, profile: BusinessProfile) -> str:
+def _source_output_language(source: Source, profile: BusinessContext) -> str:
     """Resolve the publication language for one source.
 
     ``source`` means follow the configured business/profile language. A
@@ -804,11 +847,11 @@ def _template_guidance(message_templates: dict | None) -> str:
 def _fallback_analysis(
     article: NormalizedArticle,
     *,
-    profile: BusinessProfile,
-    topic_rows: list[tuple[Topic, ArticleTopic]],
+    profile: BusinessContext,
+    topic_rows: Sequence[Row[tuple[Topic, ArticleTopic]]],
     source: Source,
     reason: str,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     safe_title, safe_text, source_safety = sanitize_untrusted_source(
         title=article.title,
         text=article.normalized_text,
@@ -919,7 +962,7 @@ async def regenerate_fallback_analyses(*, limit: int = 200) -> dict[str, int]:
             analysis.risk = str(payload["risk"])
             analysis.suggested_action = str(payload["suggested_action"])
             analysis.time_horizon = str(payload["time_horizon"])
-            analysis.confidence = float(payload["confidence"])
+            analysis.confidence = _payload_float(payload["confidence"])
             analysis.facts = payload["facts"]
             analysis.inferences = payload["inferences"]
             analysis.citations = payload["citations"]
@@ -958,10 +1001,11 @@ async def _model_budget(settings: Settings) -> tuple[int, int]:
 
 def _local_day_start_utc(now: datetime, timezone_name: str | None) -> datetime:
     """Return the UTC instant of the current calendar day in a workspace TZ."""
+    zone: tzinfo = timezone.utc
     try:
         zone = ZoneInfo(timezone_name or "UTC")
     except (ZoneInfoNotFoundError, ValueError):
-        zone = timezone.utc
+        pass
     local_now = now.astimezone(zone)
     return local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
@@ -984,7 +1028,7 @@ def _structured_analysis_payload(
     *,
     article: NormalizedArticle,
     source: Source,
-) -> dict[str, object]:
+) -> dict[str, Any]:
     model_payload = result.payload
     inferences = list(model_payload["inferences"])
     source_safety = model_payload.get("_source_content_safety")
@@ -1062,7 +1106,7 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                 )
                 .where(
                     ArticleAnalysis.id.is_(None),
-                    NormalizedArticle.assistant_id == assistant_id if assistant_id else True,
+                    NormalizedArticle.assistant_id == assistant_id if assistant_id is not None else true(),
                     reviewable_topic,
                 )
                 .where(_freshness_condition(NormalizedArticle.published_at, settings))
@@ -1071,16 +1115,19 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
             )
         ).all()
         assistant = await session.get(AssistantWorkspace, assistant_id) if assistant_id is not None else None
-        profile = await _profile_for_assistant(session, assistant_id)
+        profile_row = await _profile_for_assistant(session, assistant_id)
         # A missing business profile is valid for general market monitoring.
         # Keep the profile-shaped analysis payload stable with an in-memory
         # context rather than aborting the whole run.
-        if profile is None:
+        profile: BusinessContext
+        if profile_row is None:
             profile = _general_market_profile(assistant)
+        else:
+            profile = profile_row
         assistant_config = dict(assistant.config or {}) if assistant is not None else {}
         knowledge_library = assistant_config.get("business_knowledge") if isinstance(assistant_config.get("business_knowledge"), dict) else {}
         topics = (
-            await session.execute(select(Topic).where(Topic.enabled.is_(True)).where(Topic.assistant_id == assistant_id if assistant_id else True))
+            await session.execute(select(Topic).where(Topic.enabled.is_(True)).where(Topic.assistant_id == assistant_id if assistant_id is not None else true()))
         ).scalars().all()
 
     client = OpenAIClient(settings)
@@ -1164,16 +1211,16 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                 risk=str(payload["risk"]),
                 suggested_action=str(payload["suggested_action"]),
                 time_horizon=str(payload["time_horizon"]),
-                confidence=float(payload["confidence"]),
+                confidence=_payload_float(payload["confidence"]),
                 facts=payload["facts"],
                 inferences=payload["inferences"],
                 citations=payload["citations"],
                 topic_scores=payload["topic_scores"],
                 model=str(payload["model"]),
                 input_chars=len(article.normalized_text),
-                input_tokens=int(payload["input_tokens"]),
-                output_tokens=int(payload["output_tokens"]),
-                estimated_cost_usd=float(payload["estimated_cost_usd"]),
+                input_tokens=_payload_int(payload["input_tokens"]),
+                output_tokens=_payload_int(payload["output_tokens"]),
+                estimated_cost_usd=_payload_float(payload["estimated_cost_usd"]),
                 error_message=payload["error_message"],
             )
             .on_conflict_do_nothing(index_elements=[ArticleAnalysis.article_id])
@@ -1294,18 +1341,16 @@ async def reanalyze_fallback_articles(
                 current_analysis.risk = str(payload["risk"])
                 current_analysis.suggested_action = str(payload["suggested_action"])
                 current_analysis.time_horizon = str(payload["time_horizon"])
-                current_analysis.confidence = float(payload["confidence"])
+                current_analysis.confidence = _payload_float(payload["confidence"])
                 current_analysis.facts = payload["facts"]
                 current_analysis.inferences = payload["inferences"]
                 current_analysis.citations = payload["citations"]
                 current_analysis.topic_scores = payload["topic_scores"]
                 current_analysis.model = str(payload["model"])
                 current_analysis.input_chars = len(article.normalized_text)
-                current_analysis.input_tokens = int(payload["input_tokens"])
-                current_analysis.output_tokens = int(payload["output_tokens"])
-                current_analysis.estimated_cost_usd = float(
-                    payload["estimated_cost_usd"]
-                )
+                current_analysis.input_tokens = _payload_int(payload["input_tokens"])
+                current_analysis.output_tokens = _payload_int(payload["output_tokens"])
+                current_analysis.estimated_cost_usd = _payload_float(payload["estimated_cost_usd"])
                 current_analysis.error_message = None
                 current_publication.message_text = _render_publication_message(
                     analysis=current_analysis,
@@ -1372,7 +1417,7 @@ async def create_publication_previews(settings: Settings, *, limit: int, assista
                 .where(
                     Publication.id.is_(None),
                     ~clustered_non_representative,
-                    ArticleAnalysis.assistant_id == assistant_id if assistant_id else True,
+                    ArticleAnalysis.assistant_id == assistant_id if assistant_id is not None else true(),
                     _freshness_condition(NormalizedArticle.published_at, settings),
                 )
                 .order_by(ArticleAnalysis.created_at.desc())
@@ -1491,7 +1536,7 @@ async def refresh_publication_previews(*, limit: int = 200) -> dict[str, int]:
 
 async def publish_publication(publication_id: uuid.UUID) -> dict[str, object]:
     settings = get_settings()
-    observer_message_context: tuple[ArticleAnalysis, NormalizedArticle, Source] | None = None
+    observer_message_context: Row[tuple[ArticleAnalysis, NormalizedArticle, Source]] | None = None
     image_url: str | None = None
     sandbox_enabled = False
     async with SessionLocal() as session:
@@ -1663,7 +1708,7 @@ async def publish_ready_previews(
     async with SessionLocal() as session:
         filters = [
             Publication.status == "preview",
-            Publication.assistant_id == assistant_id if assistant_id else True,
+            Publication.assistant_id == assistant_id if assistant_id is not None else true(),
             _freshness_condition(NormalizedArticle.published_at, settings),
         ]
         if created_after is not None:
@@ -1998,7 +2043,7 @@ async def generate_weekly_report(*, now: datetime | None = None, assistant_id: u
                     ArticleAnalysis.created_at >= period_start,
                     ArticleAnalysis.created_at < now,
                 )
-                .where(ArticleTopic.assistant_id == assistant_id if assistant_id else True)
+                .where(ArticleTopic.assistant_id == assistant_id if assistant_id is not None else true())
                 .group_by(Topic.name)
                 .order_by(func.count(distinct(ArticleTopic.article_id)).desc())
             )
@@ -2010,14 +2055,14 @@ async def generate_weekly_report(*, now: datetime | None = None, assistant_id: u
                     ArticleAnalysis.created_at >= period_start,
                     ArticleAnalysis.created_at < now,
                 )
-                .where(ArticleAnalysis.assistant_id == assistant_id if assistant_id else True)
+                .where(ArticleAnalysis.assistant_id == assistant_id if assistant_id is not None else true())
             )
         ).scalar_one()
         feedback_rows = (
             await session.execute(
                 select(Feedback.value, func.count(Feedback.id))
                 .where(Feedback.created_at >= period_start, Feedback.created_at < now)
-                .where(Feedback.assistant_id == assistant_id if assistant_id else True)
+                .where(Feedback.assistant_id == assistant_id if assistant_id is not None else true())
                 .group_by(Feedback.value)
             )
         ).all()
@@ -2032,7 +2077,7 @@ async def generate_weekly_report(*, now: datetime | None = None, assistant_id: u
                             NormalizedArticle.extracted_at < now,
                             NormalizedArticle.normalized_text.ilike(f"%{competitor}%"),
                         )
-                        .where(NormalizedArticle.assistant_id == assistant_id if assistant_id else True)
+                        .where(NormalizedArticle.assistant_id == assistant_id if assistant_id is not None else true())
                     )
                 ).scalar_one()
                 competitor_mentions.append(
@@ -2160,28 +2205,30 @@ async def pipeline_metrics(*, assistant_id: uuid.UUID | None = None) -> dict[str
         # Compatibility for older clients; this now means actual deliveries,
         # not preview/failed publication rows created today.
         counts["publications_today"] = counts["published_today"]
-        source_health = dict(
-            (
+        source_health: dict[str, int] = {
+            str(status): int(count)
+            for status, count in (
                 await session.execute(
                     select(Source.health_status, func.count(Source.id)).where(
-                        Source.assistant_id == assistant_id if assistant_id else True
+                        Source.assistant_id == assistant_id if assistant_id is not None else true()
                     ).group_by(
                         Source.health_status
                     )
                 )
             ).all()
-        )
-        publication_status = dict(
-            (
+        }
+        publication_status: dict[str, int] = {
+            str(status): int(count)
+            for status, count in (
                 await session.execute(
                     select(Publication.status, func.count(Publication.id)).where(
-                        Publication.assistant_id == assistant_id if assistant_id else True
+                        Publication.assistant_id == assistant_id if assistant_id is not None else true()
                     ).group_by(
                         Publication.status
                     )
                 )
             ).all()
-        )
+        }
         model_requests, input_chars = await _model_budget(active_settings)
     return {
         **counts,

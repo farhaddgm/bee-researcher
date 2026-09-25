@@ -2,9 +2,14 @@
 # different OS/Python layer from the registry.
 FROM python:3.13-slim@sha256:7e3a6aca9d74f93cca21a91d86a8dad8c34749afd5b4a98ee481c9c47b9f5ed4
 
+ARG SOURCE_REVISION=unknown
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
+      org.opencontainers.image.version="3.30.14"
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
+ENV MARKET_INTELLIGENCE_BUILD_REVISION=${SOURCE_REVISION}
 
 RUN groupadd --gid 10002 market-intelligence \
     && useradd \

@@ -234,7 +234,9 @@ def validate_quote_delta(
     """Reject a likely tenfold unit error before it reaches Telegram."""
     if current_value <= 0:
         raise ValueError("current price quote must be positive")
-    if previous_value in (None, 0):
+    if previous_value is None:
+        return 0.0
+    if previous_value == 0:
         return 0.0
     relative_move = abs(current_value - previous_value) / abs(previous_value)
     if relative_move > max_relative_move:

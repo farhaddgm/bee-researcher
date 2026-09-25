@@ -82,7 +82,7 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(900, settings.login_window_seconds)
         self.assertEqual(2_000_000, settings.max_request_body_bytes)
         self.assertTrue(settings.csp_report_only)
-        self.assertFalse(settings.csp_strict)
+        self.assertTrue(settings.csp_strict)
         self.assertEqual("/admin/api/security/csp-report", settings.csp_report_uri)
 
     def test_csrf_signing_secret_requires_a_long_value_when_provided(self):

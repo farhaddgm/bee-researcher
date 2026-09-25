@@ -84,6 +84,21 @@ class ParserTest(unittest.TestCase):
         self.assertEqual("A meaningful banking headline", parsed_html[0].title)
         self.assertEqual("https://example.com/123-news", parsed_html[0].url)
 
+    def test_feed_parser_rejects_dtd_and_external_entity_payloads(self):
+        payload = b'''<?xml version="1.0"?>
+        <!DOCTYPE rss [<!ENTITY local SYSTEM "file:///etc/passwd">]>
+        <rss><channel><item><title>&local;</title>
+        <link>https://example.com/news/1</link></item></channel></rss>'''
+        with self.assertRaisesRegex(ValueError, "DOCTYPE"):
+            parse_feed(payload, "https://example.com/feed")
+
+        payload_with_late_doctype = (
+            b" " * 4097
+            + b'''<!DOCTYPE rss [<!ENTITY expansion "unsafe">]><rss>&expansion;</rss>'''
+        )
+        with self.assertRaisesRegex(ValueError, "Unsafe XML"):
+            parse_feed(payload_with_late_doctype, "https://example.com/feed")
+
     def test_url_safety_and_stable_fingerprint(self):
         for url in (
             "http://127.0.0.1/feed",

@@ -112,7 +112,7 @@ def build_evidence_pack(
             }
         )
     entries.sort(key=lambda row: (str(row["source_key"]), str(row["source_url"]), str(row["evidence_id"])))
-    payload = {
+    payload: dict[str, object] = {
         "revision": EVIDENCE_PACK_REVISION,
         "report_as_of": captured_at,
         "model_revision": str(model_revision or "unknown")[:96],

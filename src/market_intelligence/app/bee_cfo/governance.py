@@ -9,6 +9,9 @@ bounded context independently portable from Bee Researcher.
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta, timezone
+from decimal import Decimal, InvalidOperation
+import math
+import re
 from typing import Mapping, Sequence
 from zoneinfo import ZoneInfo
 
@@ -57,18 +60,21 @@ DEFAULT_ATTENTION_POLICY: dict[str, object] = {
     "expiry_hours": 24,
 }
 
+_PHASE_ONE_ALLOWED_DATA = ["market_data", "source_metadata", "operational_audit"]
+_FUTURE_PRIVACY_CONTROLS = [
+    "explicit_consent",
+    "data_minimization",
+    "tenant_isolation",
+    "retention_and_deletion",
+    "export_and_delete",
+    "threat_model",
+]
+
 PHASE_TWO_PRIVACY_BOUNDARY: dict[str, object] = {
     "revision": "bee-cfo-privacy-1",
     "phase_one_personal_data_enabled": False,
-    "phase_one_allowed_data": ["market_data", "source_metadata", "operational_audit"],
-    "future_controls": [
-        "explicit_consent",
-        "data_minimization",
-        "tenant_isolation",
-        "retention_and_deletion",
-        "export_and_delete",
-        "threat_model",
-    ],
+    "phase_one_allowed_data": _PHASE_ONE_ALLOWED_DATA,
+    "future_controls": _FUTURE_PRIVACY_CONTROLS,
     "phase_two_processing_enabled": False,
 }
 
@@ -80,9 +86,15 @@ def _as_bool(value: object) -> bool:
 
 
 def _bounded_int(value: object, *, name: str, low: int, high: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
+        raise ValueError(f"{name} must be an integer")
+    if isinstance(value, str) and re.fullmatch(r"[+-]?\d+", value.strip()) is None:
+        raise ValueError(f"{name} must be an integer")
     try:
         parsed = int(value)
-    except (TypeError, ValueError) as exc:
+        if isinstance(value, (float, Decimal)) and (not math.isfinite(float(value)) or not float(value).is_integer()):
+            raise ValueError(f"{name} must be an integer")
+    except (TypeError, ValueError, OverflowError, InvalidOperation) as exc:
         raise ValueError(f"{name} must be an integer") from exc
     if not low <= parsed <= high:
         raise ValueError(f"{name} must be between {low} and {high}")
@@ -141,13 +153,20 @@ def build_verified_pilot_checks(
     capture, a private canary, and a shadow-run receipt; it never calls
     Telegram or activates a schedule.
     """
-    report_state = report.get("current_state") if isinstance(report.get("current_state"), Mapping) else {}
-    quality_checks = quality_gate.get("checks") if isinstance(quality_gate.get("checks"), Mapping) else {}
-    canary_checks = canary_preview.get("checks") if isinstance(canary_preview.get("checks"), Mapping) else {}
-    price_health = price_snapshot.get("price_source_health") if isinstance(price_snapshot.get("price_source_health"), Mapping) else {}
-    consensus = report_state.get("media_consensus") if isinstance(report_state.get("media_consensus"), Mapping) else {}
-    media_forecasts = report.get("media_forecasts") if isinstance(report.get("media_forecasts"), list) else []
-    shadow_receipt = shadow_run.get("run") if isinstance(shadow_run.get("run"), Mapping) else {}
+    raw_report_state = report.get("current_state")
+    report_state: Mapping[str, object] = raw_report_state if isinstance(raw_report_state, Mapping) else {}
+    raw_quality_checks = quality_gate.get("checks")
+    quality_checks: Mapping[str, object] = raw_quality_checks if isinstance(raw_quality_checks, Mapping) else {}
+    raw_canary_checks = canary_preview.get("checks")
+    canary_checks: Mapping[str, object] = raw_canary_checks if isinstance(raw_canary_checks, Mapping) else {}
+    raw_price_health = price_snapshot.get("price_source_health")
+    price_health: Mapping[str, object] = raw_price_health if isinstance(raw_price_health, Mapping) else {}
+    raw_consensus = report_state.get("media_consensus")
+    consensus: Mapping[str, object] = raw_consensus if isinstance(raw_consensus, Mapping) else {}
+    raw_media_forecasts = report.get("media_forecasts")
+    media_forecasts: list[object] = raw_media_forecasts if isinstance(raw_media_forecasts, list) else []
+    raw_shadow_receipt = shadow_run.get("run")
+    shadow_receipt: Mapping[str, object] = raw_shadow_receipt if isinstance(raw_shadow_receipt, Mapping) else {}
 
     has_horizon = any(
         isinstance(item, Mapping) and str(item.get("horizon_key") or item.get("horizon_label") or "").strip()
@@ -234,11 +253,11 @@ def summarize_pilot_runs(runs: Sequence[Mapping[str, object]], *, now: datetime)
 def validate_source_decision(payload: Mapping[str, object]) -> dict[str, object]:
     """Normalize a direct-source decision; activation is deliberately absent."""
     required_text = ("indicator_key", "source_key", "owner", "permission_basis", "source_url", "quote_unit", "timezone", "fallback")
-    normalized = {key: str(payload.get(key) or "").strip() for key in required_text}
+    normalized: dict[str, object] = {key: str(payload.get(key) or "").strip() for key in required_text}
     missing = [key for key, value in normalized.items() if not value]
     if missing:
         raise ValueError(f"source decision missing: {', '.join(missing)}")
-    if not normalized["source_url"].startswith("https://"):
+    if not str(normalized["source_url"]).startswith("https://"):
         raise ValueError("source_url must use https")
     status = str(payload.get("status") or "draft").strip().lower()
     if status not in {"draft", "approved", "rejected", "expired"}:
@@ -362,12 +381,14 @@ def evaluate_attention_budget(
         reason = "below_minimum_severity"
     elif duplicate_seen:
         reason = "duplicate_within_window"
-    elif recent_count >= int(normalized["daily_cap"]):
+    elif recent_count >= _bounded_int(normalized.get("daily_cap"), name="daily_cap", low=1, high=20):
         reason = "daily_attention_cap"
-    elif _in_quiet_hours(now, normalized["quiet_hours"]):
-        reason = "quiet_hours"
-    elif not str(candidate.get("dedup_key") or "").strip():
-        reason = "missing_dedup_key"
+    else:
+        quiet_hours = normalized.get("quiet_hours")
+        if isinstance(quiet_hours, Mapping) and _in_quiet_hours(now, quiet_hours):
+            reason = "quiet_hours"
+        elif not str(candidate.get("dedup_key") or "").strip():
+            reason = "missing_dedup_key"
     return {
         "status": "suppressed" if reason else "eligible",
         "reason": reason,
@@ -385,14 +406,14 @@ def normalize_privacy_boundary(payload: Mapping[str, object] | None) -> dict[str
     if bool(raw.get("phase_two_processing_enabled")):
         raise ValueError("phase two processing cannot be enabled from Bee CFO phase one")
     allowed = raw.get("phase_one_allowed_data")
-    permitted = set(PHASE_TWO_PRIVACY_BOUNDARY["phase_one_allowed_data"])
+    permitted = set(_PHASE_ONE_ALLOWED_DATA)
     if not isinstance(allowed, list) or set(map(str, allowed)) - permitted:
         raise ValueError("phase one data boundary only allows market and operational metadata")
     return {
         "revision": str(raw.get("revision") or "bee-cfo-privacy-1")[:64],
         "phase_one_personal_data_enabled": False,
-        "phase_one_allowed_data": list(PHASE_TWO_PRIVACY_BOUNDARY["phase_one_allowed_data"]),
-        "future_controls": list(PHASE_TWO_PRIVACY_BOUNDARY["future_controls"]),
+        "phase_one_allowed_data": list(_PHASE_ONE_ALLOWED_DATA),
+        "future_controls": list(_FUTURE_PRIVACY_CONTROLS),
         "phase_two_processing_enabled": False,
         "consent_status": "design_only",
     }

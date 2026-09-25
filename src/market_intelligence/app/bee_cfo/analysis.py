@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from app.config import Settings
 from app.openai_client import OpenAIClient
 
-from .contracts import validate_market_report
+from .contracts import MarketReport, validate_market_report
 from .benchmarking import evidence_fingerprint
 from .media_forecasts import extract_media_forecasts
 from .researcher_adapter import MarketEvidence
@@ -227,7 +227,7 @@ def _media_perspectives(evidence: list[MarketEvidence]) -> list[dict[str, object
     return extract_media_forecasts(evidence)
 
 
-def fallback_market_report(*, watch: dict[str, object], evidence: list[MarketEvidence]) -> dict[str, object]:
+def fallback_market_report(*, watch: dict[str, object], evidence: list[MarketEvidence]) -> MarketReport:
     """Return a safe report that distinguishes coverage from usable signal.
 
     The fallback is intentionally conservative.  A source URL or a relevant
@@ -359,7 +359,7 @@ async def generate_market_report(
     watch: dict[str, object],
     evidence: list[MarketEvidence],
     output_contract: dict[str, object],
-) -> tuple[dict[str, object], str, dict[str, int]]:
+) -> tuple[MarketReport, str, dict[str, int]]:
     """Use the approved model when available and retain a deterministic fallback."""
     client = OpenAIClient(settings)
     if not client.configured:

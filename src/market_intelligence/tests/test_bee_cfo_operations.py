@@ -9,6 +9,7 @@ from app.bee_cfo.operations import (
     build_price_source_health,
     build_report_diff,
     build_replay_payload,
+    assess_evidence_quality,
     classify_alert_maturity,
     evaluate_telegram_uat,
 )
@@ -29,6 +30,35 @@ class BeeCFOOperationsTest(unittest.TestCase):
         self.assertIn("coverage", result["missing"])
         self.assertIn("model_agreement", result["missing"])
         self.assertLess(result["overall"], 0.75)
+
+    def test_untrusted_nested_report_values_fail_closed_without_crashing(self):
+        quality = assess_evidence_quality({
+            "coverage_score": {"score": object(), "status": "complete", "missing": "not-a-list"},
+            "analysis_evidence_count": object(),
+            "media_perspectives": {"not": "a list"},
+            "price_forecast": "not-a-mapping",
+            "evidence_pack": [],
+        })
+        self.assertEqual("held", quality["status"])
+        self.assertFalse(quality["checks"]["coverage_sufficient"])
+        self.assertEqual([], quality["coverage"]["missing"])
+        budget = build_confidence_budget(
+            coverage={"score": object()},
+            model_agreement={},
+            media_pulse={"explicit_opinion_count": object(), "coverage_volume": "nan"},
+            forecast={},
+        )
+        self.assertTrue(0 <= budget["overall"] <= 1)
+        self.assertEqual([], build_open_checks(
+            current_state={"coverage_score": [], "model_agreement": []},
+            report_as_of="2026-08-23T12:00:00+00:00",
+            live_uat_required=False,
+        ))
+        diff = build_report_diff(
+            {"evidence_cards": "not-a-list"},
+            {"evidence_cards": {"not": "a list"}},
+        )
+        self.assertEqual("unchanged", diff["status"])
 
     def test_alert_maturity_requires_independent_corroboration(self):
         candidate = {"kind": "price_change_pct", "threshold": 2}

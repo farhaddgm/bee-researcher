@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from typing import Any
 
 from app.models import Base
 
@@ -15,7 +16,7 @@ class InfrastructureDecision:
     separability: str
 
 
-def run_infrastructure_audit() -> dict[str, object]:
+def run_infrastructure_audit() -> dict[str, Any]:
     """Return a deterministic reuse decision before any shared adapter runs."""
     table_names = set(Base.metadata.tables)
     bee_tables = sorted(name for name in table_names if name.startswith("market_intelligence.bee_cfo_"))

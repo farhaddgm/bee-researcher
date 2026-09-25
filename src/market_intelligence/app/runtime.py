@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import re
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -75,7 +76,10 @@ def normalize_schedule_slots(values: list[dict[str, object]] | tuple[dict[str, o
         if not isinstance(raw, dict):
             raise ValueError("schedule_slots must contain objects")
         try:
-            weekday = int(raw.get("weekday"))
+            raw_weekday = raw.get("weekday")
+            if isinstance(raw_weekday, bool) or not isinstance(raw_weekday, (int, str)):
+                raise ValueError
+            weekday = int(raw_weekday)
             value = str(raw.get("time", "")).strip()
         except (TypeError, ValueError):
             raise ValueError("schedule_slots must contain weekday and HH:MM") from None
@@ -264,7 +268,7 @@ async def scheduler_tick(settings: Settings, *, now: datetime | None = None) -> 
     pipeline_results: list[dict[str, object]] = []
     async with SessionLocal() as session:
         assistants = (await session.execute(select(AssistantWorkspace.id, AssistantWorkspace.status, AssistantWorkspace.config))).all()
-    scheduled_assistants: list[tuple[object | None, tuple[tuple[int, str], ...], bool, bool, str, bool, tuple[tuple[int, str], ...]]] = []
+    scheduled_assistants: list[tuple[uuid.UUID | None, tuple[tuple[int, str], ...], bool, bool, str, bool, tuple[tuple[int, str], ...]]] = []
     for assistant_id, status, config in assistants:
         if status not in {"active", "testing"}:
             continue
@@ -335,8 +339,9 @@ async def scheduler_tick(settings: Settings, *, now: datetime | None = None) -> 
                     report_result = await run_scheduled_reports(assistant_id=assistant_id, now=slot)
                     await _finish_job(report_job_id, status="succeeded", result=report_result)
                 except Exception as exc:
-                    report_result = {"status": "failed", "error": redact_sensitive_text(f"{type(exc).__name__}: {exc}", limit=500)}
-                    await _finish_job(report_job_id, status="failed", result=report_result, error=report_result["error"])
+                    failure_message = redact_sensitive_text(f"{type(exc).__name__}: {exc}", limit=500)
+                    report_result = {"status": "failed", "error": failure_message}
+                    await _finish_job(report_job_id, status="failed", result=report_result, error=failure_message)
                 pipeline_results.append({"kind": "bee_cfo_report", "slot": slot.isoformat(), "report": report_result})
                 STATUS.last_pipeline_slot = slot.isoformat()
                 STATUS.last_pipeline_status = str(report_result.get("status"))
@@ -430,8 +435,9 @@ async def scheduler_tick(settings: Settings, *, now: datetime | None = None) -> 
                 )
                 await _finish_job(publication_job_id, status="succeeded", result=delivery)
             except Exception as exc:
-                delivery = {"published": 0, "status": "failed", "error": redact_sensitive_text(f"{type(exc).__name__}: {exc}", limit=500)}
-                await _finish_job(publication_job_id, status="failed", result=delivery, error=delivery["error"])
+                failure_message = redact_sensitive_text(f"{type(exc).__name__}: {exc}", limit=500)
+                delivery = {"published": 0, "status": "failed", "error": failure_message}
+                await _finish_job(publication_job_id, status="failed", result=delivery, error=failure_message)
             pipeline_results.append({
                 "kind": "scheduled_publication",
                 "slot": slot.isoformat(),
@@ -462,17 +468,19 @@ async def scheduler_tick(settings: Settings, *, now: datetime | None = None) -> 
 
     retention_key = f"retention:{now.date().isoformat()}"
     retention_job_id, retention_state = await _claim_job(retention_key, "retention")
+    retention_result: dict[str, object]
     if retention_job_id is not None:
         try:
-            retention_result = await apply_retention(settings)
+            retention_result = dict(await apply_retention(settings))
             await _finish_job(retention_job_id, status="succeeded", result=retention_result)
         except Exception as exc:
-            retention_result = {"status": "failed", "error": redact_sensitive_text(f"{type(exc).__name__}: {exc}")}
+            failure_message = redact_sensitive_text(f"{type(exc).__name__}: {exc}")
+            retention_result = {"status": "failed", "error": failure_message}
             await _finish_job(
                 retention_job_id,
                 status="failed",
                 result=retention_result,
-                error=str(retention_result["error"]),
+                error=failure_message,
             )
     else:
         retention_result = {"status": "duplicate", "existing_status": retention_state}
@@ -504,16 +512,19 @@ async def scheduler_loop(settings: Settings, stop: asyncio.Event) -> None:
                 result = await scheduler_tick(settings)
                 STATUS.last_scheduler_tick = datetime.now(timezone.utc).isoformat()
                 STATUS.last_scheduler_error = None
-                if result["pipeline_results"]:
-                    STATUS.last_pipeline_status = str(
-                        result["pipeline_results"][-1].get("status")
-                    )
+                pipeline_results_value = result.get("pipeline_results")
+                if isinstance(pipeline_results_value, list) and pipeline_results_value:
+                    last_result = pipeline_results_value[-1]
+                    if isinstance(last_result, dict):
+                        STATUS.last_pipeline_status = str(last_result.get("status"))
                     summaries = []
-                    for item in result["pipeline_results"]:
+                    for item in pipeline_results_value:
                         if not isinstance(item, dict):
                             continue
-                        delivery = item.get("delivery") if isinstance(item.get("delivery"), dict) else {}
-                        pipeline = item.get("pipeline") if isinstance(item.get("pipeline"), dict) else {}
+                        delivery_value = item.get("delivery")
+                        delivery = delivery_value if isinstance(delivery_value, dict) else {}
+                        pipeline_value = item.get("pipeline")
+                        pipeline = pipeline_value if isinstance(pipeline_value, dict) else {}
                         summaries.append({
                             "kind": item.get("kind", "pipeline"),
                             "status": delivery.get("status") or pipeline.get("status") or item.get("status"),
@@ -521,7 +532,7 @@ async def scheduler_loop(settings: Settings, stop: asyncio.Event) -> None:
                         })
                     _log_runtime_event(
                         "scheduler_tick",
-                        result_count=len(result["pipeline_results"]),
+                        result_count=len(pipeline_results_value),
                         results=summaries[:20],
                     )
             except Exception as exc:
@@ -549,13 +560,19 @@ async def telegram_feedback_loop(settings: Settings, stop: asyncio.Event) -> Non
             try:
                 updates = await telegram.get_updates(offset)
                 for update in updates:
-                    update_id = int(update.get("update_id", 0))
+                    raw_update_id = update.get("update_id", 0)
+                    try:
+                        update_id = int(raw_update_id) if isinstance(raw_update_id, (int, str)) else 0
+                    except (TypeError, ValueError, OverflowError):
+                        update_id = 0
                     offset = update_id + 1
                     STATUS.last_feedback_update_id = update_id
-                    callback = update.get("callback_query") or {}
+                    callback_value = update.get("callback_query")
+                    callback = callback_value if isinstance(callback_value, dict) else {}
                     callback_id = str(callback.get("id") or "")
                     data = str(callback.get("data") or "")
-                    user = callback.get("from") or {}
+                    user_value = callback.get("from")
+                    user = user_value if isinstance(user_value, dict) else {}
                     username = str(user.get("username") or "").lower()
                     parts = data.split(":", 2)
                     if len(parts) != 3 or parts[0] != "mi" or parts[1] not in {"up", "down"}:
