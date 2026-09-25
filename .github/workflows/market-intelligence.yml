@@ -236,6 +236,9 @@ jobs:
       id-token: write
       packages: write
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Download the exact scanned image and SBOM
         uses: actions/download-artifact@v4
         with:
