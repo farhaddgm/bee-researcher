@@ -257,8 +257,7 @@ jobs:
           IMAGE_REF="$IMAGE_NAME:${GITHUB_SHA}"
           docker tag "bee-researcher-market-intelligence:${GITHUB_SHA}" "$IMAGE_REF"
           docker push "$IMAGE_REF" | tee /tmp/market-intelligence-image-push.log
-          DIGEST="$(awk 'tolower($1)=="digest:" {print $2}' /tmp/market-intelligence-image-push.log | tail -1)"
-          test -n "$DIGEST"
+          DIGEST="$(bash src/market_intelligence/scripts/extract_image_digest.sh < /tmp/market-intelligence-image-push.log)"
           {
             echo "image_name=$IMAGE_NAME"
             echo "image_ref=$IMAGE_NAME@$DIGEST"
