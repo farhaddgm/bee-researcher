@@ -48,6 +48,8 @@ from app.openai_client import (
     sanitize_untrusted_source,
 )
 from app.queue_names import pipeline_lock_key
+from app.security_controls import redact_sensitive_text
+from app.retention import effective_retention_days
 from app.relevance import (
     cluster_key,
     combine_topic_score,
@@ -267,6 +269,11 @@ async def settings_for_assistant(settings: Settings, assistant_id: uuid.UUID | N
     return settings.model_copy(update=updates) if updates else settings
 
 
+def _not_retention_tombstone():
+    """Exclude source items whose content was erased by the retention job."""
+    return ~SourceItem.raw_metadata.has_key("retention_purged_at")
+
+
 def _freshness_condition(column, settings: Settings):
     """Accept undated feed items, but reject dated items older than the window."""
     cutoff = _utcnow() - timedelta(days=settings.freshness_window_days)
@@ -416,6 +423,7 @@ async def extract_pending_articles(
                         SourceItem.assistant_id == assistant_id if assistant_id is not None else true(),
                         _freshness_condition(SourceItem.published_at, settings),
                         NormalizedArticle.id.is_(None),
+                        _not_retention_tombstone(),
                     )
                     .order_by(
                         SourceItem.published_at.desc().nullslast(),
@@ -438,6 +446,8 @@ async def extract_pending_articles(
                     NormalizedArticle.id.is_(None),
                     SourceItem.assistant_id == assistant_id if assistant_id is not None else true(),
                     _freshness_condition(SourceItem.published_at, settings),
+                    _not_retention_tombstone(),
+                    Source.enabled.is_(True),
                 )
                 .order_by(
                     SourceItem.published_at.desc().nullslast(),
@@ -1534,7 +1544,33 @@ async def refresh_publication_previews(*, limit: int = 200) -> dict[str, int]:
     return {"candidates": len(rows), "refreshed": len(rows)}
 
 
-async def publish_publication(publication_id: uuid.UUID) -> dict[str, object]:
+PUBLISH_CLAIM_STALE_AFTER = timedelta(minutes=15)
+
+
+async def _release_publish_claim(publication_id: uuid.UUID, previous_status: str, error: str) -> None:
+    """Return a claimed publication to its prior state after a failed send."""
+    async with SessionLocal() as session:
+        publication = await session.get(Publication, publication_id, with_for_update=True)
+        if publication is not None and publication.status == "publishing":
+            publication.status = previous_status
+            publication.error_message = error[:2000]
+            audit = dict(publication.audit or {})
+            audit.pop("publishing_started_at", None)
+            publication.audit = audit
+            publication.updated_at = _utcnow()
+            await session.commit()
+
+
+async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: bool = False) -> dict[str, object]:
+    """Send one publication to Telegram at most once.
+
+    The row is moved to ``publishing`` inside the locked transaction before
+    anything is sent, so a concurrent scheduler run or manual click sees the
+    claim and never sends a second copy.  A failed send releases the claim.
+    A claim left behind by a crashed process is never retried
+    automatically (the message may already be out); only an explicit owner
+    action (``allow_stale_claim``) may retry it after 15 minutes.
+    """
     settings = get_settings()
     observer_message_context: Row[tuple[ArticleAnalysis, NormalizedArticle, Source]] | None = None
     image_url: str | None = None
@@ -1550,6 +1586,19 @@ async def publish_publication(publication_id: uuid.UUID) -> dict[str, object]:
                 "message_id": publication.message_id,
                 "idempotent": True,
             }
+        previous_status = publication.status
+        if publication.status == "publishing":
+            try:
+                started = datetime.fromisoformat(str((publication.audit or {}).get("publishing_started_at")))
+            except (TypeError, ValueError):
+                started = publication.updated_at
+            if started.tzinfo is None:
+                started = started.replace(tzinfo=timezone.utc)
+            if not allow_stale_claim or _utcnow() - started < PUBLISH_CLAIM_STALE_AFTER:
+                raise RuntimeError("publication is already being sent")
+            previous_status = "preview"
+        elif publication.status not in {"preview", "failed"}:
+            raise RuntimeError(f"publication in status {publication.status} cannot be sent")
         analysis_id = publication.analysis_id
         assistant_id = publication.assistant_id
         assistant = await session.get(AssistantWorkspace, assistant_id)
@@ -1571,6 +1620,47 @@ async def publish_publication(publication_id: uuid.UUID) -> dict[str, object]:
                 .where(ArticleAnalysis.id == analysis_id)
             )
         ).one_or_none()
+        # Claim before releasing the row lock: from here on no other caller
+        # can start a second send of this publication.
+        publication.status = "publishing"
+        publication.audit = {**(publication.audit or {}), "publishing_started_at": _utcnow().isoformat()}
+        publication.updated_at = _utcnow()
+        await session.commit()
+    try:
+        return await _send_claimed_publication(
+            publication_id,
+            settings=settings,
+            assistant_id=assistant_id,
+            analysis_id=analysis_id,
+            message_text=message_text,
+            image_url=image_url,
+            observer_message_context=observer_message_context,
+        )
+    except _DeliveredNotRecorded:
+        # The message is already in Telegram. Keep the claim so no retry
+        # can send it again; the owner sees the stuck ``publishing`` row.
+        raise
+    except Exception as exc:
+        # Nothing was delivered (the main send raised), so the claim is
+        # released and the item stays eligible.
+        await _release_publish_claim(publication_id, previous_status, f"{type(exc).__name__}: {exc}")
+        raise
+
+
+class _DeliveredNotRecorded(RuntimeError):
+    """Telegram accepted the message but the result could not be stored."""
+
+
+async def _send_claimed_publication(
+    publication_id: uuid.UUID,
+    *,
+    settings: Settings,
+    assistant_id: uuid.UUID,
+    analysis_id: uuid.UUID,
+    message_text: str,
+    image_url: str | None,
+    observer_message_context: tuple[ArticleAnalysis, NormalizedArticle, Source] | None,
+) -> dict[str, object]:
     settings = await settings_for_assistant(settings, assistant_id)
     # Re-render at delivery time as well as at preview time. This upgrades
     # previews created by an older release so an already-queued message cannot
@@ -1598,6 +1688,73 @@ async def publish_publication(publication_id: uuid.UUID) -> dict[str, object]:
         raise RuntimeError(permission.error or "Telegram bot lacks Post Messages permission")
     silent = bool(getattr(settings, "telegram_silent_notifications", False))
     message_ids = await telegram.send_analysis(message_text, analysis_id=analysis_id, silent=silent, image_url=image_url)
+    try:
+        observer_message_ids, observer_error = await _send_observer_copy(
+            telegram, settings, analysis_id, message_text, silent, observer_message_context
+        )
+    except Exception as exc:
+        # The feedback channel already has the message: never undo the claim
+        # (a retry would duplicate it). Record the observer failure instead.
+        observer_message_ids, observer_error = [], redact_sensitive_text(f"{type(exc).__name__}: {exc}", limit=500)
+    try:
+        await _record_delivery(publication_id, settings, message_ids, observer_message_ids, observer_error, permission)
+    except Exception as exc:
+        LOGGER.exception("publication delivered but not recorded", extra={"publication_id": str(publication_id)})
+        raise _DeliveredNotRecorded(f"delivered as {message_ids} but not recorded: {type(exc).__name__}") from exc
+    return {
+        "publication_id": str(publication_id),
+        "status": "published",
+        "message_ids": message_ids,
+        "observer_message_ids": observer_message_ids,
+        "idempotent": False,
+    }
+
+
+async def _record_delivery(
+    publication_id: uuid.UUID,
+    settings: Settings,
+    message_ids: list[int],
+    observer_message_ids: list[int],
+    observer_error: str | None,
+    permission,
+) -> None:
+    now = _utcnow()
+    async with SessionLocal() as session:
+        publication = await session.get(Publication, publication_id, with_for_update=True)
+        if publication is None:
+            raise KeyError("publication not found after send")
+        publication.status = "published"
+        publication.message_id = message_ids[0] if message_ids else None
+        publication.telegram_payload = {
+            "message_ids": message_ids,
+            "observer_message_ids": observer_message_ids,
+            "channels": {
+                "feedback": settings.telegram_channel_id,
+                "observer": settings.telegram_observer_channel_id,
+            },
+            "dry_run": False,
+            **({"observer_error": observer_error} if observer_error else {}),
+        }
+        audit = {k: v for k, v in (publication.audit or {}).items() if k != "publishing_started_at"}
+        publication.audit = {
+            **audit,
+            "published_by": "pipeline",
+            "permission": asdict(permission),
+        }
+        publication.published_at = now
+        publication.updated_at = now
+        publication.error_message = None
+        await session.commit()
+
+
+async def _send_observer_copy(
+    telegram: TelegramClient,
+    settings: Settings,
+    analysis_id: uuid.UUID,
+    message_text: str,
+    silent: bool,
+    observer_message_context: tuple[ArticleAnalysis, NormalizedArticle, Source] | None,
+) -> tuple[list[int], str | None]:
     observer_message_ids: list[int] = []
     if settings.telegram_observer_channel_id and settings.telegram_observer_channel_id != settings.telegram_channel_id:
         observer_message = message_text
@@ -1627,38 +1784,7 @@ async def publish_publication(publication_id: uuid.UUID) -> dict[str, object]:
                 else None
             ),
         )
-    now = _utcnow()
-    async with SessionLocal() as session:
-        publication = await session.get(Publication, publication_id, with_for_update=True)
-        if publication is None:
-            raise KeyError("publication not found after send")
-        publication.status = "published"
-        publication.message_id = message_ids[0] if message_ids else None
-        publication.telegram_payload = {
-            "message_ids": message_ids,
-            "observer_message_ids": observer_message_ids,
-            "channels": {
-                "feedback": settings.telegram_channel_id,
-                "observer": settings.telegram_observer_channel_id,
-            },
-            "dry_run": False,
-        }
-        publication.audit = {
-            **publication.audit,
-            "published_by": "pipeline",
-            "permission": asdict(permission),
-        }
-        publication.published_at = now
-        publication.updated_at = now
-        publication.error_message = None
-        await session.commit()
-    return {
-        "publication_id": str(publication_id),
-        "status": "published",
-        "message_ids": message_ids,
-        "observer_message_ids": observer_message_ids,
-        "idempotent": False,
-    }
+    return observer_message_ids, None
 
 
 async def approve_borderline_publication(publication_id: uuid.UUID) -> dict[str, object]:
@@ -1698,6 +1824,7 @@ async def publish_ready_previews(
     limit: int,
     assistant_id: uuid.UUID | None = None,
     created_after: datetime | None = None,
+    newest_first: bool = False,
 ) -> dict[str, object]:
     settings = await settings_for_assistant(settings, assistant_id)
     # The workspace may lower the deployment cap; never let a global scheduler
@@ -1719,7 +1846,7 @@ async def publish_ready_previews(
                 .join(ArticleAnalysis, ArticleAnalysis.id == Publication.analysis_id)
                 .join(NormalizedArticle, NormalizedArticle.id == ArticleAnalysis.article_id)
                 .where(*filters)
-                .order_by(Publication.created_at)
+                .order_by(Publication.created_at.desc() if newest_first else Publication.created_at)
             )
         ).scalars().all()
         # A borderline article is an operator signal, not an automatic
@@ -2121,9 +2248,19 @@ async def generate_weekly_report(*, now: datetime | None = None, assistant_id: u
     }
 
 
-async def apply_retention(settings: Settings) -> dict[str, int]:
-    raw_cutoff = _utcnow() - timedelta(days=settings.raw_html_retention_days)
-    normalized_cutoff = _utcnow() - timedelta(days=settings.normalized_retention_days)
+async def apply_retention(settings: Settings) -> dict[str, object]:
+    """Enforce raw-HTML expiry and each workspace's article retention.
+
+    Every workspace uses its own privacy ``retention_days`` when one was
+    saved, otherwise the deployment ``normalized_retention_days``.  Deleting
+    an article cascades to its topic scores, cluster memberships, analyses,
+    publications and feedback.  The originating source item is kept only as
+    a content-free tombstone: its fingerprint must survive so ingestion does
+    not rediscover and republish the same item, while title, URL and
+    excerpt are erased.  Clusters left without members are removed too.
+    """
+    now = _utcnow()
+    raw_cutoff = now - timedelta(days=settings.raw_html_retention_days)
     async with SessionLocal() as session:
         raw_result = await session.execute(
             update(NormalizedArticle)
@@ -2133,15 +2270,53 @@ async def apply_retention(settings: Settings) -> dict[str, int]:
             )
             .values(raw_html=None)
         )
-        deleted_result = await session.execute(
-            delete(NormalizedArticle).where(
-                NormalizedArticle.extracted_at < normalized_cutoff
-            )
-        )
         await session.commit()
+        workspaces = (await session.execute(select(AssistantWorkspace.id, AssistantWorkspace.config))).all()
+    totals = {"normalized_articles_deleted": 0, "source_items_purged": 0, "clusters_deleted": 0}
+    per_workspace: list[dict[str, object]] = []
+    for assistant_id, config in workspaces:
+        days, policy_source = effective_retention_days(config)
+        cutoff = now - timedelta(days=days)
+        # One transaction per workspace keeps locks short and isolates a
+        # failure to the workspace that caused it.
+        async with SessionLocal() as session:
+            deleted = await session.execute(
+                delete(NormalizedArticle).where(
+                    NormalizedArticle.assistant_id == assistant_id,
+                    NormalizedArticle.extracted_at < cutoff,
+                )
+            )
+            purged = await session.execute(
+                update(SourceItem)
+                .where(
+                    SourceItem.assistant_id == assistant_id,
+                    SourceItem.discovered_at < cutoff,
+                    ~SourceItem.raw_metadata.has_key("retention_purged_at"),
+                    ~exists().where(NormalizedArticle.source_item_id == SourceItem.id),
+                )
+                .values(title="", url="", excerpt="", raw_metadata={"retention_purged_at": now.isoformat()})
+            )
+            clusters = await session.execute(
+                delete(EventCluster).where(
+                    EventCluster.assistant_id == assistant_id,
+                    EventCluster.updated_at < cutoff,
+                    ~exists().where(ClusterMember.cluster_id == EventCluster.id),
+                )
+            )
+            await session.commit()
+        counts = {
+            "normalized_articles_deleted": int(deleted.rowcount or 0),
+            "source_items_purged": int(purged.rowcount or 0),
+            "clusters_deleted": int(clusters.rowcount or 0),
+        }
+        for key, value in counts.items():
+            totals[key] += value
+        if any(counts.values()):
+            per_workspace.append({"assistant_id": str(assistant_id), "retention_days": days, "policy": policy_source, **counts})
     return {
         "raw_html_cleared": int(raw_result.rowcount or 0),
-        "normalized_articles_deleted": int(deleted_result.rowcount or 0),
+        **totals,
+        "workspaces": per_workspace,
     }
 
 
@@ -2247,6 +2422,7 @@ async def run_pipeline(
     max_candidates: int | None = None,
     idempotency_key: str | None = None,
     assistant_id: uuid.UUID | None = None,
+    publish_limit: int | None = None,
 ) -> dict[str, object]:
     # A pipeline invocation without an explicit workspace is legacy shorthand
     # for the stable default workspace.  Never let a nullable scope propagate
@@ -2319,9 +2495,13 @@ async def run_pipeline(
             bool(publish) if publish is not None else settings.auto_publish and not settings.pilot_mode
         )
         if should_publish:
+            # An explicit publish_limit (manual "publish one now") sends the
+            # newest eligible items only; the scheduler keeps oldest-first.
             delivery = await publish_ready_previews(
                 settings.model_copy(update={"auto_publish": True, "pilot_mode": False}),
-                limit=settings.max_items_per_run, assistant_id=assistant_id
+                limit=min(publish_limit, settings.max_items_per_run) if publish_limit else settings.max_items_per_run,
+                assistant_id=assistant_id,
+                newest_first=publish_limit is not None,
             )
         else:
             delivery = {"published": 0, "status": "dry_run_gate"}

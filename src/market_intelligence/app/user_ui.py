@@ -83,6 +83,7 @@ USER_HTML = r'''<!doctype html>
     <section class="login-card" aria-labelledby="loginTitle">
       <div class="logo"><img class="brand-logo" src="/assets/bee-researcher-grey.svg" alt="Bee Researcher"></div>
       <h1 id="loginTitle" class="sr-only">Sign in to read</h1>
+      <a id="googleLoginBtn" class="btn primary login-submit google-login" href="/auth/google/start?portal=user" hidden>Sign in with Google</a>
       <form id="loginForm" novalidate>
         <input id="username" name="username" autocomplete="username" placeholder="Username" aria-describedby="usernameError" required>
         <p id="usernameError" class="field-error" role="alert"></p>
@@ -269,5 +270,39 @@ USER_HTML = r'''<!doctype html>
       box.addEventListener('click',async event=>{const button=event.target.closest('[data-reader-feedback]');if(!button||!window.__beeReaderCanFeedback)return;const id=box.dataset.publicationId;if(!id)return;const status=box.querySelector('.reader-feedback-status');box.querySelectorAll('button').forEach(item=>item.disabled=true);try{const response=await window.request('/user/api/publications/'+encodeURIComponent(id)+'/feedback',{method:'POST',body:JSON.stringify({value:button.dataset.readerFeedback})});window.__beeReaderFeedback[id]=response.value||button.dataset.readerFeedback;box.querySelectorAll('[data-reader-feedback]').forEach(item=>item.classList.toggle('selected',item===button));if(status)status.textContent='Feedback saved.';window.toast?.('Feedback saved.')}catch(error){if(status)status.textContent=window.friendly?.(error.message)||'Could not save feedback.'}finally{box.querySelectorAll('button').forEach(item=>item.disabled=false)}});
     })();
   </script>
+<style id="google-login-style">#login.google-only #loginForm{display:none!important}.google-login{display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}.google-login[hidden]{display:none!important}</style>
+<script id="google-login-layer">
+/* Google sign-in for the reader portal: /user shows only the Google button
+   when configured; the unlinked /user/login-up page keeps the password form. */
+(function(){
+  const fa=()=>(document.getElementById('login')?.lang||document.documentElement.lang||'fa').startsWith('fa');
+  const passwordMode=document.body.dataset.loginMode==='password';
+  const messages={
+    not_configured:['ورود با گوگل هنوز پیکربندی نشده است.','Google sign-in is not configured yet.'],
+    cancelled:['ورود با گوگل لغو شد.','Google sign-in was cancelled.'],
+    expired:['مهلت ورود تمام شد؛ دوباره تلاش کنید.','The sign-in attempt expired; please try again.'],
+    not_gmail:['فقط حساب‌های ‎@gmail.com پذیرفته می‌شوند.','Only @gmail.com accounts are accepted.'],
+    not_allowed:['این حساب جیمیل اجازهٔ ورود به این بخش را ندارد.','This Gmail account is not allowed here.'],
+    inactive:['این حساب غیرفعال است.','This account is disabled.'],
+    rate_limited:['تلاش‌های زیاد؛ کمی بعد دوباره امتحان کنید.','Too many attempts; please try again later.'],
+    failed:['ورود با گوگل ناموفق بود.','Google sign-in failed.']
+  };
+  const code=new URLSearchParams(location.search).get('login_error');
+  if(code&&messages[code]){
+    const show=()=>{const box=document.getElementById('loginError');if(box)box.textContent=messages[code][fa()?0:1]};
+    show();setTimeout(show,800);
+    history.replaceState(null,'',location.pathname);
+  }
+  const button=document.getElementById('googleLoginBtn'),login=document.getElementById('login');
+  const label=()=>{if(button)button.textContent=fa()?'ورود با گوگل':'Sign in with Google'};
+  label();
+  fetch('/auth/providers',{credentials:'same-origin'}).then(r=>r.ok?r.json():{google:false}).catch(()=>({google:false})).then(p=>{
+    if(!p||!p.google||!button)return;
+    button.hidden=false;
+    if(!passwordMode&&login)login.classList.add('google-only');
+  });
+  if(login)new MutationObserver(label).observe(login,{attributes:true,attributeFilter:['lang']});
+})();
+</script>
 </body>
 </html>'''

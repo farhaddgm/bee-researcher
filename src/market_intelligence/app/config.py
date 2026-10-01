@@ -16,7 +16,7 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 
 class Settings(BaseSettings):
     app_name: str = "Bee Researcher"
-    version: str = "3.30.14"
+    version: str = "3.31.0"
     build_revision: str = "unknown"
     image_digest: str | None = None
     environment: str = "production"
@@ -87,6 +87,10 @@ class Settings(BaseSettings):
 
     scheduler_enabled: bool = True
     scheduler_poll_seconds: int = Field(default=30, ge=5, le=300)
+    # A slot stays due for this many minutes, so a long scheduler tick that
+    # crosses the slot minute delivers late instead of silently skipping it.
+    # Claims keep delivery idempotent; older slots are recorded as missed.
+    schedule_grace_minutes: int = Field(default=10, ge=1, le=30)
     missed_run_recovery_hours: int = Field(default=8, ge=1, le=48)
     auto_publish: bool = False
     pilot_mode: bool = True
@@ -96,8 +100,21 @@ class Settings(BaseSettings):
     telegram_polling_enabled: bool = True
 
     admin_bootstrap_username: str = "admin"
+    # The account owner is identified only by this verified e-mail address.
+    # Usernames are editable by administrators and are therefore never an
+    # ownership signal.
+    owner_email: str = "farhad.dgm@gmail.com"
+    # Used only once by migration 0037 to attach ``owner_email`` to the
+    # pre-existing owner row; runtime authorization never reads it.
     admin_owner_username: str = "admin"
+    # The bootstrap password can create the owner account only while the
+    # account table is empty (first installation).
     admin_bootstrap_password: SecretStr | None = None
+    # Google sign-in (OpenID Connect, authorization code + PKCE). The button is
+    # shown only when all three values are configured.
+    google_client_id: str | None = None
+    google_client_secret: SecretStr | None = None
+    google_redirect_uri: str | None = None
     # Admin sessions use a sliding idle timeout. The security ceiling is
     # deliberately hard-capped at six hours; activity renews the deadline.
     admin_session_ttl_hours: int = Field(default=6, ge=1, le=6)
@@ -131,6 +148,9 @@ class Settings(BaseSettings):
     telegram_source_bot_token: SecretStr | None = None
     instagram_source_access_token: SecretStr | None = None
     x_source_bearer_token: SecretStr | None = None
+    # Extra hosts (comma-separated) that may receive a connector credential,
+    # e.g. an owner-approved gateway. Provider API hosts are always allowed.
+    connector_gateway_hosts: str = ""
     telegram_channel_id: str | None = None
     telegram_observer_channel_id: str | None = None
     telegram_silent_notifications: bool = False
@@ -263,10 +283,34 @@ class Settings(BaseSettings):
             raise ValueError("whatsapp_webhook_public_url must use HTTPS")
         return value
 
+    @field_validator("owner_email")
+    @classmethod
+    def valid_owner_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+            raise ValueError("owner_email must be an e-mail address")
+        return value
+
+    @field_validator("google_client_id", "google_redirect_uri")
+    @classmethod
+    def empty_google_value_is_unset(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return value.strip()
+
+    @field_validator("google_redirect_uri")
+    @classmethod
+    def valid_google_redirect_uri(cls, value: str | None) -> str | None:
+        if value is not None and not value.startswith(("https://", "http://localhost", "http://127.0.0.1")):
+            raise ValueError("google_redirect_uri must use HTTPS")
+        return value
+
     @field_validator(
         "openai_api_key",
         "telegram_bot_token",
         "csrf_signing_secret",
+        "mfa_encryption_secret",
+        "google_client_secret",
         "telegram_source_bot_token",
         "instagram_source_access_token",
         "x_source_bearer_token",
@@ -289,6 +333,18 @@ class Settings(BaseSettings):
         return frozenset(
             value.strip().lower().lstrip("@")
             for value in self.allowed_telegram_usernames.split(",")
+            if value.strip()
+        )
+
+    @property
+    def google_login_ready(self) -> bool:
+        return bool(self.google_client_id and self.google_client_secret and self.google_redirect_uri)
+
+    @property
+    def connector_gateway_host_values(self) -> frozenset[str]:
+        return frozenset(
+            value.strip().lower().rstrip(".")
+            for value in self.connector_gateway_hosts.split(",")
             if value.strip()
         )
 

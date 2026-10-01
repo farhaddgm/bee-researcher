@@ -47,7 +47,9 @@ from app.models import (
     Topic,
 )
 from app.openai_client import OpenAIClient
-from app.fetchers import FetchFailure, SourceFetcher, SourceSpec, validate_public_url_syntax
+from app.fetchers import FetchFailure, SourceFetcher, SourceSpec, validate_connector_binding, validate_public_url_syntax
+from app.google_auth import GoogleAuthError, GoogleIdentity, is_gmail, normalize_email
+from app.retention import MIN_RETENTION_DAYS, effective_retention_days
 from app.security_controls import CSRF_COOKIE, new_csrf_token
 from app.telegram_delivery import render_analysis_message
 
@@ -175,7 +177,11 @@ _ASSISTANT_DATA_DELETE_ORDER = (
 
 
 def workspace_write_allowed(user_role: str, member_role: str | None) -> bool:
-    """Return whether a user role may mutate a workspace resource."""
+    """Return whether a user role may mutate a workspace resource.
+
+    ``user_role`` must be the *effective* role (see ``effective_user_role``);
+    the stored role column can never contain ``owner``.
+    """
     if user_role == "owner":
         return True
     if member_role is None:
@@ -199,10 +205,20 @@ def workspace_delete_allowed(user_role: str, member_role: str | None, *, owner: 
     return user_role in {"admin", "assistant_admin"} and member_role in {"admin", "assistant_admin"}
 
 
+def owner_email() -> str:
+    return normalize_email(str(getattr(get_settings(), "owner_email", "") or ""))
+
+
 def is_owner(user: AdminUser) -> bool:
-    username = str(getattr(user, "username", "") or "").strip().lower()
-    configured = str(getattr(get_settings(), "admin_owner_username", "admin") or "admin").strip().lower()
-    return getattr(user, "role", None) == "owner" or username == configured
+    """The owner is exactly the account carrying the configured e-mail.
+
+    Usernames and the stored role are editable and are never an ownership
+    signal.  Only the owner can attach an e-mail address to an account, and
+    the owner address itself can never be assigned to another account.
+    """
+    email = normalize_email(str(getattr(user, "email", "") or ""))
+    configured = owner_email()
+    return bool(email and configured and hmac.compare_digest(email, configured))
 
 
 def is_global_admin(user: AdminUser) -> bool:
@@ -213,6 +229,33 @@ def is_global_admin(user: AdminUser) -> bool:
 
 def effective_user_role(user: AdminUser) -> str:
     return "owner" if is_owner(user) else user.role
+
+
+def role_rank(user: AdminUser) -> int:
+    return _ROLE_RANK.get(effective_user_role(user), 0)
+
+
+def has_editor_role(user: AdminUser) -> bool:
+    """Account-level gate for catalog mutations; membership is checked later."""
+    return effective_user_role(user) in {"owner", "admin", "assistant_admin", "editor"}
+
+
+def require_editor_role(user: AdminUser) -> None:
+    if not has_editor_role(user):
+        raise HTTPException(status_code=403, detail="editor role required")
+
+
+def ensure_can_manage_account(actor: AdminUser, target: AdminUser) -> None:
+    """Only a strictly higher effective role may manage another account.
+
+    Applies to password resets, (de)activation, renames, role and membership
+    changes and session revocation.  The owner outranks everyone; an account
+    may always manage itself through the self-service paths.
+    """
+    if actor.id == target.id or is_owner(actor):
+        return
+    if is_owner(target) or role_rank(target) >= role_rank(actor):
+        raise HTTPException(status_code=403, detail="cannot manage an account with an equal or higher role")
 
 
 def _user_portal_preference_values(user: AdminUser) -> tuple[bool, bool]:
@@ -334,6 +377,16 @@ class SourceUpdate(BaseModel):
     access_notes: str | None = Field(default=None, max_length=4000)
     display_order: int | None = Field(default=None, ge=0, le=100000)
 
+    @field_validator("homepage_url", "fetch_url")
+    @classmethod
+    def validate_source_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return validate_public_url_syntax(value.strip())
+        except ValueError as exc:
+            raise ValueError("homepage and feed URLs must be valid public http(s) URLs") from exc
+
     @model_validator(mode="after")
     def validate_connector_policy(self):
         if self.adapter and self.adapter.endswith("_private") and self.access_policy == "public_only":
@@ -374,6 +427,7 @@ class SourceCreate(BaseModel):
             raise ValueError("private connector requires private_authenticated access policy")
         if self.adapter.endswith("_public") and self.access_policy != "public_only":
             raise ValueError("public connector requires public_only access policy")
+        validate_connector_binding(self.adapter, self.credential_ref, self.fetch_url, get_settings())
         return self
 
 
@@ -603,7 +657,7 @@ class BusinessKnowledgeUpdate(BaseModel):
 
 
 class PrivacySettingsUpdate(BaseModel):
-    retention_days: int | None = Field(default=None, ge=1, le=3650)
+    retention_days: int | None = Field(default=None, ge=MIN_RETENTION_DAYS, le=3650)
     data_region: str | None = Field(default=None, min_length=2, max_length=64)
     export_enabled: bool | None = None
 
@@ -843,7 +897,7 @@ class AdminUserRequest(BaseModel):
 
 class AdminUserUpdate(BaseModel):
     username: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_.-]{3,128}$")
-    role: Literal["owner", "admin", "editor", "viewer", "assistant_admin", "analyst"] | None = None
+    role: Literal["admin", "editor", "viewer", "assistant_admin", "analyst"] | None = None
     active: bool | None = None
     user_portal_access: bool | None = None
     user_feedback_access: bool | None = None
@@ -851,7 +905,7 @@ class AdminUserUpdate(BaseModel):
 
 class AdminUserManageUpdate(BaseModel):
     username: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_.-]{3,128}$")
-    role: Literal["owner", "admin", "editor", "viewer", "assistant_admin", "analyst"] | None = None
+    role: Literal["admin", "editor", "viewer", "assistant_admin", "analyst"] | None = None
     active: bool | None = None
     new_password: str | None = Field(default=None, min_length=12, max_length=256)
     current_password: str | None = Field(default=None, min_length=8, max_length=256)
@@ -950,13 +1004,25 @@ def _hash_password(password: str, salt: bytes | None = None) -> str:
     return f"scrypt${salt.hex()}${digest.hex()}"
 
 
-def _check_password(password: str, encoded: str) -> bool:
+_DUMMY_PASSWORD_HASH = _hash_password(secrets.token_urlsafe(24))
+
+
+def _check_password(password: str, encoded: str | None) -> bool:
+    if not encoded:
+        # Google-only accounts have no password. Still spend the same scrypt
+        # work so response timing does not reveal the account type.
+        _check_password(password, _DUMMY_PASSWORD_HASH)
+        return False
     try:
         _, salt_hex, digest_hex = encoded.split("$", 2)
         actual = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex), n=2**14, r=8, p=1)
         return hmac.compare_digest(actual.hex(), digest_hex)
     except (ValueError, TypeError):
         return False
+
+
+def password_login_allowed(user: AdminUser) -> bool:
+    return getattr(user, "login_method", "password") in {"password", "both"} and bool(user.password_hash)
 
 
 def _mfa_enabled(user: AdminUser) -> bool:
@@ -1075,36 +1141,132 @@ async def authenticate(
     nightly_reader_expiry: bool = False,
 ) -> tuple[str, AdminUser]:
     settings = get_settings()
+    username = request.username.strip().lower()
     async with SessionLocal() as session:
-        user = (await session.execute(select(AdminUser).where(AdminUser.username == request.username.strip().lower()))).scalar_one_or_none()
-        if user is None and settings.admin_bootstrap_password and request.username.strip().lower() == settings.admin_bootstrap_username.strip().lower():
-            user = AdminUser(username=settings.admin_bootstrap_username.strip().lower(), password_hash=_hash_password(settings.admin_bootstrap_password.get_secret_value()), role="admin")
+        user = (await session.execute(select(AdminUser).where(AdminUser.username == username))).scalar_one_or_none()
+        if (
+            user is None
+            and settings.admin_bootstrap_password
+            and username == settings.admin_bootstrap_username.strip().lower()
+            and int(await session.scalar(select(func.count(AdminUser.id))) or 0) == 0
+        ):
+            # First installation only: the bootstrap password creates the
+            # owner account (identified by the owner e-mail). Once any
+            # account exists this path is closed permanently.
+            user = AdminUser(
+                username=username,
+                email=owner_email(),
+                login_method="both",
+                password_hash=_hash_password(settings.admin_bootstrap_password.get_secret_value()),
+                role="admin",
+            )
             session.add(user)
             await session.flush()
-        if user is not None and not user.active:
+        # Verify the password before revealing the account state, so a
+        # disabled or Google-only account cannot be discovered without it.
+        password_ok = _check_password(request.password, user.password_hash if user is not None else None)
+        if user is None or not password_ok or not password_login_allowed(user):
+            raise HTTPException(status_code=401, detail="invalid credentials")
+        if not user.active:
             # Return a stable machine-readable code. The backoffice translates
             # it into the selected language without exposing account details.
             raise HTTPException(status_code=403, detail="account_disabled")
-        if user is None or not _check_password(request.password, user.password_hash):
-            raise HTTPException(status_code=401, detail="invalid credentials")
-        raw = secrets.token_urlsafe(40)
-        now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(hours=_admin_session_idle_hours())
-        if nightly_reader_expiry:
-            expires_at = min(expires_at, _reader_nightly_expiry(now))
-        # The back-office uses password-only sign-in.  The read-only portal
-        # may still request the optional MFA challenge through its own flow.
-        mfa_required = require_mfa and _mfa_enabled(user)
-        session.add(
-            AdminSession(
-                user_id=user.id,
-                token_hash=hashlib.sha256(raw.encode()).hexdigest(),
-                expires_at=expires_at,
-                mfa_verified=not mfa_required,
-            )
-        )
+        raw = _add_session(session, user, nightly_reader_expiry=nightly_reader_expiry, mfa_required=require_mfa and _mfa_enabled(user))
         await session.commit()
-    await _audit(user.id, "admin.login")
+    await _audit(user.id, "admin.login", details={"method": "password"})
+    return raw, user
+
+
+def _add_session(session, user: AdminUser, *, nightly_reader_expiry: bool = False, mfa_required: bool = False) -> str:
+    """Stage a new server-side session row and return its raw token."""
+    raw = secrets.token_urlsafe(40)
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=_admin_session_idle_hours())
+    if nightly_reader_expiry:
+        expires_at = min(expires_at, _reader_nightly_expiry(now))
+    session.add(
+        AdminSession(
+            user_id=user.id,
+            token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            expires_at=expires_at,
+            mfa_verified=not mfa_required,
+        )
+    )
+    return raw
+
+
+def _cookie_secure() -> bool:
+    return get_settings().admin_cookie_secure or get_settings().environment.strip().lower() == "production"
+
+
+def set_admin_session_cookies(response: Response, raw: str) -> None:
+    # Server-side idle expiry is authoritative. A persistent cookie would
+    # turn this into an absolute timeout, so use a browser-session cookie and
+    # let current_admin enforce the six-hour inactivity boundary.
+    response.set_cookie(COOKIE, raw, httponly=True, secure=_cookie_secure(), samesite="strict", path="/")
+    # The session token stays HttpOnly. The separate, non-sensitive token is
+    # readable by the browser only so the UI can send it in a custom header;
+    # cross-site pages cannot read it and therefore cannot forge mutations.
+    response.set_cookie(CSRF_COOKIE, new_csrf_token(raw, get_settings()), httponly=False, secure=_cookie_secure(), samesite="strict", path="/")
+
+
+def set_reader_session_cookie(response: Response, raw: str) -> None:
+    response.set_cookie(USER_SESSION_COOKIE, raw, httponly=True, secure=_cookie_secure(), samesite="strict", path="/user")
+
+
+async def _unique_username(session, base: str) -> str:
+    base = re.sub(r"[^a-z0-9_.-]+", "", base.lower())[:60] or "user"
+    if len(base) < 3:
+        base = f"{base}-user"
+    candidate = base
+    for _ in range(20):
+        if await session.scalar(select(AdminUser.id).where(AdminUser.username == candidate)) is None:
+            return candidate
+        candidate = f"{base}-{secrets.token_hex(2)}"
+    raise HTTPException(status_code=409, detail="could not allocate a username")
+
+
+async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[str, AdminUser]:
+    """Resolve a verified Google identity against the owner-managed allowlist.
+
+    The owner account is created on the first Google sign-in. Every other
+    address must have been granted by the owner; the first successful sign-in
+    binds the Google subject so a recycled address cannot take the account.
+    """
+    email = normalize_email(identity.email)
+    if not identity.email_verified or not is_gmail(email):
+        raise GoogleAuthError("not_gmail")
+    owner = email == owner_email()
+    async with SessionLocal() as session:
+        user = (await session.execute(select(AdminUser).where(AdminUser.email == email).with_for_update())).scalar_one_or_none()
+        if user is None and owner:
+            user = AdminUser(
+                username=await _unique_username(session, email.split("@", 1)[0]),
+                email=email,
+                login_method="google",
+                password_hash=None,
+                role="admin",
+                active=True,
+            )
+            session.add(user)
+            await session.flush()
+        if user is None or (not owner and user.login_method not in {"google", "both"}):
+            raise GoogleAuthError("not_allowed")
+        if user.google_sub and not hmac.compare_digest(user.google_sub, identity.sub):
+            raise GoogleAuthError("not_allowed", "Google account subject does not match")
+        if owner:
+            # The owner can never be locked out by another administrator.
+            user.active = True
+            if user.login_method == "password":
+                user.login_method = "both"
+        if not user.active:
+            raise GoogleAuthError("inactive")
+        if portal == "user" and not user_portal_access_allowed(user):
+            raise GoogleAuthError("not_allowed", "user portal access denied")
+        user.google_sub = identity.sub
+        raw = _add_session(session, user, nightly_reader_expiry=portal == "user")
+        await session.commit()
+    await _audit(user.id, "admin.login", details={"method": "google", "portal": portal})
     return raw, user
 
 
@@ -1162,14 +1324,7 @@ async def reader_login(request: LoginRequest, response: Response) -> dict[str, o
             )
             await session.commit()
         raise HTTPException(status_code=403, detail="user portal access denied")
-    response.set_cookie(
-        USER_SESSION_COOKIE,
-        raw,
-        httponly=True,
-        secure=get_settings().admin_cookie_secure or get_settings().environment.strip().lower() == "production",
-        samesite="strict",
-        path="/user",
-    )
+    set_reader_session_cookie(response, raw)
     return {"id": str(user.id), "username": user.username, "mfa_required": False, **user_portal_access_payload(user)}
 
 
@@ -1837,8 +1992,7 @@ async def update_support_ticket(ticket_id: uuid.UUID, payload: SupportTicketUpda
                     preferences["global_notifications"] = inbox[:100]
                     target.preferences = preferences
             elif not owner:
-                owner_username = str(getattr(get_settings(), "admin_owner_username", "admin") or "admin").strip().lower()
-                target = (await session.execute(select(AdminUser).where(func.lower(AdminUser.username) == owner_username).with_for_update())).scalar_one_or_none()
+                target = (await session.execute(select(AdminUser).where(AdminUser.email == owner_email()).with_for_update())).scalar_one_or_none()
                 if target is not None and target.id != user.id:
                     preferences = dict(target.preferences or {})
                     inbox = list(preferences.get("global_notifications") or [])
@@ -1924,28 +2078,7 @@ async def add_support_ticket_message(
 
 async def login(request: LoginRequest, response: Response) -> dict[str, object]:
     raw, user = await authenticate(request, require_mfa=False)
-    # Server-side idle expiry is authoritative. A persistent cookie would
-    # turn this into an absolute timeout, so use a browser-session cookie and
-    # let current_admin enforce the six-hour inactivity boundary.
-    response.set_cookie(
-        COOKIE,
-        raw,
-        httponly=True,
-        secure=get_settings().admin_cookie_secure or get_settings().environment.strip().lower() == "production",
-        samesite="strict",
-        path="/",
-    )
-    # The session token stays HttpOnly. The separate, non-sensitive token is
-    # readable by the browser only so the UI can send it in a custom header;
-    # cross-site pages cannot read it and therefore cannot forge mutations.
-    response.set_cookie(
-        CSRF_COOKIE,
-        new_csrf_token(raw, get_settings()),
-        httponly=False,
-        secure=get_settings().admin_cookie_secure or get_settings().environment.strip().lower() == "production",
-        samesite="strict",
-        path="/",
-    )
+    set_admin_session_cookies(response, raw)
     return {
         "id": str(user.id),
         "username": user.username,
@@ -1990,6 +2123,9 @@ async def change_user_password(user_id: uuid.UUID, payload: AdminUserPasswordUpd
     """Allow an administrator to rotate a user's password from the user directory."""
     if not is_owner(user) and user.role not in {"admin", "assistant_admin"}:
         raise HTTPException(status_code=403, detail="project admin role required")
+    if user_id == user.id:
+        # Self-service rotation must prove the current password.
+        raise HTTPException(status_code=422, detail="use the change-password form for your own account")
     async with SessionLocal() as session:
         item = await session.get(AdminUser, user_id, with_for_update=True)
         if item is None or not item.active:
@@ -1997,6 +2133,7 @@ async def change_user_password(user_id: uuid.UUID, payload: AdminUserPasswordUpd
         await _ensure_user_manage_scope(session, user_id, user)
         if is_owner(item) and not is_owner(user):
             raise HTTPException(status_code=403, detail="the owner password can only be changed by the owner")
+        ensure_can_manage_account(user, item)
         item.password_hash = _hash_password(payload.new_password)
         await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         await session.commit()
@@ -2024,7 +2161,7 @@ async def assistants(user: AdminUser) -> dict[str, object]:
     # in the Researcher project selector. This also prevents a newly-created
     # Bee CFO workspace from becoming the default empty media/topics view.
     rows = [row for row in rows if str((row.config or {}).get("product") or "").strip().lower() != "bee_cfo"]
-    return {"count": len(rows), "assistants": [{"id": str(x.id), "slug": x.slug, "name": x.name, "business_name": x.business_name, "description": x.description, "status": x.status, "config": x.config, "deleted_at": x.deleted_at.isoformat() if x.deleted_at else None, "can_delete": (not x.deleted_at) and workspace_delete_allowed(user.role, member_roles.get(x.id), owner=is_owner(user)), "can_restore": bool(x.deleted_at and is_owner(user)), "can_permanent_delete": bool(x.deleted_at and is_owner(user)), "created_at": x.created_at.isoformat(), "updated_at": x.updated_at.isoformat()} for x in rows]}
+    return {"count": len(rows), "assistants": [{"id": str(x.id), "slug": x.slug, "name": x.name, "business_name": x.business_name, "description": x.description, "status": x.status, "config": x.config, "deleted_at": x.deleted_at.isoformat() if x.deleted_at else None, "can_delete": (not x.deleted_at) and workspace_delete_allowed(effective_user_role(user), member_roles.get(x.id), owner=is_owner(user)), "can_restore": bool(x.deleted_at and is_owner(user)), "can_permanent_delete": bool(x.deleted_at and is_owner(user)), "created_at": x.created_at.isoformat(), "updated_at": x.updated_at.isoformat()} for x in rows]}
 
 
 async def assistant_readiness(assistant_id: uuid.UUID, user: AdminUser) -> dict[str, object]:
@@ -2087,7 +2224,7 @@ async def _require_assistant_access(assistant_id: uuid.UUID, user: AdminUser, *,
         member = (await session.execute(select(AssistantMember).where(AssistantMember.assistant_id == assistant_id, AssistantMember.user_id == user.id))).scalar_one_or_none()
         if member is None:
             raise HTTPException(status_code=403, detail="workspace access denied")
-        if write and not workspace_write_allowed(user.role, member.role):
+        if write and not workspace_write_allowed(effective_user_role(user), member.role):
             raise HTTPException(status_code=403, detail="workspace is read-only for this role")
         return assistant
 
@@ -2099,7 +2236,7 @@ async def _require_project_admin(assistant_id: uuid.UUID, user: AdminUser) -> As
         return assistant
     async with SessionLocal() as session:
         member = (await session.execute(select(AssistantMember).where(AssistantMember.assistant_id == assistant_id, AssistantMember.user_id == user.id))).scalar_one_or_none()
-    if not workspace_delete_allowed(user.role, member.role if member else None):
+    if not workspace_delete_allowed(effective_user_role(user), member.role if member else None):
         raise HTTPException(status_code=403, detail="project admin role required")
     return assistant
 
@@ -2231,8 +2368,12 @@ async def list_event_clusters(assistant_id: uuid.UUID, user: AdminUser, *, limit
 def _privacy_defaults(config: dict | None) -> dict[str, object]:
     raw = (config or {}).get("privacy") if isinstance(config, dict) else None
     raw = raw if isinstance(raw, dict) else {}
+    retention_days, retention_source = effective_retention_days(config)
     return {
-        "retention_days": min(max(int(raw.get("retention_days", 90)), 1), 3650),
+        "retention_days": retention_days,
+        "retention_source": retention_source,
+        "default_retention_days": int(get_settings().normalized_retention_days),
+        "min_retention_days": MIN_RETENTION_DAYS,
         "data_region": str(raw.get("data_region") or "unspecified")[:64],
         "export_enabled": bool(raw.get("export_enabled", True)),
     }
@@ -2250,13 +2391,24 @@ async def update_privacy_settings(assistant_id: uuid.UUID, payload: PrivacySetti
         if item is None:
             raise HTTPException(status_code=404, detail="assistant not found")
         config = dict(item.config or {})
-        current = _privacy_defaults(config)
-        current.update(payload.model_dump(exclude_none=True))
-        config["privacy"] = _privacy_defaults({"privacy": current})
+        # Persist only values that were explicitly chosen; an unset
+        # retention keeps following the deployment default.
+        stored = dict(config.get("privacy") or {}) if isinstance(config.get("privacy"), dict) else {}
+        changes = payload.model_dump(exclude_none=True)
+        previous_retention = effective_retention_days(config)[0]
+        stored.update(changes)
+        stored = {key: stored[key] for key in ("retention_days", "data_region", "export_enabled") if key in stored}
+        config["privacy"] = stored
         item.config = config
         await session.commit()
-    await _audit(user.id, "privacy.settings.update", assistant_id=assistant_id, details={"fields": sorted(payload.model_dump(exclude_none=True))})
-    return {"assistant_id": str(assistant_id), **config["privacy"]}
+    effective = _privacy_defaults(config)
+    await _audit(
+        user.id,
+        "privacy.settings.update",
+        assistant_id=assistant_id,
+        details={"fields": sorted(changes), "retention_days_before": previous_retention, "retention_days_after": effective["retention_days"]},
+    )
+    return {"assistant_id": str(assistant_id), **effective}
 
 
 async def export_assistant_data(assistant_id: uuid.UUID, user: AdminUser) -> dict[str, object]:
@@ -2435,6 +2587,28 @@ async def create_assistant(payload: AssistantRequest, user: AdminUser) -> dict[s
 
 _SECRET_CONFIG_KEYS = {"token", "secret", "password", "api_key", "bot_token", "channel_id", "webhook"}
 
+# Workspace configuration keys that the generic project PATCH may change.
+# Everything else (runtime, limits, telegram, sandbox, share_links,
+# notifications, privacy, templates, knowledge, product, ...) belongs to a
+# dedicated endpoint with its own authorization and is left untouched.
+_FREEFORM_CONFIG_KEYS = frozenset({"shortcut_mission", "suggested_sources", "suggested_topics"})
+
+
+def merge_workspace_config(current: dict | None, incoming: object) -> tuple[dict, set[str]]:
+    """Merge only free-form keys; return the new config and ignored keys."""
+    merged = dict(current or {})
+    if not isinstance(incoming, dict):
+        return merged, set()
+    ignored: set[str] = set()
+    for key, value in incoming.items():
+        key = str(key)
+        if key not in _FREEFORM_CONFIG_KEYS:
+            if merged.get(key) != value:
+                ignored.add(key)
+            continue
+        merged[key] = _sanitize_template_config(value)
+    return merged, ignored
+
 
 def _sanitize_template_config(value: object) -> object:
     """Copy workspace configuration without carrying credentials or destinations."""
@@ -2531,13 +2705,15 @@ async def list_assistant_members(assistant_id: uuid.UUID, user: AdminUser) -> di
 
 async def assign_assistant_member(assistant_id: uuid.UUID, payload: AssistantMemberRequest, user: AdminUser) -> dict[str, object]:
     await _require_project_admin(assistant_id, user)
-    if not is_owner(user) and _ROLE_RANK.get(payload.role, 0) >= _ROLE_RANK.get(user.role, 0):
+    if not is_owner(user) and _ROLE_RANK.get(payload.role, 0) >= role_rank(user):
         raise HTTPException(status_code=403, detail="cannot grant a role equal to or higher than your own")
     async with SessionLocal() as session:
         if await session.get(AssistantWorkspace, assistant_id) is None:
             raise HTTPException(status_code=404, detail="assistant not found")
-        if await session.get(AdminUser, payload.user_id) is None:
+        target = await session.get(AdminUser, payload.user_id)
+        if target is None:
             raise HTTPException(status_code=404, detail="user not found")
+        ensure_can_manage_account(user, target)
         member = (await session.execute(select(AssistantMember).where(AssistantMember.assistant_id == assistant_id, AssistantMember.user_id == payload.user_id))).scalar_one_or_none()
         if member is None:
             member = AssistantMember(assistant_id=assistant_id, user_id=payload.user_id, role=payload.role)
@@ -2561,6 +2737,9 @@ async def remove_assistant_member(assistant_id: uuid.UUID, user_id: uuid.UUID, u
         )).scalar_one_or_none()
         if member is None:
             raise HTTPException(status_code=404, detail="workspace membership not found")
+        target = await session.get(AdminUser, user_id)
+        if target is not None:
+            ensure_can_manage_account(user, target)
         await session.delete(member)
         await session.commit()
     await _audit(user.id, "assistant.member.remove", assistant_id=assistant_id, details={"user_id": str(user_id)})
@@ -2576,8 +2755,21 @@ async def update_assistant(assistant_id: uuid.UUID, payload: AssistantUpdate, us
         changes = payload.model_dump(exclude_none=True)
         if "slug" in changes:
             changes["slug"] = str(changes["slug"]).strip().lower()
+        if "config" in changes:
+            # Never replace the stored configuration wholesale: the edit form
+            # round-trips a possibly stale copy, and most keys are governed
+            # by dedicated, separately authorized endpoints.
+            current = dict(item.config or {})
+            merged, ignored = merge_workspace_config(current, changes.pop("config"))
+            changed_keys = sorted(key for key in set(merged) | set(current) if merged.get(key) != current.get(key))
+            if changed_keys:
+                item.config = merged
+                changes["config"] = changed_keys
+            if ignored:
+                changes["config_ignored"] = sorted(ignored)
         for key, value in changes.items():
-            setattr(item, key, value)
+            if key not in {"config", "config_ignored"}:
+                setattr(item, key, value)
         try:
             await session.commit()
         except IntegrityError as exc:
@@ -2677,9 +2869,15 @@ async def update_source(source_id: uuid.UUID, payload: SourceUpdate, user: Admin
                     )
                 )
             ).scalar_one_or_none()
-            if not workspace_write_allowed(user.role, member.role if member else None):
+            if not workspace_write_allowed(effective_user_role(user), member.role if member else None):
                 raise HTTPException(status_code=403, detail="workspace access denied")
         changes = payload.model_dump(exclude_none=True)
+        _validate_source_state(
+            adapter=changes.get("adapter", item.adapter),
+            access_policy=changes.get("access_policy", item.access_policy),
+            credential_ref=changes.get("credential_ref", item.credential_ref),
+            fetch_url=changes.get("fetch_url", item.fetch_url),
+        )
         collection_affecting_fields = {"enabled", "homepage_url", "fetch_url", "adapter", "access_policy", "credential_ref", "account_ref"}
         if collection_affecting_fields.intersection(changes):
             # Give a newly enabled/reconfigured connector one full monitoring
@@ -2695,6 +2893,19 @@ async def update_source(source_id: uuid.UUID, payload: SourceUpdate, user: Admin
         details={"source_id": str(source_id), "fields": sorted(changes)},
     )
     return {"id": str(item.id), "source_key": item.source_key, "enabled": item.enabled, "updated_fields": sorted(changes)}
+
+
+def _validate_source_state(*, adapter: str, access_policy: str, credential_ref: str | None, fetch_url: str) -> None:
+    """Validate the complete (merged) source configuration, not just a patch."""
+    try:
+        validate_public_url_syntax(fetch_url)
+        if adapter.endswith("_private") and access_policy != "private_authenticated":
+            raise ValueError("private connector requires private_authenticated access policy")
+        if adapter.endswith("_public") and access_policy != "public_only":
+            raise ValueError("public connector requires public_only access policy")
+        validate_connector_binding(adapter, credential_ref, fetch_url, get_settings())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
 
 
 def _next_catalog_key(rows: list[str], prefix: str) -> str:
@@ -3676,6 +3887,11 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
             fetch_url = str(draft.get("fetch_url") or "").strip()
             if not homepage or not fetch_url:
                 raise HTTPException(status_code=422, detail="source suggestion needs valid homepage and feed URLs before approval")
+            try:
+                homepage = validate_public_url_syntax(homepage)
+                fetch_url = validate_public_url_syntax(fetch_url)
+            except ValueError:
+                raise HTTPException(status_code=422, detail="source suggestion needs valid homepage and feed URLs before approval") from None
             candidate_name = str(draft.get("name") or suggestion.get("name") or "").strip().casefold()
             existing_sources = (await session.execute(select(Source).where(Source.assistant_id == assistant_id))).scalars().all()
             source_limit = assistant_limits(item.config if item else None)["max_sources"]
@@ -3696,9 +3912,11 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
                 name=str(draft.get("name") or suggestion.get("name") or "منبع جدید").strip(),
                 homepage_url=homepage,
                 fetch_url=fetch_url,
-                adapter=str(draft.get("adapter") or "rss") if str(draft.get("adapter") or "rss") in {"rss", "html", "json", "telegram_public", "telegram_private", "instagram_public", "instagram_private", "x_public", "x_private"} else "rss",
-                access_policy=str(draft.get("access_policy") or "public_only") if str(draft.get("access_policy") or "public_only") in {"public_only", "private_authenticated"} else "public_only",
-                credential_ref=str(draft.get("credential_ref") or "").strip() or None,
+                # A model-drafted suggestion may only become a plain public
+                # feed; credentialed connectors are configured explicitly.
+                adapter=str(draft.get("adapter") or "rss") if str(draft.get("adapter") or "rss") in {"rss", "html", "json", "telegram_public"} else "rss",
+                access_policy="public_only",
+                credential_ref=None,
                 account_ref=str(draft.get("account_ref") or "").strip() or None,
                 language=str(draft.get("language") or "fa")[:16],
                 output_language=(str(draft.get("output_language") or "source") if str(draft.get("output_language") or "source") in OUTPUT_LANGUAGE_CODES else "source"),
@@ -3895,7 +4113,7 @@ async def delete_source(source_id: uuid.UUID, user: AdminUser) -> dict[str, str]
                     )
                 )
             ).scalar_one_or_none()
-            if not workspace_write_allowed(user.role, member.role if member else None):
+            if not workspace_write_allowed(effective_user_role(user), member.role if member else None):
                 raise HTTPException(status_code=403, detail="workspace access denied")
         assistant_id = item.assistant_id
         source_key = item.source_key
@@ -3921,7 +4139,7 @@ async def update_topic(topic_id: uuid.UUID, payload: TopicUpdate, user: AdminUse
                     )
                 )
             ).scalar_one_or_none()
-            if not workspace_write_allowed(user.role, member.role if member else None):
+            if not workspace_write_allowed(effective_user_role(user), member.role if member else None):
                 raise HTTPException(status_code=403, detail="workspace access denied")
         changes = payload.model_dump(exclude_none=True)
         for key, value in changes.items(): setattr(item, key, value)
@@ -4026,7 +4244,7 @@ async def delete_topic(topic_id: uuid.UUID, user: AdminUser) -> dict[str, str]:
                     )
                 )
             ).scalar_one_or_none()
-            if not workspace_write_allowed(user.role, member.role if member else None):
+            if not workspace_write_allowed(effective_user_role(user), member.role if member else None):
                 raise HTTPException(status_code=403, detail="workspace access denied")
         assistant_id = item.assistant_id
         topic_key = item.topic_key
@@ -4203,6 +4421,10 @@ async def create_business_profile(assistant_id: uuid.UUID, payload: BusinessProf
 async def list_topics(user: AdminUser, assistant_id: uuid.UUID | None = None) -> dict[str, object]:
     if assistant_id is not None:
         await _require_assistant_access(assistant_id, user)
+    elif not is_global_admin(user):
+        # Without a workspace filter the query spans every tenant; only the
+        # owner may read that cross-workspace view.
+        raise HTTPException(status_code=403, detail="assistant_id is required")
     async with SessionLocal() as session:
         statement = select(Topic).order_by(Topic.display_order.asc(), Topic.topic_key)
         if assistant_id is not None:
@@ -4270,11 +4492,10 @@ async def update_business_knowledge(assistant_id: uuid.UUID, payload: BusinessKn
         if previous:
             history.append({"revision": _safe_int_value(previous.get("revision")), "updated_at": previous.get("updated_at"), "knowledge": _clean_knowledge(dict(previous))})
         knowledge = {**incoming, "revision": _safe_int_value(previous.get("revision")) + 1, "updated_at": now, "history": history[-10:]}
-        config["business_knowledge"] = knowledge
-        sanitized_config = _sanitize_template_config(config)
-        if not isinstance(sanitized_config, dict):
-            raise RuntimeError("sanitized business knowledge configuration is not an object")
-        item.config = sanitized_config
+        # Sanitize only the knowledge document. Sanitizing the whole config
+        # used to strip Telegram channel IDs and share-link token hashes.
+        config["business_knowledge"] = _sanitize_template_config(knowledge)
+        item.config = config
         await session.commit()
     await _audit(user.id, "business_knowledge.update", assistant_id=assistant_id, details={"revision": knowledge["revision"]})
     return {"assistant_id": str(assistant_id), "revision": knowledge["revision"], "updated_at": now, "knowledge": incoming}
@@ -4666,8 +4887,7 @@ async def _queue_limit_notifications(session, assistant: AssistantWorkspace, use
     if not notifications:
         return notifications
     recipients = set((await session.scalars(select(AssistantMember.user_id).where(AssistantMember.assistant_id == assistant.id))).all())
-    owner_username = str(getattr(get_settings(), "admin_owner_username", "admin") or "admin").strip().lower()
-    owner_id = await session.scalar(select(AdminUser.id).where(AdminUser.username == owner_username))
+    owner_id = await session.scalar(select(AdminUser.id).where(AdminUser.email == owner_email()))
     if owner_id:
         recipients.add(owner_id)
     config = dict(assistant.config or {})
@@ -5014,7 +5234,7 @@ async def list_admin_users(user: AdminUser) -> dict[str, object]:
         and (x.id == user.id or by_user.get(x.id))
     ]
     unique_rows = _dedupe_admin_rows(visible_rows, current_user_id=user.id, project_access=by_user)
-    return {"count": len(unique_rows), "users": [{"id": str(x.id), "username": x.username, "role": effective_user_role(x), "stored_role": x.role, "is_owner": is_owner(x), "active": x.active, "created_at": x.created_at.isoformat(), "project_access": by_user.get(x.id, []), **user_portal_access_payload(x), "can_manage_user_portal": (is_owner(user) or user.role == "admin") and can_view_admin_user(user, x)} for x in unique_rows]}
+    return {"count": len(unique_rows), "users": [{"id": str(x.id), "username": x.username, "role": effective_user_role(x), "stored_role": x.role, "is_owner": is_owner(x), "active": x.active, "login_method": x.login_method, "email": x.email if is_owner(user) else None, "can_manage": x.id != user.id and (is_owner(user) or (not is_owner(x) and role_rank(x) < role_rank(user))), "created_at": x.created_at.isoformat(), "project_access": by_user.get(x.id, []), **user_portal_access_payload(x), "can_manage_user_portal": (is_owner(user) or user.role == "admin") and can_view_admin_user(user, x)} for x in unique_rows]}
 
 
 def _dedupe_admin_rows(
@@ -5072,6 +5292,7 @@ async def update_user_portal_access(
             raise HTTPException(status_code=404, detail="admin user not found")
         if not can_view_admin_user(user, item):
             raise HTTPException(status_code=403, detail="user is outside your account scope")
+        ensure_can_manage_account(user, item)
         scope = await _ensure_user_manage_scope(session, user_id, user)
         if scope is not None and user_id != user.id:
             # _ensure_user_manage_scope already checked shared project access;
@@ -5162,9 +5383,11 @@ async def update_admin_user(user_id: uuid.UUID, payload: AdminUserUpdate, user: 
         await _ensure_user_manage_scope(session, user_id, user)
         if is_owner(item) and not is_owner(user):
             raise HTTPException(status_code=403, detail="the owner account cannot be changed")
-        if payload.role == "owner" and not is_owner(user):
-            raise HTTPException(status_code=403, detail="only the owner can assign the owner role")
-        if not is_owner(user) and payload.role is not None and _ROLE_RANK.get(payload.role, 0) >= _ROLE_RANK.get(effective_user_role(user), 0):
+        # Rank is checked against the target's *current* role as well as
+        # the requested one: a lower role can never reset, rename, disable
+        # or re-role a peer or superior.
+        ensure_can_manage_account(user, item)
+        if not is_owner(user) and payload.role is not None and _ROLE_RANK.get(payload.role, 0) >= role_rank(user):
             raise HTTPException(status_code=403, detail="cannot grant a role equal to or higher than your own")
         changes = payload.model_dump(exclude_none=True)
         portal_enabled = changes.pop("user_portal_access", None)
@@ -5185,10 +5408,10 @@ async def update_admin_user(user_id: uuid.UUID, payload: AdminUserUpdate, user: 
             item.preferences = preferences
         if "username" in changes:
             changes["username"] = changes["username"].strip().lower()
+        if is_owner(item) and changes.get("active") is False:
+            raise HTTPException(status_code=422, detail="the owner account cannot be deactivated")
         for key, value in changes.items():
             setattr(item, key, value)
-        if is_owner(item):
-            item.role = "owner"
         try:
             await session.commit()
         except Exception as exc:
@@ -5213,11 +5436,14 @@ async def manage_admin_user(user_id: uuid.UUID, payload: AdminUserManageUpdate, 
         target_is_owner = is_owner(item)
         if target_is_owner and not is_owner(user):
             raise HTTPException(status_code=403, detail="the owner account cannot be changed")
-        if user_id == user.id and (payload.active is False or payload.role not in (None, "owner", "admin")):
+        if user_id == user.id and (payload.active is False or payload.role not in (None, "admin")):
             raise HTTPException(status_code=422, detail="the current owner/admin account cannot be deactivated or demoted")
-        if payload.role == "owner" and not is_owner(user):
-            raise HTTPException(status_code=403, detail="only the owner can assign the owner role")
-        if not is_owner(user) and payload.role is not None and _ROLE_RANK.get(payload.role, 0) >= _ROLE_RANK.get(effective_user_role(user), 0):
+        if target_is_owner and payload.active is False:
+            raise HTTPException(status_code=422, detail="the owner account cannot be deactivated")
+        # Checked against the target's current role, not only the requested
+        # one, so a lower role can never reset or disable a superior.
+        ensure_can_manage_account(user, item)
+        if not is_owner(user) and payload.role is not None and _ROLE_RANK.get(payload.role, 0) >= role_rank(user):
             raise HTTPException(status_code=403, detail="cannot grant a role equal to or higher than your own")
         if payload.new_password is not None:
             if user_id == user.id:
@@ -5225,25 +5451,15 @@ async def manage_admin_user(user_id: uuid.UUID, payload: AdminUserManageUpdate, 
                     raise HTTPException(status_code=401, detail="current password is incorrect")
                 if payload.current_password == payload.new_password:
                     raise HTTPException(status_code=422, detail="new password must differ from current password")
-            elif scope is None:
-                pass
-            elif user_id != user.id:
-                # The target was checked against the administrator's project
-                # scope above; project admins may manage credentials there.
-                pass
             item.password_hash = _hash_password(payload.new_password)
             await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         changes = payload.model_dump(exclude_none=True, exclude={"new_password", "current_password", "assistant_ids", "user_portal_access", "user_feedback_access"})
         if "username" in changes:
             changes["username"] = changes["username"].strip().lower()
-        if target_is_owner and "role" in changes and changes["role"] != "owner":
-            raise HTTPException(status_code=403, detail="the owner role cannot be changed")
         for key, value in changes.items():
             setattr(item, key, value)
-        if target_is_owner:
-            # The owner identity must survive a username edit; otherwise the
-            # configured-name fallback could silently demote the owner.
-            item.role = "owner"
+        # Ownership follows the owner e-mail, so a username or stored-role
+        # edit can neither demote the owner nor promote anybody else.
         effective_role = changes.get("role", "owner" if target_is_owner else item.role)
         if payload.user_portal_access is not None or payload.user_feedback_access is not None:
             if not (is_owner(user) or user.role == "admin"):
@@ -5363,6 +5579,9 @@ async def revoke_session(session_id: uuid.UUID, user: AdminUser, current_token: 
         if item is None:
             raise HTTPException(status_code=404, detail="session not found")
         await _ensure_user_manage_scope(session, item.user_id, user)
+        target = await session.get(AdminUser, item.user_id)
+        if target is not None:
+            ensure_can_manage_account(user, target)
         if current_hash and hmac.compare_digest(item.token_hash, current_hash):
             raise HTTPException(status_code=422, detail="current session cannot be revoked here")
         await session.delete(item)
@@ -5389,3 +5608,189 @@ async def revoke_other_sessions(user: AdminUser, current_token: str | None) -> d
     count = len(rows)
     await _audit(user.id, "admin.session.revoke_others", details={"count": count})
     return {"status": "sessions_revoked", "count": count}
+
+
+class GoogleAccessGrant(BaseModel):
+    """Owner-managed Gmail allowlist entry."""
+
+    email: str = Field(min_length=6, max_length=320)
+    # Attach the address to an existing account instead of creating one.
+    user_id: uuid.UUID | None = None
+    username: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_.-]{3,128}$")
+    role: Literal["admin", "editor", "viewer", "assistant_admin", "analyst"] = "viewer"
+    login_method: Literal["google", "both"] = "google"
+    password: str | None = Field(default=None, min_length=12, max_length=256)
+    assistant_ids: list[uuid.UUID] | None = None
+
+
+class GoogleAccessUpdate(BaseModel):
+    login_method: Literal["google", "both"] | None = None
+    active: bool | None = None
+    role: Literal["admin", "editor", "viewer", "assistant_admin", "analyst"] | None = None
+    password: str | None = Field(default=None, min_length=12, max_length=256)
+
+
+def _require_owner(user: AdminUser) -> None:
+    if not is_owner(user):
+        raise HTTPException(status_code=403, detail="owner role required")
+
+
+def _google_access_payload(item: AdminUser) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "username": item.username,
+        "email": item.email,
+        "login_method": item.login_method,
+        "role": effective_user_role(item),
+        "active": item.active,
+        "is_owner": is_owner(item),
+        "linked": bool(item.google_sub),
+        "has_password": bool(item.password_hash),
+    }
+
+
+def _validated_gmail(value: str) -> str:
+    email = normalize_email(value)
+    if not is_gmail(email):
+        raise HTTPException(status_code=422, detail="only @gmail.com addresses can use Google sign-in")
+    return email
+
+
+async def list_google_access(user: AdminUser) -> dict[str, object]:
+    _require_owner(user)
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(AdminUser).where(AdminUser.email.is_not(None)).order_by(AdminUser.created_at))).scalars().all()
+    return {
+        "google_login_configured": get_settings().google_login_ready,
+        "owner_email": owner_email(),
+        "count": len(rows),
+        "accounts": [_google_access_payload(row) for row in rows],
+    }
+
+
+async def grant_google_access(payload: GoogleAccessGrant, user: AdminUser) -> dict[str, object]:
+    _require_owner(user)
+    email = _validated_gmail(payload.email)
+    if email == owner_email():
+        raise HTTPException(status_code=422, detail="the owner address is reserved for the owner account")
+    async with SessionLocal() as session:
+        if await session.scalar(select(AdminUser.id).where(AdminUser.email == email)) is not None:
+            raise HTTPException(status_code=409, detail="this Gmail address already has access")
+        if payload.user_id is not None:
+            item = await session.get(AdminUser, payload.user_id, with_for_update=True)
+            if item is None:
+                raise HTTPException(status_code=404, detail="admin user not found")
+            if is_owner(item):
+                raise HTTPException(status_code=422, detail="the owner account is managed automatically")
+            if item.email:
+                raise HTTPException(status_code=409, detail="this account already has a Gmail address")
+        else:
+            username = (payload.username or "").strip().lower() or await _unique_username(session, email.split("@", 1)[0])
+            item = AdminUser(username=username, role=payload.role, active=True, password_hash=None)
+            session.add(item)
+        if payload.login_method == "both" and not (item.password_hash or payload.password):
+            raise HTTPException(status_code=422, detail="a password is required for Gmail + password sign-in")
+        if payload.login_method == "google":
+            item.password_hash = None
+        elif payload.password:
+            item.password_hash = _hash_password(payload.password)
+        item.email = email
+        item.google_sub = None
+        item.login_method = payload.login_method
+        await session.flush()
+        if payload.assistant_ids:
+            selected = set(payload.assistant_ids)
+            found = (await session.execute(select(AssistantWorkspace.id).where(AssistantWorkspace.id.in_(selected)))).scalars().all()
+            if len(found) != len(selected):
+                raise HTTPException(status_code=404, detail="one or more selected projects do not exist")
+            existing = set((await session.execute(select(AssistantMember.assistant_id).where(AssistantMember.user_id == item.id))).scalars().all())
+            member_role = "admin" if item.role in {"admin", "assistant_admin"} else "editor" if item.role == "editor" else "viewer"
+            for assistant_id in selected - existing:
+                session.add(AssistantMember(assistant_id=assistant_id, user_id=item.id, role=member_role))
+        # The sign-in contract changed: close every existing session.
+        await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == item.id))
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise HTTPException(status_code=409, detail="username or Gmail address already exists") from exc
+    await _audit(user.id, "google_access.grant", details={"user_id": str(item.id), "login_method": item.login_method})
+    return _google_access_payload(item)
+
+
+async def update_google_access(user_id: uuid.UUID, payload: GoogleAccessUpdate, user: AdminUser) -> dict[str, object]:
+    _require_owner(user)
+    async with SessionLocal() as session:
+        item = await session.get(AdminUser, user_id, with_for_update=True)
+        if item is None or not item.email:
+            raise HTTPException(status_code=404, detail="Gmail access not found")
+        if is_owner(item) and (payload.active is False or payload.role is not None):
+            raise HTTPException(status_code=422, detail="the owner account cannot be disabled or re-roled")
+        method = payload.login_method or item.login_method
+        if method == "both" and not (item.password_hash or payload.password):
+            raise HTTPException(status_code=422, detail="a password is required for Gmail + password sign-in")
+        revoke_sessions = False
+        if payload.login_method == "google" and item.password_hash:
+            item.password_hash = None
+            revoke_sessions = True
+        if payload.password and method == "both":
+            item.password_hash = _hash_password(payload.password)
+            revoke_sessions = True
+        if payload.login_method:
+            item.login_method = payload.login_method
+        if payload.role is not None:
+            item.role = payload.role
+        if payload.active is not None:
+            item.active = payload.active
+            revoke_sessions = revoke_sessions or payload.active is False
+        if revoke_sessions:
+            await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == item.id))
+        await session.commit()
+    await _audit(user.id, "google_access.update", details={"user_id": str(user_id), "fields": sorted(payload.model_dump(exclude_none=True, exclude={"password"}))})
+    return _google_access_payload(item)
+
+
+async def revoke_google_access(user_id: uuid.UUID, user: AdminUser) -> dict[str, object]:
+    _require_owner(user)
+    async with SessionLocal() as session:
+        item = await session.get(AdminUser, user_id, with_for_update=True)
+        if item is None or not item.email:
+            raise HTTPException(status_code=404, detail="Gmail access not found")
+        if is_owner(item):
+            raise HTTPException(status_code=422, detail="the owner Gmail access cannot be removed")
+        item.email = None
+        item.google_sub = None
+        item.login_method = "password"
+        if not item.password_hash:
+            # Without a password the account has no remaining sign-in path.
+            item.active = False
+        await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == item.id))
+        await session.commit()
+    await _audit(user.id, "google_access.revoke", details={"user_id": str(user_id)})
+    return {"id": str(user_id), "status": "revoked", "active": item.active}
+
+
+async def record_admin_feedback(analysis_id: uuid.UUID, *, value: str, note: str | None, actor_key: str | None, user: AdminUser) -> dict[str, object]:
+    """Authenticated HTTP feedback: the actor is always the signed-in account.
+
+    The analysis must belong to a workspace the account can access, and the
+    workspace feedback allowlist is still enforced by ``record_feedback``.
+    """
+    from app.pipeline_service import record_feedback
+
+    actor = str(user.username or "").strip().lower()
+    requested = str(actor_key or "").strip().lower().lstrip("@")
+    if requested and requested != actor:
+        raise HTTPException(status_code=403, detail="feedback can only be recorded as the signed-in account")
+    async with SessionLocal() as session:
+        workspace_id = await session.scalar(select(ArticleAnalysis.assistant_id).where(ArticleAnalysis.id == analysis_id))
+    if workspace_id is None:
+        raise HTTPException(status_code=404, detail="analysis not found")
+    await _require_assistant_access(workspace_id, user)
+    try:
+        result = await record_feedback(analysis_id, actor_key=actor, value=value, note=note, source="api")
+    except ValueError as exc:
+        status = 403 if str(exc) == "feedback actor is not authorized" else 422
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    await _audit(user.id, "feedback.record", assistant_id=workspace_id, details={"analysis_id": str(analysis_id), "value": value})
+    return result

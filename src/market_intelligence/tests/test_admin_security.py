@@ -121,7 +121,7 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
             expires_at=now + timedelta(hours=2),
         )
         reader = SimpleNamespace(
-            id=uuid.uuid4(), username="owner-account", role="owner", active=True,
+            id=uuid.uuid4(), username="owner-account", email="owner@gmail.com", role="admin", active=True,
             preferences={},
         )
 
@@ -148,7 +148,7 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
 
         settings = SimpleNamespace(
             timezone="Europe/Berlin",
-            admin_owner_username="owner-account",
+            owner_email="owner@gmail.com",
             admin_session_ttl_hours=6,
         )
         with (
@@ -217,12 +217,12 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
             async def __aexit__(self, *_args):
                 return None
 
-        owner = SimpleNamespace(username="owner-account", role="owner", id=uuid.uuid4())
+        owner = SimpleNamespace(username="owner-account", email="owner@gmail.com", role="admin", id=uuid.uuid4())
         with (
             patch("app.admin.list_admin_notifications", new=AsyncMock(return_value={"notifications": []})),
             patch("app.admin._visible_project_scope_ids", new=AsyncMock(return_value=None)),
             patch("app.admin.SessionLocal", return_value=SessionContext()),
-            patch("app.admin.get_settings", return_value=SimpleNamespace(admin_owner_username="owner-account")),
+            patch("app.admin.get_settings", return_value=SimpleNamespace(owner_email="owner@gmail.com")),
         ):
             response = asyncio.run(list_admin_incidents(owner))
         freshness = {item["assistant_name"]: item for item in response["incidents"]}
@@ -259,20 +259,20 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
         self.assertFalse(workspace_write_allowed("viewer", "viewer"))
 
     def test_lower_role_cannot_view_owner_account(self):
-        owner = SimpleNamespace(id=uuid.uuid4(), username="owner-account", role="owner")
+        owner = SimpleNamespace(id=uuid.uuid4(), username="owner-account", email="owner@gmail.com", role="admin")
         admin = SimpleNamespace(id=uuid.uuid4(), username="project-admin", role="admin")
-        with patch("app.admin.get_settings", return_value=SimpleNamespace(admin_owner_username="owner-account")):
+        with patch("app.admin.get_settings", return_value=SimpleNamespace(owner_email="owner@gmail.com")):
             self.assertFalse(can_view_admin_user(admin, owner))
             self.assertTrue(can_view_admin_user(admin, admin))
             self.assertTrue(can_view_admin_user(owner, admin))
 
     def test_higher_roles_can_view_lower_roles_but_not_the_reverse(self):
-        owner = SimpleNamespace(id=uuid.uuid4(), username="owner-account", role="owner")
+        owner = SimpleNamespace(id=uuid.uuid4(), username="owner-account", email="owner@gmail.com", role="admin")
         admin = SimpleNamespace(id=uuid.uuid4(), username="project-admin", role="admin")
         editor = SimpleNamespace(id=uuid.uuid4(), username="editor", role="editor")
         viewer = SimpleNamespace(id=uuid.uuid4(), username="viewer", role="viewer")
 
-        with patch("app.admin.get_settings", return_value=SimpleNamespace(admin_owner_username="owner-account")):
+        with patch("app.admin.get_settings", return_value=SimpleNamespace(owner_email="owner@gmail.com")):
             self.assertTrue(can_view_admin_user(owner, admin))
             self.assertTrue(can_view_admin_user(admin, editor))
             self.assertTrue(can_view_admin_user(editor, viewer))
@@ -306,9 +306,9 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
         self.assertFalse(can_view_admin_user(editor, project_admin))
 
     def test_configured_owner_uses_effective_role_for_visibility(self):
-        configured_owner = SimpleNamespace(id=uuid.uuid4(), username="configured-owner", role="admin")
+        configured_owner = SimpleNamespace(id=uuid.uuid4(), username="configured-owner", email="configuredowner@gmail.com", role="admin")
         lower = SimpleNamespace(id=uuid.uuid4(), username="lower", role="viewer")
-        with patch("app.admin.get_settings", return_value=SimpleNamespace(admin_owner_username="configured-owner")):
+        with patch("app.admin.get_settings", return_value=SimpleNamespace(owner_email="configured.owner@gmail.com")):
             self.assertTrue(can_view_admin_user(configured_owner, lower))
             self.assertFalse(can_view_admin_user(lower, configured_owner))
 
@@ -370,10 +370,10 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
         self.assertEqual([selected], managed.assistant_ids)
 
     def test_user_portal_access_defaults_and_explicit_feedback_grant(self):
-        owner = SimpleNamespace(id=uuid.uuid4(), username="owner-account", role="owner", preferences={})
+        owner = SimpleNamespace(id=uuid.uuid4(), username="owner-account", email="owner@gmail.com", role="admin", preferences={})
         viewer = SimpleNamespace(id=uuid.uuid4(), username="viewer", role="viewer", preferences={})
         granted = SimpleNamespace(id=uuid.uuid4(), username="viewer", role="viewer", preferences={"user_portal_access": {"enabled": True, "feedback_enabled": True}})
-        with patch("app.admin.get_settings", return_value=SimpleNamespace(admin_owner_username="owner-account")):
+        with patch("app.admin.get_settings", return_value=SimpleNamespace(owner_email="owner@gmail.com")):
             self.assertTrue(user_portal_access_allowed(owner))
             self.assertFalse(user_feedback_access_allowed(owner))
             self.assertFalse(user_portal_access_allowed(viewer))

@@ -81,11 +81,24 @@ class AssistantWorkspace(Base):
 
 class AdminUser(Base):
     __tablename__ = "admin_users"
-    __table_args__ = (UniqueConstraint("username", name="uq_mi_admin_users_username"),)
+    __table_args__ = (
+        UniqueConstraint("username", name="uq_mi_admin_users_username"),
+        UniqueConstraint("email", name="uq_mi_admin_users_email"),
+        UniqueConstraint("google_sub", name="uq_mi_admin_users_google_sub"),
+        CheckConstraint("login_method IN ('password', 'google', 'both')", name="admin_users_login_method"),
+        CheckConstraint("role IN ('admin', 'assistant_admin', 'editor', 'analyst', 'viewer')", name="admin_users_role"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(128), nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
+    # Normalized Gmail address (see app.google_auth.normalize_gmail). Only the
+    # owner can attach an address; the owner is the account whose address
+    # equals Settings.owner_email.
+    email: Mapped[str | None] = mapped_column(String(320))
+    google_sub: Mapped[str | None] = mapped_column(String(255))
+    login_method: Mapped[str] = mapped_column(String(16), nullable=False, default="password", server_default="password")
+    # Empty for Google-only accounts.
+    password_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default="admin")
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     preferences: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
@@ -632,7 +645,7 @@ class Publication(Base):
     __tablename__ = "publications"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('preview', 'published', 'edited', 'deleted', 'failed')",
+            "status IN ('preview', 'publishing', 'published', 'edited', 'deleted', 'failed', 'archived', 'rejected')",
             name="publications_status",
         ),
         UniqueConstraint("idempotency_key", name="uq_mi_publications_idempotency_key"),

@@ -139,9 +139,9 @@ class PipelineWorkspaceScopeTest(unittest.TestCase):
         self.assertIn("assistant_id=analysis.assistant_id", previews)
 
     def test_new_workspace_bootstrap_is_handled_before_normal_slots(self):
-        from app.runtime import scheduler_tick  # noqa: E402
+        from app.runtime import _tick_assistant, scheduler_tick  # noqa: E402
 
-        source = inspect.getsource(scheduler_tick)
+        source = (inspect.getsource(scheduler_tick) + inspect.getsource(_tick_assistant))
         self.assertIn('runtime.get("bootstrap_pending")', source)
         self.assertIn('force_ingestion=True', source)
         self.assertIn('bootstrap_pending"] = False', source)
@@ -154,7 +154,7 @@ class PipelineWorkspaceScopeTest(unittest.TestCase):
 
     def test_hourly_collection_is_separate_from_publication_slots(self):
         from app.pipeline_service import analyze_pending_articles, create_publication_previews, publish_ready_previews
-        from app.runtime import scheduler_tick
+        from app.runtime import _tick_assistant, scheduler_tick
 
         self.assertEqual(
             datetime(2026, 8, 10, 8, 30, tzinfo=timezone.utc),
@@ -163,8 +163,8 @@ class PipelineWorkspaceScopeTest(unittest.TestCase):
         self.assertIn("REVIEW_MARGIN", inspect.getsource(analyze_pending_articles))
         self.assertIn('"review_only"', inspect.getsource(create_publication_previews))
         self.assertIn('"review_only"', inspect.getsource(publish_ready_previews))
-        self.assertIn("hourly_processing_slot", inspect.getsource(scheduler_tick))
-        self.assertIn("publish=False", inspect.getsource(scheduler_tick))
+        self.assertIn("hourly_processing_slot", (inspect.getsource(scheduler_tick) + inspect.getsource(_tick_assistant)))
+        self.assertIn("publish=False", (inspect.getsource(scheduler_tick) + inspect.getsource(_tick_assistant)))
 
 
 class RelevanceTest(unittest.TestCase):
@@ -520,7 +520,7 @@ class DeliveryAndSchedulerTest(unittest.TestCase):
         self.assertEqual(1, len(active))
 
     def test_scheduled_delivery_is_claimed_and_windowed(self):
-        source = inspect.getsource(__import__("app.runtime", fromlist=["scheduler_tick"]).scheduler_tick)
+        source = (inspect.getsource(__import__("app.runtime", fromlist=["scheduler_tick"]).scheduler_tick) + inspect.getsource(__import__("app.runtime", fromlist=["_tick_assistant"])._tick_assistant))
         self.assertIn("scheduled-publication:", source)
         self.assertIn("collection_analysis", source)
         self.assertIn("created_after=collection_anchor", source)
