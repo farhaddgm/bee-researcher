@@ -5708,7 +5708,7 @@ async def grant_google_access(payload: GoogleAccessGrant, user: AdminUser) -> di
             for assistant_id in selected - existing:
                 session.add(AssistantMember(assistant_id=assistant_id, user_id=item.id, role=member_role))
         # The sign-in contract changed: close every existing session.
-        await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == item.id))
+        await session.execute(delete(AdminSession).where(AdminSession.user_id == item.id))
         try:
             await session.commit()
         except IntegrityError as exc:
@@ -5744,7 +5744,7 @@ async def update_google_access(user_id: uuid.UUID, payload: GoogleAccessUpdate, 
             item.active = payload.active
             revoke_sessions = revoke_sessions or payload.active is False
         if revoke_sessions:
-            await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == item.id))
+            await session.execute(delete(AdminSession).where(AdminSession.user_id == item.id))
         await session.commit()
     await _audit(user.id, "google_access.update", details={"user_id": str(user_id), "fields": sorted(payload.model_dump(exclude_none=True, exclude={"password"}))})
     return _google_access_payload(item)
@@ -5764,7 +5764,7 @@ async def revoke_google_access(user_id: uuid.UUID, user: AdminUser) -> dict[str,
         if not item.password_hash:
             # Without a password the account has no remaining sign-in path.
             item.active = False
-        await session.execute(AdminSession.__table__.delete().where(AdminSession.user_id == item.id))
+        await session.execute(delete(AdminSession).where(AdminSession.user_id == item.id))
         await session.commit()
     await _audit(user.id, "google_access.revoke", details={"user_id": str(user_id)})
     return {"id": str(user_id), "status": "revoked", "active": item.active}

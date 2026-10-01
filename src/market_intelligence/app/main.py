@@ -2130,7 +2130,7 @@ async def feedback_ranking_rollback(token: str | None = Cookie(default=None, ali
 
 
 @app.post("/retention/run")
-async def retention_run(token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, int]:
+async def retention_run(token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     if not is_owner(await current_admin(token)):
         raise HTTPException(status_code=403, detail="owner role required")
     return await apply_retention(settings)

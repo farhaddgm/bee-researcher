@@ -1572,7 +1572,7 @@ async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: b
     action (``allow_stale_claim``) may retry it after 15 minutes.
     """
     settings = get_settings()
-    observer_message_context: Row[tuple[ArticleAnalysis, NormalizedArticle, Source]] | None = None
+    observer_message_context: tuple[ArticleAnalysis, NormalizedArticle, Source] | None = None
     image_url: str | None = None
     sandbox_enabled = False
     async with SessionLocal() as session:
@@ -1611,7 +1611,7 @@ async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: b
             raise RuntimeError("publication requires final approval before delivery")
         message_text = publication.message_text
         image_url = str((publication.telegram_payload or {}).get("image_url") or "").strip() or None
-        observer_message_context = (
+        observer_row = (
             await session.execute(
                 select(ArticleAnalysis, NormalizedArticle, Source)
                 .join(NormalizedArticle, NormalizedArticle.id == ArticleAnalysis.article_id)
@@ -1620,6 +1620,8 @@ async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: b
                 .where(ArticleAnalysis.id == analysis_id)
             )
         ).one_or_none()
+        if observer_row is not None:
+            observer_message_context = (observer_row[0], observer_row[1], observer_row[2])
         # Claim before releasing the row lock: from here on no other caller
         # can start a second send of this publication.
         publication.status = "publishing"

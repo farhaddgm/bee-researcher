@@ -185,6 +185,8 @@ async def finish_flow(
     if not re.fullmatch(r"[\x21-\x7e]{1,2048}", code):
         raise GoogleAuthError("failed", "malformed authorization code")
     secret = settings.google_client_secret
+    if secret is None:
+        raise GoogleAuthError("not_configured")
     client_secret = secret.get_secret_value() if hasattr(secret, "get_secret_value") else str(secret)
     async with httpx.AsyncClient(timeout=httpx.Timeout(15), transport=transport, follow_redirects=False) as client:
         try:
