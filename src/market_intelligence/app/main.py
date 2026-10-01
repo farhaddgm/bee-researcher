@@ -1035,6 +1035,11 @@ def _google_login_error(portal: str, code: str) -> RedirectResponse:
 @app.get("/auth/google/start", include_in_schema=False)
 async def google_login_start(request: Request, portal: str = Query(default="admin", pattern="^(admin|user)$")) -> RedirectResponse:
     """Browser navigation target: redirect to Google's account chooser."""
+    # The flow cookie must be set on the host Google redirects back to.
+    # Start on that canonical host (e.g. from the legacy domain) first.
+    callback = urlsplit(settings.google_redirect_uri or "")
+    if callback.hostname and (request.url.hostname or "").lower() != callback.hostname.lower():
+        return RedirectResponse(url=f"{callback.scheme}://{callback.netloc}/auth/google/start?portal={portal}", status_code=302)
     try:
         if await login_ip_attempts_exceeded(settings, _login_client_address(request)):
             raise google_auth.GoogleAuthError("rate_limited")

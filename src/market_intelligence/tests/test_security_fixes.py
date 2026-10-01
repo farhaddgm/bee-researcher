@@ -226,6 +226,15 @@ class RouteTest(unittest.TestCase):
     def test_providers_endpoint_reports_google_configuration(self):
         self.assertEqual({"google": False}, TestClient(app).get("/auth/providers").json())
 
+    def test_google_start_moves_to_the_callback_host_first(self):
+        from app import main as main_module
+
+        configured = main_module.settings.model_copy(update={"google_redirect_uri": "https://researcher.example.com/auth/google/callback"})
+        with patch.object(main_module, "settings", configured):
+            response = TestClient(app, base_url="http://legacy.example.com").get("/auth/google/start?portal=user", follow_redirects=False)
+        self.assertEqual(302, response.status_code)
+        self.assertEqual("https://researcher.example.com/auth/google/start?portal=user", response.headers["location"])
+
     def test_hidden_password_page_enables_password_mode(self):
         body = TestClient(app).get("/admin/login-up").text
         self.assertIn('data-login-mode="password"', body)
