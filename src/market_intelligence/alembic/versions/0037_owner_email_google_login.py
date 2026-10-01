@@ -118,6 +118,12 @@ def downgrade() -> None:
         "admin_users_login_method",
         "ck_mi_admin_users_login_method",
     )
+    # Restore the legacy ownership marker before the e-mail column goes, so
+    # the previous release (and a later re-upgrade) find the same owner row.
+    owner_email = _normalize_email(os.environ.get("MARKET_INTELLIGENCE_OWNER_EMAIL") or "farhad.dgm@gmail.com")
+    op.execute(
+        sa.text(f"UPDATE {SCHEMA}.admin_users SET role = 'owner' WHERE email = :email").bindparams(email=owner_email)
+    )
     op.drop_constraint("uq_mi_admin_users_google_sub", "admin_users", schema=SCHEMA, type_="unique")
     op.drop_constraint("uq_mi_admin_users_email", "admin_users", schema=SCHEMA, type_="unique")
     op.execute(f"UPDATE {SCHEMA}.admin_users SET password_hash = '!' WHERE password_hash IS NULL")
