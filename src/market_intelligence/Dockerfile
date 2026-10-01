@@ -11,6 +11,14 @@ ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 ENV MARKET_INTELLIGENCE_BUILD_REVISION=${SOURCE_REVISION}
 
+# Apply Debian security fixes published after the pinned base image (e.g.
+# OpenSSL and PCRE2 advisories) so the image scan gate stays green without
+# moving the reviewed Python layer.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN groupadd --gid 10002 market-intelligence \
     && useradd \
        --uid 10002 \
