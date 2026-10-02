@@ -4,12 +4,20 @@ FROM python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e
 
 ARG SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
-      org.opencontainers.image.version="3.30.14"
+      org.opencontainers.image.version="3.31.0"
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PIP_NO_CACHE_DIR=1
 ENV MARKET_INTELLIGENCE_BUILD_REVISION=${SOURCE_REVISION}
+
+# Apply Debian security fixes published after the pinned base image (e.g.
+# OpenSSL and PCRE2 advisories) so the image scan gate stays green without
+# moving the reviewed Python layer.
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --gid 10002 market-intelligence \
     && useradd \

@@ -128,7 +128,7 @@ class IsolationTest(unittest.TestCase):
             self.assertIn("assistant_id", Base.metadata.tables["market_intelligence." + table_name].columns)
 
     def test_pipeline_defaults_legacy_calls_to_the_stable_workspace(self):
-        source = Path(__file__).resolve().parents[1].joinpath("app", "pipeline_service.py").read_text()
+        source = Path(__file__).resolve().parents[1].joinpath("app", "pipeline_service.py").read_text(encoding="utf-8")
         self.assertIn("assistant_id = assistant_id or DEFAULT_ASSISTANT_ID", source)
         self.assertIn("run_ingestion(source_keys, force=force_ingestion, assistant_id=assistant_id)", source)
 

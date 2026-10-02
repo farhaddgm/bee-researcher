@@ -44,7 +44,6 @@ from app.pipeline_service import (
     refresh_publication_previews,
     regenerate_fallback_analyses,
     reanalyze_fallback_articles,
-    record_feedback,
     rescore_existing_articles,
     run_pipeline,
     settings_for_assistant,
@@ -214,7 +213,19 @@ from app.admin import (
     ReaderAnnotationUpdate,
     reader_login,
     reader_logout,
+    GoogleAccessGrant,
+    GoogleAccessUpdate,
+    grant_google_access,
+    list_google_access,
+    login_with_google,
+    record_admin_feedback,
+    require_editor_role,
+    revoke_google_access,
+    set_admin_session_cookies,
+    set_reader_session_cookie,
+    update_google_access,
 )
+from app import google_auth
 from app.admin_ui import ADMIN_HTML
 from app.user_ui import USER_HTML
 
@@ -240,6 +251,8 @@ from app.security_controls import (
     clear_login_failures,
     csrf_token_matches,
     login_attempts_exceeded,
+    login_ip_attempts_exceeded,
+    record_ip_login_failure,
     record_login_failure,
 )
 
@@ -659,7 +672,8 @@ class PipelineRequest(BaseModel):
 
 class FeedbackRequest(BaseModel):
     analysis_id: uuid.UUID
-    actor_key: str = Field(min_length=1, max_length=128)
+    # Optional and informational: it must equal the signed-in username.
+    actor_key: str | None = Field(default=None, max_length=128)
     value: str
     note: str | None = Field(default=None, max_length=1000)
 
@@ -805,6 +819,30 @@ async def admin_ui(request: Request) -> HTMLResponse:
     return HTMLResponse(body, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/admin/login-up", response_class=HTMLResponse, include_in_schema=False)
+async def admin_password_login_ui(request: Request) -> HTMLResponse:
+    """Unlinked page that also offers username/password sign-in.
+
+    Hiding the address is not a security boundary: the password API stays
+    rate limited and is protected exactly like the Google flow.
+    """
+    nonce = secrets.token_urlsafe(24)
+    request.state.csp_nonce = nonce
+    body = ADMIN_HTML.replace("<body>", '<body data-login-mode="password">', 1)
+    return HTMLResponse(_inject_inline_nonce(body, nonce), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/user/login-up", response_class=HTMLResponse, include_in_schema=False)
+async def user_password_login_ui(request: Request) -> HTMLResponse:
+    nonce = secrets.token_urlsafe(24)
+    request.state.csp_nonce = nonce
+    body = USER_HTML.replace("<body>", '<body data-login-mode="password">', 1)
+    return HTMLResponse(
+        _inject_inline_nonce(body, nonce),
+        headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow, noarchive, nosnippet"},
+    )
+
+
 @app.get("/user", response_class=HTMLResponse, include_in_schema=False)
 async def user_ui(request: Request) -> HTMLResponse:
     """Serve the read-only published-news portal."""
@@ -837,8 +875,10 @@ async def user_settings_ui(request: Request) -> HTMLResponse:
 
 
 @app.post("/user/api/login")
-async def user_api_login(payload: LoginRequest, response: Response) -> dict[str, object]:
-    return await reader_login(payload, response)
+async def user_api_login(payload: LoginRequest, response: Response, http_request: Request) -> dict[str, object]:
+    # Same account directory and passwords as the back-office, so the same
+    # (shared) brute-force budget must apply here.
+    return await _rate_limited_password_login(payload, response, http_request, reader_login)
 
 
 @app.post("/user/api/logout")
@@ -954,8 +994,8 @@ def _login_client_address(request: Request) -> str:
     return peer
 
 
-@app.post("/admin/api/login")
-async def admin_api_login(payload: LoginRequest, response: Response, http_request: Request) -> dict[str, object]:
+async def _rate_limited_password_login(payload: LoginRequest, response: Response, http_request: Request, login_fn) -> dict[str, object]:
+    """Apply the shared per-account and per-client budget to a password login."""
     username = payload.username.strip().lower()
     client_address = _login_client_address(http_request)
     if await login_attempts_exceeded(settings, username, client_address):
@@ -965,13 +1005,115 @@ async def admin_api_login(payload: LoginRequest, response: Response, http_reques
             headers={"Retry-After": str(settings.login_window_seconds)},
         )
     try:
-        result = await admin_login(payload, response)
+        result = await login_fn(payload, response)
     except HTTPException as exc:
         if exc.status_code == 401:
             await record_login_failure(settings, username, client_address)
         raise
     await clear_login_failures(settings, username, client_address)
     return result
+
+
+@app.post("/admin/api/login")
+async def admin_api_login(payload: LoginRequest, response: Response, http_request: Request) -> dict[str, object]:
+    return await _rate_limited_password_login(payload, response, http_request, admin_login)
+
+
+@app.get("/auth/providers", include_in_schema=False)
+async def auth_providers() -> dict[str, bool]:
+    """Public: tells the login pages whether to show the Google button."""
+    return {"google": settings.google_login_ready}
+
+
+def _google_login_error(portal: str, code: str) -> RedirectResponse:
+    target = "/user" if portal == "user" else "/admin"
+    response = RedirectResponse(url=f"{target}?login_error={code}", status_code=302)
+    response.delete_cookie(google_auth.FLOW_COOKIE, path=google_auth.FLOW_COOKIE_PATH)
+    return response
+
+
+@app.get("/auth/google/start", include_in_schema=False)
+async def google_login_start(request: Request, portal: str = Query(default="admin", pattern="^(admin|user)$")) -> RedirectResponse:
+    """Browser navigation target: redirect to Google's account chooser."""
+    # The flow cookie must be set on the host Google redirects back to.
+    # Start on that canonical host (e.g. from the legacy domain) first.
+    callback = urlsplit(settings.google_redirect_uri or "")
+    if callback.hostname and (request.url.hostname or "").lower() != callback.hostname.lower():
+        return RedirectResponse(url=f"{callback.scheme}://{callback.netloc}/auth/google/start?portal={portal}", status_code=302)
+    try:
+        if await login_ip_attempts_exceeded(settings, _login_client_address(request)):
+            raise google_auth.GoogleAuthError("rate_limited")
+        url, flow_cookie = google_auth.start_flow(settings, portal)
+    except google_auth.GoogleAuthError as exc:
+        return _google_login_error(portal, exc.code)
+    except HTTPException:
+        return _google_login_error(portal, "failed")
+    response = RedirectResponse(url=url, status_code=302)
+    # SameSite=Lax: Google's redirect back is a cross-site top-level GET.
+    response.set_cookie(
+        google_auth.FLOW_COOKIE,
+        flow_cookie,
+        max_age=google_auth.FLOW_TTL_SECONDS,
+        httponly=True,
+        secure=settings.admin_cookie_secure or settings.environment.strip().lower() == "production",
+        samesite="lax",
+        path=google_auth.FLOW_COOKIE_PATH,
+    )
+    return response
+
+
+@app.get("/auth/google/callback", include_in_schema=False)
+async def google_login_callback(
+    request: Request,
+    code: str | None = Query(default=None, max_length=2048),
+    state: str | None = Query(default=None, max_length=256),
+    error: str | None = Query(default=None, max_length=256),
+) -> RedirectResponse:
+    """Google redirects here; success sets the portal session and returns home."""
+    portal = "admin"
+    client_address = _login_client_address(request)
+    try:
+        flow = google_auth.read_flow(settings, request.cookies.get(google_auth.FLOW_COOKIE))
+        portal = google_auth.flow_portal(flow)
+        if await login_ip_attempts_exceeded(settings, client_address):
+            raise google_auth.GoogleAuthError("rate_limited")
+        identity = await google_auth.finish_flow(settings, code=code, state=state, error=error, flow=flow)
+        raw, _user = await login_with_google(identity, portal=portal)
+    except google_auth.GoogleAuthError as exc:
+        if exc.code in {"not_allowed", "not_gmail", "inactive", "failed"}:
+            await record_ip_login_failure(settings, client_address)
+        if exc.code == "failed":
+            logger.warning("google sign-in failed: %s", redact_sensitive_text(str(exc), limit=300))
+        return _google_login_error(portal, exc.code)
+    except HTTPException:
+        return _google_login_error(portal, "failed")
+    response = RedirectResponse(url="/user" if portal == "user" else "/admin", status_code=302)
+    response.delete_cookie(google_auth.FLOW_COOKIE, path=google_auth.FLOW_COOKIE_PATH)
+    if portal == "user":
+        set_reader_session_cookie(response, raw)
+    else:
+        set_admin_session_cookies(response, raw)
+    return response
+
+
+@app.get("/admin/api/owner/google-access")
+async def admin_api_google_access(token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
+    return await list_google_access(await current_admin(token))
+
+
+@app.post("/admin/api/owner/google-access")
+async def admin_api_grant_google_access(payload: GoogleAccessGrant, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
+    return await grant_google_access(payload, await current_admin(token))
+
+
+@app.patch("/admin/api/owner/google-access/{user_id}")
+async def admin_api_update_google_access(user_id: uuid.UUID, payload: GoogleAccessUpdate, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
+    return await update_google_access(user_id, payload, await current_admin(token))
+
+
+@app.delete("/admin/api/owner/google-access/{user_id}")
+async def admin_api_revoke_google_access(user_id: uuid.UUID, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
+    return await revoke_google_access(user_id, await current_admin(token))
 
 
 @app.post("/admin/api/logout")
@@ -984,7 +1126,7 @@ async def admin_api_logout(response: Response, token: str | None = Cookie(defaul
 @app.get("/admin/api/me")
 async def admin_api_me(token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    return {"id": str(user.id), "username": user.username, "role": effective_user_role(user), "stored_role": user.role, "is_owner": is_owner(user), "avatar_url": (user.preferences or {}).get("avatar_url") or default_avatar_data(user.id), "mfa_required": False, **user_portal_access_payload(user)}
+    return {"id": str(user.id), "username": user.username, "role": effective_user_role(user), "stored_role": user.role, "is_owner": is_owner(user), "login_method": user.login_method, "avatar_url": (user.preferences or {}).get("avatar_url") or default_avatar_data(user.id), "mfa_required": False, **user_portal_access_payload(user)}
 
 
 @app.get("/admin/api/account/preferences")
@@ -1144,15 +1286,14 @@ async def admin_api_remove_assistant_member(assistant_id: uuid.UUID, user_id: uu
 @app.patch("/admin/api/sources/{source_id}")
 async def admin_api_update_source(source_id: uuid.UUID, payload: SourceUpdate, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if user.role not in {"admin", "assistant_admin", "editor"}: raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await update_source(source_id, payload, user)
 
 
 @app.post("/admin/api/assistants/{assistant_id}/sources")
 async def admin_api_create_source(assistant_id: uuid.UUID, payload: SourceCreate, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if user.role not in {"owner", "admin", "assistant_admin", "editor"}:
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await create_source(assistant_id, payload, user)
 
 
@@ -1164,8 +1305,7 @@ async def admin_api_create_public_social_source(
 ) -> dict[str, object]:
     """Create a public social source from a platform handle in the back-office."""
     user = await current_admin(token)
-    if user.role not in {"owner", "admin", "assistant_admin", "editor"}:
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     try:
         return await create_public_social_source(assistant_id, payload, user)
     except ValueError as exc:
@@ -1175,8 +1315,7 @@ async def admin_api_create_public_social_source(
 @app.post("/admin/api/assistants/{assistant_id}/sources/draft")
 async def admin_api_draft_source(assistant_id: uuid.UUID, payload: CatalogDraftRequest, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if user.role not in {"owner", "admin", "assistant_admin", "editor"}:
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await draft_source(assistant_id, payload, user)
 
 
@@ -1224,55 +1363,49 @@ async def admin_api_reject_source_suggestion(assistant_id: uuid.UUID, suggestion
 @app.delete("/admin/api/sources/{source_id}")
 async def admin_api_delete_source(source_id: uuid.UUID, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, str]:
     user = await current_admin(token)
-    if user.role not in {"owner", "admin", "assistant_admin", "editor"}:
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await delete_source(source_id, user)
 
 
 @app.post("/admin/api/sources/{source_id}/move")
 async def admin_api_move_source(source_id: uuid.UUID, payload: OrderMoveRequest, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if user.role not in {"owner", "admin", "assistant_admin", "editor"}:
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await move_source(source_id, payload, user)
 
 
 @app.patch("/admin/api/topics/{topic_id}")
 async def admin_api_update_topic(topic_id: uuid.UUID, payload: TopicUpdate, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if user.role not in {"owner", "admin", "assistant_admin", "editor"}: raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await update_topic(topic_id, payload, user)
 
 
 @app.post("/admin/api/assistants/{assistant_id}/topics")
 async def admin_api_create_topic(assistant_id: uuid.UUID, payload: TopicCreate, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if user.role not in {"owner", "admin", "assistant_admin", "editor"}:
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await create_topic(assistant_id, payload, user)
 
 
 @app.post("/admin/api/assistants/{assistant_id}/topics/draft")
 async def admin_api_draft_topic(assistant_id: uuid.UUID, payload: CatalogDraftRequest, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if user.role not in {"owner", "admin", "assistant_admin", "editor"}:
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await draft_topic(assistant_id, payload, user)
 
 
 @app.delete("/admin/api/topics/{topic_id}")
 async def admin_api_delete_topic(topic_id: uuid.UUID, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, str]:
     user = await current_admin(token)
-    if user.role not in {"admin", "assistant_admin", "editor"}:
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await delete_topic(topic_id, user)
 
 
 @app.post("/admin/api/topics/{topic_id}/move")
 async def admin_api_move_topic(topic_id: uuid.UUID, payload: OrderMoveRequest, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if user.role not in {"admin", "assistant_admin", "editor"}:
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await move_topic(topic_id, payload, user)
 
 
@@ -1303,8 +1436,7 @@ async def admin_api_create_business(assistant_id: uuid.UUID, payload: BusinessPr
 @app.post("/admin/api/assistants/{assistant_id}/businesses/draft")
 async def admin_api_draft_business(assistant_id: uuid.UUID, payload: BusinessDraftRequest, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if user.role not in {"owner", "admin", "assistant_admin", "editor"}:
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await draft_business(assistant_id, payload, user)
 
 
@@ -1323,7 +1455,7 @@ async def admin_api_delete_business(assistant_id: uuid.UUID, profile_id: int, to
 @app.patch("/admin/api/business-profile")
 async def admin_api_update_business_profile(payload: BusinessProfileUpdate, assistant_id: uuid.UUID | None = None, profile_id: int | None = None, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if user.role not in {"admin", "assistant_admin", "editor"}: raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await update_business_profile(payload, user, assistant_id=assistant_id, profile_id=profile_id)
 
 
@@ -1366,16 +1498,14 @@ async def admin_api_runtime_settings(assistant_id: uuid.UUID, token: str | None 
 @app.put("/admin/api/assistants/{assistant_id}/runtime-settings")
 async def admin_api_update_runtime_settings(assistant_id: uuid.UUID, payload: AssistantRuntimeSettingsUpdate, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if not (is_owner(user) or user.role in {"admin", "assistant_admin", "editor"}):
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await update_assistant_runtime_settings(assistant_id, payload, user)
 
 
 @app.post("/admin/api/assistants/{assistant_id}/runtime-settings/preview")
 async def admin_api_preview_runtime_settings(assistant_id: uuid.UUID, payload: RuntimeSettingsPreviewRequest, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    if not (is_owner(user) or user.role in {"admin", "assistant_admin", "editor"}):
-        raise HTTPException(status_code=403, detail="editor role required")
+    require_editor_role(user)
     return await preview_assistant_runtime_settings(assistant_id, payload, user)
 
 
@@ -1496,16 +1626,18 @@ async def admin_api_sessions(token: str | None = Cookie(default=None, alias="res
     return await list_active_sessions(user, token)
 
 
-@app.delete("/admin/api/sessions/{session_id}")
-async def admin_api_revoke_session(session_id: uuid.UUID, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, str]:
-    user = await current_admin(token)
-    return await revoke_session(session_id, user, token)
-
-
+# The literal route must be registered before the parameterised one;
+# otherwise "others" is parsed as a session UUID and rejected with 422.
 @app.delete("/admin/api/sessions/others")
 async def admin_api_revoke_other_sessions(token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
     return await revoke_other_sessions(user, token)
+
+
+@app.delete("/admin/api/sessions/{session_id}")
+async def admin_api_revoke_session(session_id: uuid.UUID, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, str]:
+    user = await current_admin(token)
+    return await revoke_session(session_id, user, token)
 
 
 @app.get("/meta")
@@ -1617,11 +1749,17 @@ async def source_health_probe(
 @app.post("/pipeline/run")
 async def pipeline_run(request: PipelineRequest, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     await require_workspace_scope(token, request.assistant_id, write=True)
+    # Telegram delivery is an owner decision (same as /publications/{id}/publish).
+    # Everyone else may collect and prepare previews; ``publish`` is forced
+    # off so neither an explicit flag nor the auto-publish default applies.
+    if request.publish and not is_owner(await current_admin(token)):
+        raise HTTPException(status_code=403, detail="owner role required to publish")
+    publish = request.publish if request.publish else False
     try:
         return await run_pipeline(
             source_keys=request.source_keys,
             force_ingestion=request.force_ingestion,
-            publish=request.publish,
+            publish=publish,
             max_candidates=request.max_candidates,
             idempotency_key=request.idempotency_key,
             assistant_id=request.assistant_id,
@@ -1633,14 +1771,16 @@ async def pipeline_run(request: PipelineRequest, token: str | None = Cookie(defa
 
 @app.post("/pipeline/manual-publish")
 async def pipeline_manual_publish(request: PipelineRequest, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
-    """Prepare at most one fresh item and publish it immediately, outside scheduler slots."""
+    """Collect, then publish exactly one fresh item immediately (owner only)."""
     await require_workspace_scope(token, request.assistant_id, write=True)
+    if not is_owner(await current_admin(token)):
+        raise HTTPException(status_code=403, detail="owner role required to publish")
     try:
         return await run_pipeline(
             source_keys=request.source_keys,
             force_ingestion=True,
             publish=True,
-            max_candidates=1,
+            publish_limit=1,
             idempotency_key=request.idempotency_key or f"manual-publish:{uuid.uuid4()}",
             assistant_id=request.assistant_id,
         )
@@ -1887,7 +2027,7 @@ async def publication_publish(
     if not is_owner(await current_admin(token)):
         raise HTTPException(status_code=403, detail="owner role required")
     try:
-        return await publish_publication(publication_id)
+        return await publish_publication(publication_id, allow_stale_claim=True)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -1932,19 +2072,15 @@ async def feedback(
     token: str | None = Cookie(default=None, alias=ADMIN_SESSION_COOKIE),
 ) -> dict[str, object]:
     # Telegram feedback buttons are processed in the private polling loop and
-    # do not use this HTTP endpoint. Keep the HTTP fallback authenticated so a
-    # caller cannot forge an allowed actor key and mutate feedback state.
-    await current_admin(token)
-    try:
-        actor = request.actor_key.strip().lower().lstrip("@")
-        return await record_feedback(
-            request.analysis_id,
-            actor_key=actor,
-            value=request.value,
-            note=request.note,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    # do not use this HTTP endpoint. The HTTP fallback records feedback only
+    # as the signed-in account, on a workspace that account can access.
+    return await record_admin_feedback(
+        request.analysis_id,
+        value=request.value,
+        note=request.note,
+        actor_key=request.actor_key,
+        user=await current_admin(token),
+    )
 
 
 @app.post("/weekly-reports/run")
@@ -1999,7 +2135,7 @@ async def feedback_ranking_rollback(token: str | None = Cookie(default=None, ali
 
 
 @app.post("/retention/run")
-async def retention_run(token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, int]:
+async def retention_run(token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     if not is_owner(await current_admin(token)):
         raise HTTPException(status_code=403, detail="owner role required")
     return await apply_retention(settings)

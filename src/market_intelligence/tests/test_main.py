@@ -87,9 +87,9 @@ class MainTest(unittest.TestCase):
                 return None
 
         counts = iter((2, 1, 0))
-        owner = SimpleNamespace(username="owner", role="owner")
+        owner = SimpleNamespace(username="owner", email="owner@gmail.com", role="admin")
         telegram_settings = SimpleNamespace(
-            admin_owner_username="owner",
+            owner_email="owner@gmail.com",
             telegram_bot_token=SecretStr("123456:server-secret"),
             telegram_channel_id="-100111",
             telegram_observer_channel_id="-100222",
@@ -239,7 +239,7 @@ class MainTest(unittest.TestCase):
         self.assertFalse(csrf_token_matches(token + "x", token, session, settings))
 
     def test_metadata_exposes_namespaces_but_not_secrets(self):
-        with patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(role="owner", username="admin"))):
+        with patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(email="farhad.dgm@gmail.com", role="admin", username="admin"))):
             response = TestClient(app).get("/meta")
         self.assertEqual(200, response.status_code)
         body = response.json()
@@ -1469,7 +1469,7 @@ class MainTest(unittest.TestCase):
         self.assertIn("const owner=model.canManage,messages=ticket.messages||[]", body)
 
     def test_support_ticket_list_forwards_server_side_triage_filters(self):
-        user = SimpleNamespace(id=uuid.uuid4(), username="owner", role="owner")
+        user = SimpleNamespace(id=uuid.uuid4(), username="owner", email="farhad.dgm@gmail.com", role="admin")
         expected = {"tickets": [], "my_tickets": [], "all_tickets": [], "can_manage": True}
         with (
             patch("app.main.current_admin", new=AsyncMock(return_value=user)),
@@ -1511,7 +1511,7 @@ class MainTest(unittest.TestCase):
     def test_source_registry_endpoint(self):
         rows = [{"source_key": "S-002", "health_status": "healthy"}]
         with (
-            patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(role="owner", username="admin"))),
+            patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(email="farhad.dgm@gmail.com", role="admin", username="admin"))),
             patch("app.main.list_sources", new=AsyncMock(return_value=rows)),
         ):
             response = TestClient(app).get("/sources")
@@ -1521,7 +1521,7 @@ class MainTest(unittest.TestCase):
     def test_admin_create_source_endpoint_is_wired_to_scoped_service(self):
         assistant_id = uuid.uuid4()
         created = {"id": str(uuid.uuid4()), "source_key": "S-003", "enabled": True}
-        user = SimpleNamespace(role="owner", username="owner")
+        user = SimpleNamespace(email="farhad.dgm@gmail.com", role="admin", username="owner")
         payload = {
             "name": "Example feed",
             "homepage_url": "https://example.com",
@@ -1546,7 +1546,7 @@ class MainTest(unittest.TestCase):
     def test_admin_create_topic_endpoint_is_wired_to_scoped_service(self):
         assistant_id = uuid.uuid4()
         created = {"id": str(uuid.uuid4()), "topic_key": "T-003", "enabled": True}
-        user = SimpleNamespace(role="owner", username="owner")
+        user = SimpleNamespace(email="farhad.dgm@gmail.com", role="admin", username="owner")
         payload = {"name": "Digital payments", "definition": "Payment infrastructure", "importance": 4, "threshold": 0.45}
         with (
             patch("app.main.current_admin", new=AsyncMock(return_value=user)),
@@ -1616,7 +1616,7 @@ class MainTest(unittest.TestCase):
 
     def test_refresh_previews_endpoint_never_publishes(self):
         result = {"candidates": 3, "refreshed": 3}
-        with patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(role="owner", username="admin"))), patch(
+        with patch("app.main.current_admin", new=AsyncMock(return_value=SimpleNamespace(email="farhad.dgm@gmail.com", role="admin", username="admin"))), patch(
             "app.main.refresh_publication_previews",
             new=AsyncMock(return_value=result),
         ) as refresh:

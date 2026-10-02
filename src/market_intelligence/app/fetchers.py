@@ -28,6 +28,50 @@ REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 BLOCKED_HOST_SUFFIXES = (".localhost", ".local", ".internal")
 MAX_REDIRECTS = 5
 
+# A connector credential is bound both to its adapter family and to the
+# provider API hosts that legitimately consume it.  A source can therefore
+# never make the server send a token to an arbitrary (attacker-chosen) host,
+# directly or through a redirect.
+_CREDENTIAL_REFS = {
+    "telegram_source_bot_token": frozenset({"TELEGRAM_SOURCE_BOT_TOKEN", "MARKET_INTELLIGENCE_TELEGRAM_SOURCE_BOT_TOKEN"}),
+    "instagram_source_access_token": frozenset({"INSTAGRAM_SOURCE_ACCESS_TOKEN", "MARKET_INTELLIGENCE_INSTAGRAM_SOURCE_ACCESS_TOKEN"}),
+    "x_source_bearer_token": frozenset({"X_SOURCE_BEARER_TOKEN", "MARKET_INTELLIGENCE_X_SOURCE_BEARER_TOKEN"}),
+}
+CONNECTOR_CREDENTIALS: dict[str, tuple[str, frozenset[str]]] = {
+    "telegram_private": ("telegram_source_bot_token", frozenset({"api.telegram.org"})),
+    "instagram_public": ("instagram_source_access_token", frozenset({"graph.facebook.com", "graph.instagram.com"})),
+    "instagram_private": ("instagram_source_access_token", frozenset({"graph.facebook.com", "graph.instagram.com"})),
+    "x_public": ("x_source_bearer_token", frozenset({"api.x.com", "api.twitter.com"})),
+    "x_private": ("x_source_bearer_token", frozenset({"api.x.com", "api.twitter.com"})),
+}
+
+
+def credential_hosts(adapter: str, settings: Settings) -> frozenset[str]:
+    """Hosts allowed to receive the adapter's credential (provider + gateways)."""
+    spec = CONNECTOR_CREDENTIALS.get(adapter)
+    if spec is None:
+        return frozenset()
+    return spec[1] | settings.connector_gateway_host_values
+
+
+def validate_connector_binding(adapter: str, credential_ref: str | None, fetch_url: str, settings: Settings) -> None:
+    """Raise ValueError when a source configuration could leak a credential.
+
+    Used by the admin API (to fail early with 422) and again at fetch time.
+    """
+    spec = CONNECTOR_CREDENTIALS.get(adapter)
+    ref = (credential_ref or "").strip().upper()
+    if spec is None:
+        if ref:
+            raise ValueError("this connector does not use a server credential")
+        return
+    if ref not in _CREDENTIAL_REFS[spec[0]]:
+        raise ValueError("the credential reference does not belong to this connector")
+    parsed = urlparse(fetch_url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if parsed.scheme != "https" or host not in credential_hosts(adapter, settings):
+        raise ValueError("credentialed connectors may only call their provider API over HTTPS")
+
 
 @dataclass(frozen=True, slots=True)
 class SourceSpec:
@@ -602,9 +646,17 @@ class SourceFetcher:
         client: httpx.AsyncClient,
         url: str,
         headers: dict[str, str] | None = None,
+        *,
+        allowed_credential_hosts: frozenset[str] = frozenset(),
     ) -> httpx.Response:
         current = validate_public_url_syntax(url)
         for _ in range(MAX_REDIRECTS + 1):
+            if headers and "Authorization" in headers:
+                # Checked on every hop: a redirect must never carry the
+                # credential to another host.
+                parsed = urlparse(current)
+                if parsed.scheme != "https" or (parsed.hostname or "").lower().rstrip(".") not in allowed_credential_hosts:
+                    raise FetchFailure("connector credential cannot be sent to this host")
             await self.resolver(current)
             response = await client.get(current, headers=headers or {})
             if response.status_code not in REDIRECT_STATUS_CODES:
@@ -624,19 +676,14 @@ class SourceFetcher:
         delivery credential.
         """
         private = source.adapter.endswith("_private")
-        needs_token = source.adapter in {"telegram_private", "instagram_public", "instagram_private", "x_public", "x_private"}
-        if not needs_token:
+        spec = CONNECTOR_CREDENTIALS.get(source.adapter)
+        if spec is None:
             return {}
-        ref = (source.credential_ref or "").strip().upper()
-        allowed = {
-            "TELEGRAM_SOURCE_BOT_TOKEN": self.settings.telegram_source_bot_token,
-            "MARKET_INTELLIGENCE_TELEGRAM_SOURCE_BOT_TOKEN": self.settings.telegram_source_bot_token,
-            "INSTAGRAM_SOURCE_ACCESS_TOKEN": self.settings.instagram_source_access_token,
-            "MARKET_INTELLIGENCE_INSTAGRAM_SOURCE_ACCESS_TOKEN": self.settings.instagram_source_access_token,
-            "X_SOURCE_BEARER_TOKEN": self.settings.x_source_bearer_token,
-            "MARKET_INTELLIGENCE_X_SOURCE_BEARER_TOKEN": self.settings.x_source_bearer_token,
-        }
-        secret = allowed.get(ref)
+        try:
+            validate_connector_binding(source.adapter, source.credential_ref, source.fetch_url, self.settings)
+        except ValueError as exc:
+            raise FetchFailure(str(exc)) from None
+        secret = getattr(self.settings, spec[0], None)
         if secret is None:
             raise FetchFailure("connector credential is not configured on the server")
         if private and source.access_policy != "private_authenticated":
@@ -700,7 +747,7 @@ class SourceFetcher:
             attempts = source.max_retries + 1
             for attempt in range(1, attempts + 1):
                 try:
-                    response = await self._request(client, source.fetch_url, headers)
+                    response = await self._request(client, source.fetch_url, headers, allowed_credential_hosts=credential_hosts(source.adapter, self.settings))
                     # X's public API resolves a handle to an immutable user ID
                     # before the timeline endpoint can be called.  Keep this
                     # two-step exchange server-side so the back-office only
@@ -715,7 +762,7 @@ class SourceFetcher:
                         if not user_id or not re.fullmatch(r"\d{1,32}", str(user_id)):
                             raise FetchFailure("X public profile did not return a valid user id", attempts=attempt)
                         timeline_url = f"https://api.x.com/2/users/{user_id}/tweets?tweet.fields=created_at&max_results=100"
-                        response = await self._request(client, timeline_url, headers)
+                        response = await self._request(client, timeline_url, headers, allowed_credential_hosts=credential_hosts(source.adapter, self.settings))
                     if response.status_code in TRANSIENT_STATUS_CODES and attempt < attempts:
                         await self.sleeper(min(2 ** (attempt - 1), 4))
                         continue

@@ -38,14 +38,21 @@ def redact_sensitive_text(value: str, *, limit: int = 1000) -> str:
     return text[:limit]
 
 
-def _csrf_signature(nonce: str, session_token: str, settings: Settings) -> str:
+def _service_key_material(settings: Settings) -> bytes:
     # Prefer a service-only secret. The derived fallback preserves the cookie
     # contract for already-running deployments until the owner provisions it.
     if settings.csrf_signing_secret:
-        key_material = settings.csrf_signing_secret.get_secret_value().encode("utf-8")
-    else:
-        key_material = f"{settings.postgres_password.get_secret_value()}\x00{settings.queue_namespace}".encode("utf-8")
-    key = hashlib.sha256(key_material).digest()
+        return settings.csrf_signing_secret.get_secret_value().encode("utf-8")
+    return f"{settings.postgres_password.get_secret_value()}\x00{settings.queue_namespace}".encode("utf-8")
+
+
+def service_signing_key(settings: Settings, purpose: str) -> bytes:
+    """Return a purpose-separated HMAC key derived from the service secret."""
+    return hmac.new(hashlib.sha256(_service_key_material(settings)).digest(), purpose.encode("utf-8"), hashlib.sha256).digest()
+
+
+def _csrf_signature(nonce: str, session_token: str, settings: Settings) -> str:
+    key = hashlib.sha256(_service_key_material(settings)).digest()
     return hmac.new(key, f"{nonce}.{session_token}".encode("utf-8"), hashlib.sha256).hexdigest()
 
 
@@ -122,6 +129,45 @@ async def record_login_failure(settings: Settings, username: str, client_address
         pipe = redis.pipeline(transaction=True)
         pipe.incr(identity_key)
         pipe.expire(identity_key, settings.login_window_seconds)
+        pipe.incr(ip_key)
+        pipe.expire(ip_key, settings.login_window_seconds)
+        await pipe.execute()
+    except (RedisError, OSError):
+        return
+    finally:
+        try:
+            await _close(redis)
+        except Exception:
+            pass
+
+
+async def login_ip_attempts_exceeded(settings: Settings, client_address: str) -> bool:
+    """Check only the shared per-client budget (used by Google sign-in)."""
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        value = await redis.get(login_ip_attempt_key(settings, client_address))
+        try:
+            return int(value or 0) >= settings.login_ip_max_attempts
+        except (TypeError, ValueError):
+            return False
+    except (RedisError, OSError):
+        raise HTTPException(
+            status_code=503,
+            detail="authentication temporarily unavailable",
+            headers={"Retry-After": "30"},
+        ) from None
+    finally:
+        try:
+            await _close(redis)
+        except Exception:
+            pass
+
+
+async def record_ip_login_failure(settings: Settings, client_address: str) -> None:
+    redis = Redis.from_url(settings.redis_url, decode_responses=True)
+    try:
+        ip_key = login_ip_attempt_key(settings, client_address)
+        pipe = redis.pipeline(transaction=True)
         pipe.incr(ip_key)
         pipe.expire(ip_key, settings.login_window_seconds)
         await pipe.execute()
