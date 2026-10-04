@@ -4,7 +4,7 @@ FROM python:3.13-slim@sha256:8d9d0b8bcf6506481eae4907c18f5e3e7902e629f5f6d684f9e
 
 ARG SOURCE_REVISION=unknown
 LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" \
-      org.opencontainers.image.version="3.31.0"
+      org.opencontainers.image.version="3.32.0"
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

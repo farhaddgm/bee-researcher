@@ -49,6 +49,7 @@ from app.models import (
 from app.openai_client import OpenAIClient
 from app.fetchers import FetchFailure, SourceFetcher, SourceSpec, validate_connector_binding, validate_public_url_syntax
 from app.google_auth import GoogleAuthError, GoogleIdentity, is_gmail, normalize_email
+from app.media_discovery import discover_media, publisher_host
 from app.retention import MIN_RETENTION_DAYS, effective_retention_days
 from app.security_controls import CSRF_COOKIE, new_csrf_token
 from app.telegram_delivery import render_analysis_message
@@ -635,6 +636,8 @@ class BusinessProfileCreate(BusinessProfileUpdate):
 class CatalogDraftRequest(BaseModel):
     name: str = Field(min_length=1, max_length=240)
     instruction: str = Field(default="", max_length=4000)
+    page: int = Field(default=0, ge=0, le=9)
+    exclude_urls: list[str] = Field(default_factory=list, max_length=100)
 
 
 class AssistantDraftRequest(BaseModel):
@@ -743,6 +746,7 @@ class BusinessDraftRequest(BaseModel):
 
 
 class AssistantRuntimeSettingsUpdate(BaseModel):
+    relevance_threshold: float | None = Field(default=None, ge=0, le=1)
     max_items_per_run: int | None = Field(default=None, ge=1, le=7)
     freshness_window_days: int | None = Field(default=None, ge=1, le=7)
     telegram_silent_notifications: bool | None = None
@@ -2937,7 +2941,7 @@ _SOURCE_DRAFT_SCHEMA = {
         "match_explanation": {"type": "string"},
         "alternatives": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
     },
-    "required": ["name", "homepage_url", "fetch_url", "adapter", "language", "region", "output_language", "priority", "access_notes", "research_notes", "fit_reason", "example_article", "overlap_notes", "match_status", "match_explanation", "alternatives"],
+    "required": ["name", "homepage_url", "fetch_url", "adapter", "access_policy", "credential_ref", "account_ref", "language", "region", "output_language", "priority", "access_notes", "research_notes", "fit_reason", "example_article", "overlap_notes", "match_status", "match_explanation", "alternatives"],
     "additionalProperties": False,
 }
 _SOURCE_SUGGESTIONS_SCHEMA = {
@@ -2945,7 +2949,7 @@ _SOURCE_SUGGESTIONS_SCHEMA = {
     "properties": {
         "suggestions": {
             "type": "array",
-            "maxItems": 5,
+            "maxItems": 10,
             "items": {
                 "type": "object",
                 "properties": {
@@ -3061,7 +3065,7 @@ def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] |
     requested = str(name or "").strip().casefold()
     for entry in _LOCAL_MEDIA_DIRECTORY:
         aliases = [value.casefold() for value in _string_values(entry.get("aliases"))]
-        if requested in aliases or any(alias in requested or requested in alias for alias in aliases):
+        if requested in aliases:
             return {
                 "name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
                 "fetch_url": str(entry["fetch_url"]), "adapter": str(entry["adapter"]),
@@ -3097,7 +3101,7 @@ def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] |
             "access_notes": "Public feed from Bee Researcher directory.",
             "research_notes": "The closest public-media directory match was selected from the supplied keyword; review it before registration.",
             "fit_reason": str(entry["summary"]), "example_article": "", "overlap_notes": "",
-            "match_status": "match",
+            "match_status": "uncertain",
             "match_explanation": f"بهترین تطبیق آفلاین با امتیاز {score} از فهرست رسانه‌های عمومی پیدا شد.",
             "alternatives": [str(row[2]["name"]) for row in ranked[1:4]],
             "draft_source": "local_keyword_match",
@@ -3110,7 +3114,7 @@ def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] |
         homepage = f"https://{candidate}/"
         return {
             "name": str(name).strip()[:160], "homepage_url": homepage,
-            "fetch_url": f"{homepage}feed/", "adapter": "rss", "language": "", "output_language": "source", "region": "",
+            "fetch_url": homepage, "adapter": "html", "language": "unknown", "output_language": "source", "region": "Global",
             "priority": 3, "access_notes": "Feed path is a proposal; review it before saving.",
             "research_notes": "A public domain was supplied directly; the feed path must pass the connection check.",
             "fit_reason": str(instruction or "Public source supplied by the owner.")[:600],
@@ -3299,9 +3303,17 @@ async def _catalog_draft(
     instruction: str,
 ) -> dict[str, object]:
     if kind == "source":
+        try:
+            return await asyncio.wait_for(discover_media(get_settings(), name=name, instruction=instruction, schema=_SOURCE_DRAFT_SCHEMA), timeout=90)
+        except Exception as exc:
+            provider_status = type(exc).__name__
         local_draft = _local_source_draft(name, instruction)
         if local_draft is not None:
+            local_draft["provider_status"] = provider_status
             return local_draft
+        aliases = {alias: str(row["name"]) for row in _LOCAL_MEDIA_DIRECTORY for alias in _string_values(row.get("aliases"))}
+        names = list(dict.fromkeys(aliases.get(a, a) for a in difflib.get_close_matches(name.casefold(), list(aliases), n=3, cutoff=0.55)))
+        return {"name": name, "homepage_url": "", "fetch_url": "", "adapter": "html", "language": "unknown", "output_language": "source", "region": "Global", "priority": 3, "match_status": "uncertain", "match_explanation": "جست‌وجوی آنلاین موقتاً در دسترس نیست؛ این به معنی نبود رسانه نیست. دوباره تلاش کنید یا آدرس عمومی را وارد کنید.", "alternatives": names[:3], "draft_source": "fallback", "provider_status": provider_status}
     settings = get_settings()
     client = OpenAIClient(settings)
     system = (
@@ -3343,6 +3355,7 @@ async def _catalog_draft(
 async def _source_suggestions(
     keyword: str,
     instruction: str,
+    *, exclude: list[str] | None = None, page: int = 0,
 ) -> dict[str, object]:
     """Return up to five concise, review-first media candidates.
 
@@ -3351,58 +3364,15 @@ async def _source_suggestions(
     approves one candidate.
     """
     local = _local_source_suggestions(keyword, instruction)
-    if local["suggestions"]:
-        return local
-    settings = get_settings()
-    client = OpenAIClient(settings)
-    system = (
-        "شما پژوهشگر کشف رسانه هستید. برای کلیدواژه داده‌شده حداکثر پنج رسانه تخصصی، "
-        "عمومی و معتبر پیشنهاد دهید. فهرست را از نظر تناسب موضوعی، اعتبار، قابلیت خواندن، "
-        "زبان، منطقه و نوع رسانه متنوع کنید؛ رسانه‌های تکراری یا پنج رسانهٔ هم‌نوع پیشنهاد ندهید. "
-        "برای هر مورد زبان، منطقه، نوع رسانه، امتیاز اطمینان بین صفر و یک و حداکثر سه شاهد معتبر بدهید. "
-        "فقط نام، آدرس وب‌سایت، توضیح دو یا سه خطی و دلیل تناسب را برگردانید. "
-        "اگر از اعتبار یا آدرس مطمئن نیستید آن رسانه را پیشنهاد ندهید. اگر مورد مناسبی نیست، "
-        "suggestions را خالی بگذارید و در message توضیح کوتاه و در alternatives حداکثر سه نام "
-        "مشابه و محتمل پیشنهاد کنید. خروجی فقط JSON باشد."
-    )
     try:
-        result = await asyncio.wait_for(
-            client.draft_json(
-                system_prompt=system,
-                # Keyword and optional operator guidance are the complete
-                # external discovery payload. Project data stays local.
-                user_payload={"keyword": keyword, "instruction": instruction},
-                schema_name="market_intelligence_source_suggestions",
-                schema=_SOURCE_SUGGESTIONS_SCHEMA,
-            ),
-            timeout=50,
-        )
-        result_data = _object_mapping(result)
-        rows = _mapping_rows(result_data.get("suggestions"))
-        return {
-            "suggestions": [
-                {
-                    **dict(row),
-                    "language": str(row.get("language") or "unknown"),
-                    "region": str(row.get("region") or "Global"),
-                    "source_type": str(row.get("source_type") or "specialist_public_media"),
-                    "confidence": min(max(_safe_float_value(row.get("confidence"), default=0.55), 0.0), 1.0),
-                    "evidence": [value[:2048] for value in _string_values(row.get("evidence"))[:3] if value.strip()],
-                }
-                for row in rows[:5]
-                if str(row.get("name") or "").strip() and str(row.get("homepage_url") or "").strip()
-            ],
-            "message": str(result_data.get("message") or "").strip()[:600],
-            "alternatives": [value.strip()[:160] for value in _string_values(result_data.get("alternatives"))[:3] if value.strip()],
-        }
-    except Exception:
-        return {
-            "suggestions": [],
-            "message": "رسانه‌ای برای این کلیدواژه پیدا نشد؛ نام دقیق، دامنهٔ عمومی یا کلیدواژهٔ مشخص‌تری وارد کنین.",
-            "alternatives": local["alternatives"],
-        }
-
-
+        return await asyncio.wait_for(discover_media(get_settings(), name=keyword, instruction=instruction, schema=_SOURCE_SUGGESTIONS_SCHEMA, suggestions=True, exclude=exclude, page=page), timeout=90)
+    except Exception as exc:
+        excluded = {publisher_host(url) for url in (exclude or [])}
+        local["suggestions"] = [row for row in _mapping_rows(local.get("suggestions")) if publisher_host(str(row.get("homepage_url") or "")) not in excluded]
+        local["provider_status"] = type(exc).__name__
+        local["draft_source"] = "local_directory"
+        local["message"] = "جست‌وجوی آنلاین موقتاً در دسترس نیست؛ فقط نتایج فهرست محلی نمایش داده می‌شوند."
+        return local
 async def _assistant_media_context(assistant_id: uuid.UUID) -> dict[str, object]:
     """Return a small, non-secret project brief for media discovery.
 
@@ -3481,6 +3451,14 @@ async def _verify_source_draft(draft: dict[str, object]) -> dict[str, object]:
             "items_found": 0,
         }
     try:
+        if adapter == "html":
+            try:
+                feeds = await asyncio.wait_for(SourceFetcher(get_settings()).discover_feeds(homepage), timeout=15)
+                if feeds:
+                    fetch_url, adapter = feeds[0]
+                    draft["fetch_url"], draft["adapter"] = fetch_url, adapter
+            except (FetchFailure, ValueError, OSError, asyncio.TimeoutError):
+                pass  # Keep the evidenced HTML connector editable.
         result = await asyncio.wait_for(
             SourceFetcher(get_settings()).fetch(
                 SourceSpec(
@@ -3748,7 +3726,17 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
     keyword = payload.name.strip()
     if not keyword:
         raise HTTPException(status_code=422, detail="media keyword is required")
-    discovery = await _source_suggestions(keyword, payload.instruction.strip())
+    async with SessionLocal() as session:
+        workspace = await session.get(AssistantWorkspace, assistant_id)
+        existing = (await session.scalars(select(Source.homepage_url).where(Source.assistant_id == assistant_id))).all()
+        config_before = dict(workspace.config or {}) if workspace else {}
+    history_key = hashlib.sha256((keyword.casefold() + "\n" + payload.instruction.strip()).encode()).hexdigest()
+    histories = dict(config_before.get("source_discovery_seen") or {})
+    exclude = list(existing) + payload.exclude_urls
+    exclude.extend(str(_object_mapping(row.get("draft")).get("homepage_url") or "") for row in _source_suggestion_rows(config_before))
+    if payload.page:
+        exclude.extend(histories.get(history_key) or [])
+    discovery = await _source_suggestions(keyword, payload.instruction.strip(), exclude=exclude, page=payload.page)
     candidates = _mapping_rows(discovery.get("suggestions"))
     suggestions = []
     async with SessionLocal() as session:
@@ -3764,11 +3752,12 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
             str(_object_mapping(row.get("draft")).get("homepage_url") or "").strip().rstrip("/").casefold()
             for row in rows if row.get("status", "pending") == "pending"
         }
-        for candidate in candidates[:5]:
+        seen_hosts = {publisher_host(url) for url in exclude if publisher_host(url)}
+        for candidate in candidates[:10]:
             candidate_name = str(candidate.get("name") or "").strip()[:160]
             candidate_homepage = str(candidate.get("homepage_url") or "").strip()[:2048]
             homepage_key = candidate_homepage.rstrip("/").casefold()
-            if not candidate_name or not candidate_homepage or candidate_name.casefold() in existing_names or homepage_key in existing_homepages or homepage_key in pending_homepages:
+            if not publisher_host(candidate_homepage) or publisher_host(candidate_homepage) in seen_hosts or not candidate_name or candidate_name.casefold() in existing_names or homepage_key in existing_homepages or homepage_key in pending_homepages:
                 continue
             suggestion: dict[str, object] = {
                 "id": str(uuid.uuid4()),
@@ -3793,12 +3782,19 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
                 rows.insert(0, suggestion)
                 pending_homepages.add(homepage_key)
                 suggestions.append(suggestion)
+                seen_hosts.add(publisher_host(candidate_homepage))
         config["source_suggestions"] = rows[:50]
+        histories = dict(config.get("source_discovery_seen") or {})
+        histories[history_key] = list(dict.fromkeys((histories.get(history_key) or []) + [str(_object_mapping(row.get("draft")).get("homepage_url") or "") for row in suggestions]))[-100:]
+        config["source_discovery_seen"] = dict(list(histories.items())[-20:])
         item.config = config
         await session.commit()
     await _audit(user.id, "source.suggestion.create", assistant_id=assistant_id, details={"keyword": keyword, "count": len(suggestions)})
     return {
         "keyword": keyword,
+        "provider": discovery.get("draft_source"),
+        "provider_status": discovery.get("provider_status", "succeeded"),
+        "page": payload.page,
         "count": len(suggestions),
         "suggestions": suggestions,
         "message": str(discovery.get("message") or "").strip()[:600],
@@ -4552,6 +4548,8 @@ async def get_assistant_runtime_settings(assistant_id: uuid.UUID, user: AdminUse
         "limits": limits,
         "telegram_silent_notifications": bool(runtime.get("telegram_silent_notifications", False)),
         "analysis_model": runtime.get("analysis_model", get_settings().analysis_model),
+        "relevance_threshold": runtime.get("relevance_threshold", app_settings.relevance_threshold if assistant_id == DEFAULT_ASSISTANT_ID else 0.0),
+        "ai_analysis_ready": app_settings.openai_ready,
         "allowed_feedback_usernames": list(runtime.get("allowed_feedback_usernames", sorted(get_settings().allowed_telegram_username_values))),
         "schedule_slots": list(runtime.get("schedule_slots", [])),
         "timezone": runtime.get("timezone", get_settings().timezone),
@@ -4635,7 +4633,7 @@ async def preview_assistant_runtime_settings(
         proposed["active_business_id"] = None
     changes = {
         key: {"before": current.get(key), "after": proposed.get(key)}
-        for key in ("max_items_per_run", "freshness_window_days", "telegram_silent_notifications", "analysis_model", "schedule_slots", "timezone", "active_business_id", "collection_enabled", "collection_schedule_slots", "collection_max_items_per_source", "collection_max_items_per_run", "collection_max_items_per_day")
+        for key in ("max_items_per_run", "freshness_window_days", "telegram_silent_notifications", "analysis_model", "relevance_threshold", "schedule_slots", "timezone", "active_business_id", "collection_enabled", "collection_schedule_slots", "collection_max_items_per_source", "collection_max_items_per_run", "collection_max_items_per_day")
         if current.get(key) != proposed.get(key)
     }
     slots = _object_list(proposed.get("schedule_slots"))
@@ -4665,7 +4663,7 @@ async def preview_assistant_runtime_settings(
             "collection_max_items_per_run": 1000,
             "collection_max_items_per_day": 1000,
         },
-        "proposed": {key: proposed.get(key) for key in ("max_items_per_run", "freshness_window_days", "telegram_silent_notifications", "analysis_model", "schedule_slots", "timezone", "active_business_id", "collection_enabled", "collection_schedule_slots", "collection_max_items_per_source", "collection_max_items_per_run", "collection_max_items_per_day")},
+        "proposed": {key: proposed.get(key) for key in ("max_items_per_run", "freshness_window_days", "telegram_silent_notifications", "analysis_model", "relevance_threshold", "schedule_slots", "timezone", "active_business_id", "collection_enabled", "collection_schedule_slots", "collection_max_items_per_source", "collection_max_items_per_run", "collection_max_items_per_day")},
     }
 
 

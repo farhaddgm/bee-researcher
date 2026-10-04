@@ -1,0 +1,81 @@
+import assert from 'node:assert/strict';
+import { chromium } from 'playwright';
+
+const base = process.env.BEE_ADMIN_URL || 'http://127.0.0.1:8010/admin';
+const username = process.env.MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_USERNAME;
+const password = process.env.MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_PASSWORD;
+if (!username || !password) throw new Error('Media E2E requires isolated credentials.');
+const browser = await chromium.launch({ headless: true });
+const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+page.setDefaultTimeout(12000);
+const errors = [];
+page.on('pageerror', error => errors.push(error.message));
+let health = 'healthy';
+let searchPage = -1;
+let rows = [];
+const json = (route, value) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
+await page.route(/\/health(?:\?.*)?$/, route => json(route, { status: health, dependencies: { postgres: 'healthy', redis: 'healthy' } }));
+await page.route(/\/admin\/api\/assistants\/[^/]+\/source-suggestions(?:\?.*)?$/, route => {
+  if (route.request().method() === 'POST') {
+    const input = route.request().postDataJSON();
+    assert.equal(input.name, '人工知能');
+    searchPage = input.page || 0;
+    rows = Array.from({ length: 10 }, (_, n) => ({ id: `candidate-${searchPage}-${n}`, name: `Media ${searchPage}-${n}`, draft: { name: `Media ${searchPage}-${n}`, homepage_url: `https://media-${searchPage}-${n}.example.org`, evidence: [`https://media-${searchPage}-${n}.example.org/news`], summary: 'Public technology news', language: 'en', region: 'global' } }));
+    return json(route, { count: 10, provider: 'openai_web_search', provider_status: 'succeeded' });
+  }
+  return json(route, { suggestions: rows, can_approve: true });
+});
+await page.route(/\/source-suggestions\/candidate-[^/]+\/(approve|reject)$/, route => {
+  const id = new URL(route.request().url()).pathname.split('/').at(-2);
+  rows = rows.filter(row => row.id !== id);
+  return json(route, { status: 'completed' });
+});
+try {
+  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.locator('#loginUser').fill(username);
+  await page.locator('#loginPass').fill(password);
+  await page.locator('#loginForm button[type="submit"], #loginSubmit').click();
+  await page.locator('#app:not(.hidden)').waitFor({ state: 'visible' });
+  await page.waitForFunction(() => typeof state !== 'undefined' && state.health?.status === 'healthy');
+  const checking = /Checking|در حال بررسی|Kontrol|التحقق/;
+  for (const locale of ['fa', 'en', 'tr', 'ar', 'es', 'it', 'de', 'fr']) {
+    await page.evaluate(locale => { window.setLanguage(locale); window.setView('overview'); }, locale);
+    await page.waitForTimeout(150);
+    assert(!checking.test(await page.locator('#kpiHealth').innerText()), `Health stayed Checking in ${locale}`);
+    assert.equal(await page.locator('#kpiHealthDot').getAttribute('class'), 'up');
+    await page.evaluate(() => window.setView('settings'));
+    await page.locator('#projectRelevanceInfo').hover();
+    await page.waitForFunction(() => getComputedStyle(document.getElementById('projectRelevanceHelp')).opacity === '1');
+    const help = await page.locator('#projectRelevanceHelp').innerText();
+    assert(help.length > 30, `Missing threshold explanation in ${locale}`);
+    if (!['fa', 'ar'].includes(locale)) assert(!/[پچژگک]/.test(help), `Persian leaked into ${locale}`);
+    await page.locator('#projectRelevanceInfo').focus();
+    assert.equal(await page.locator('#projectRelevanceHelp').evaluate(node => getComputedStyle(node).opacity), '1');
+  }
+  await page.evaluate(() => { window.setLanguage('en'); window.setView('sources'); });
+  await page.locator('#sourceSuggestionBtn').click();
+  await page.locator('#mediaSuggestKeyword').fill('人工知能');
+  await page.locator('#modalSubmit').click();
+  await page.waitForFunction(() => document.querySelectorAll('#sourceSuggestionsRows .channel-card').length === 10);
+  assert.equal(searchPage, 0);
+  assert.match(await page.locator('#mediaDiscoveryProvider').innerText(), /OpenAI/);
+  assert.equal(await page.locator('#sourceSuggestionsRows a').count(), 10);
+  await page.locator('#refreshMediaDiscovery').click();
+  await page.waitForFunction(() => document.querySelector('#sourceSuggestionsRows')?.textContent.includes('Media 1-0'));
+  assert.equal(searchPage, 1);
+  assert.equal(await page.locator('#sourceSuggestionsRows .channel-card').count(), 10);
+  await page.locator('[data-media-reject]').first().click();
+  await page.waitForFunction(() => document.querySelectorAll('#sourceSuggestionsRows .channel-card').length === 9);
+  assert(!rows.some(row => row.id === 'candidate-1-0'));
+
+  // A terminal failure must replace the prior success, not keep a loading
+  // string or hardcoded healthy state when a locale renderer reruns.
+  await page.evaluate(() => { state.health = { status: 'unavailable' }; window.setLanguage('en'); window.setView('overview'); });
+  await page.waitForTimeout(200);
+  assert.equal(await page.locator('#kpiHealthDot').getAttribute('class'), 'down');
+  assert(!checking.test(await page.locator('#kpiHealth').innerText()));
+  assert.equal(errors.length, 0, `Uncaught browser errors: ${errors.join('; ')}`);
+  console.log('Media/Overview E2E passed: 8 locales, real tooltip rendering, dynamic health, 10 cards, refresh, provider provenance, rejection cleanup.');
+} finally {
+  await browser.close();
+}

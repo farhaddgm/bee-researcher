@@ -140,6 +140,13 @@ jobs:
           npm run admin:locales
           npm run admin:support:e2e
           npm run user:e2e
+          npm run admin:media:e2e
+      - name: Run isolated SQL media and publication integration
+        env:
+          PYTHONPATH: src/market_intelligence
+          MARKET_INTELLIGENCE_OPENAI_API_KEY: ""
+          MARKET_INTELLIGENCE_TELEGRAM_BOT_TOKEN: ""
+        run: python src/market_intelligence/scripts/verify_media_pipeline.py
       - name: Stop isolated application
         if: always()
         run: |

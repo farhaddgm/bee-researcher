@@ -529,6 +529,8 @@ class ArticleTopic(Base):
         nullable=False,
     )
     lexical_score: Mapped[float] = mapped_column(Float, nullable=False)
+    ai_score: Mapped[float | None] = mapped_column(Float)
+    context_hash: Mapped[str | None] = mapped_column(String(64))
     semantic_score: Mapped[float | None] = mapped_column(Float)
     combined_score: Mapped[float] = mapped_column(Float, nullable=False)
     matched_positive: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)

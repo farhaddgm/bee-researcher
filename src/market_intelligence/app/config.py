@@ -16,7 +16,7 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 
 class Settings(BaseSettings):
     app_name: str = "Bee Researcher"
-    version: str = "3.31.0"
+    version: str = "3.32.0"
     build_revision: str = "unknown"
     image_digest: str | None = None
     environment: str = "production"
@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     model_input_usd_per_million_tokens: float = Field(default=0.2, ge=0)
     model_output_usd_per_million_tokens: float = Field(default=1.2, ge=0)
     external_analysis_approved: bool = False
+    # Discovery has a separate, bounded budget and never sends project data.
+    discovery_model: str = "gpt-4.1-mini"
+    google_search_api_key: SecretStr | None = None
+    google_search_engine_id: str | None = None
+    relevance_batch_size: int = Field(default=8, ge=1, le=20)
+    relevance_max_requests_per_run: int = Field(default=10, ge=0, le=100)
+    relevance_daily_request_cap: int = Field(default=100, ge=0, le=1000)
 
     scheduler_enabled: bool = True
     scheduler_poll_seconds: int = Field(default=30, ge=5, le=300)
@@ -307,6 +314,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "openai_api_key",
+        "google_search_api_key",
         "telegram_bot_token",
         "csrf_signing_secret",
         "mfa_encryption_secret",

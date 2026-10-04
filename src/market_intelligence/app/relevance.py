@@ -66,7 +66,7 @@ GENERIC_TOPIC_TERMS = {
 
 
 def normalize_text(value: str) -> str:
-    value = DIACRITICS.sub("", value.translate(PERSIAN_TRANSLATION).lower())
+    value = DIACRITICS.sub("", value.translate(PERSIAN_TRANSLATION).casefold())
     return " ".join(NON_WORD.sub(" ", value).split())
 
 
@@ -154,14 +154,8 @@ def lexical_topic_score(
         for term in positive
         if normalize_text(term) not in GENERIC_TOPIC_TERMS
     }
-    if not specific_matches and len(set(positive)) < 2:
+    if not specific_matches:
         raw = min(raw, 0.35)
-    has_financial_context = any(
-        _contains_term(normalized_title, anchor) or _contains_term(normalized_text, anchor)
-        for anchor in FINANCE_ANCHORS
-    )
-    if not has_financial_context:
-        raw = min(raw, 0.2)
     raw = max(0.0, raw - min(len(negative) * 0.25, 0.75))
     return round(raw, 6), tuple(dict.fromkeys(positive)), negative
 

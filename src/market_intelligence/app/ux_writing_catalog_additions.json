@@ -1,4 +1,13 @@
 {
+  "جست‌وجوی رسانه‌های جدید": {
+    "fa": "جست‌وجوی رسانه‌های جدید", "en": "Find different media", "tr": "Farklı medya kaynakları bul", "ar": "البحث عن مصادر إعلامية أخرى", "it": "Trova altre fonti", "es": "Buscar otros medios", "de": "Weitere Medien finden", "fr": "Trouver d’autres médias"
+  },
+  "نتیجهٔ جدیدی پیدا نشد؛ کلیدواژه را دقیق‌تر کنید.": {
+    "fa": "نتیجهٔ جدیدی پیدا نشد؛ کلیدواژه را دقیق‌تر کنید.", "en": "No new results; refine the keyword.", "tr": "Yeni sonuç bulunamadı; anahtar kelimeyi daraltın.", "ar": "لا توجد نتائج جديدة؛ حدّد الكلمة المفتاحية بدقة أكبر.", "it": "Nessun nuovo risultato; precisa la parola chiave.", "es": "No hay resultados nuevos; precisa la palabra clave.", "de": "Keine neuen Ergebnisse; Suchbegriff präzisieren.", "fr": "Aucun nouveau résultat ; précisez le mot-clé."
+  },
+  "تا ۱۰ رسانهٔ عمومی از سراسر جهان جست‌وجو می‌شود. قبل از افزودن هر پیشنهاد آن را مرور کنید؛ برای رسانه‌های متفاوت بازخوانی کنید.": {
+    "fa": "تا ۱۰ رسانهٔ عمومی از سراسر جهان جست‌وجو می‌شود. قبل از افزودن هر پیشنهاد آن را مرور کنید؛ برای رسانه‌های متفاوت بازخوانی کنید.", "en": "Search worldwide for up to 10 public media sources. Review each suggestion before adding it; refresh to search for different publishers.", "tr": "Dünya genelinde en fazla 10 herkese açık medya kaynağı arayın. Eklemeden önce öneriyi inceleyin; farklı yayıncılar için yenileyin.", "ar": "ابحث عالميًا عن عشرة مصادر إعلامية عامة كحد أقصى. راجع كل اقتراح قبل إضافته؛ حدّث البحث للعثور على ناشرين آخرين.", "it": "Cerca fino a 10 fonti pubbliche nel mondo. Esamina ogni proposta prima di aggiungerla; aggiorna per cercare altri editori.", "es": "Busca hasta 10 medios públicos de todo el mundo. Revisa cada propuesta antes de añadirla; actualiza para buscar otros editores.", "de": "Weltweit nach bis zu 10 öffentlichen Medien suchen. Vorschläge vor dem Hinzufügen prüfen; für andere Anbieter erneut suchen.", "fr": "Recherchez jusqu’à 10 médias publics dans le monde. Vérifiez chaque suggestion avant l’ajout ; relancez pour trouver d’autres éditeurs."
+  },
   "ارسال آنی یک خبر": {
     "fa": "ارسال آنی یک خبر",
     "en": "Send one news item now",

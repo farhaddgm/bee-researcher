@@ -423,7 +423,7 @@ ADMIN_HTML = r'''<!doctype html>
       const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
       const skip=new Set(['SCRIPT','STYLE','INPUT','TEXTAREA','PRE','CODE']);let node;
       while(node=walker.nextNode()){
-        const parent=node.parentElement;if(!parent||skip.has(parent.tagName)||parent.closest('[data-language-select],[data-latin="true"]'))continue;
+        const parent=node.parentElement;if(!parent||skip.has(parent.tagName)||parent.closest('[data-language-select],[data-latin="true"],[data-dynamic-copy]'))continue;
         const raw=node.nodeValue||'',trimmed=raw.trim();if(!trimmed)continue;
         const key=uxCopyKey(trimmed),known=uxWritingCatalog[key]||copyMap[key]||copyPrefixes.some(([source])=>key.startsWith(source));
         if(!known)continue;
@@ -440,7 +440,7 @@ ADMIN_HTML = r'''<!doctype html>
       document.querySelectorAll('body *').forEach(el=>{
         // Language switch labels are intentionally bilingual product names;
         // do not translate the English button to «انگلیسی» in Persian mode.
-        if(el.children.length||el.closest('[data-label-fa]')||el.closest('[data-language-select]')||ids.has(el.id))return;
+        if(el.children.length||el.closest('[data-label-fa]')||el.closest('[data-language-select]')||el.closest('[data-dynamic-copy]')||ids.has(el.id))return;
         const visible=el.textContent.trim(),fa=el.dataset.faText||uxCopyKey(visible)||visible,key=uxCopyKey(fa);
         const known=uxWritingCatalog[key]||copyMap[key]||copyPrefixes.some(([source])=>String(key).startsWith(source));
         if(!fa||!known)return;
@@ -513,13 +513,14 @@ ADMIN_HTML = r'''<!doctype html>
     function fetchWithTimeout(url,options={},timeoutMs=20000){const started=performance.now(),method=String(options?.method||'GET').toUpperCase(),finish=(status,outcome)=>{try{window.__researchBeeTraceRequest?.(url,method,status,Math.max(0,Math.round(performance.now()-started)),outcome)}catch(_){}};if(typeof AbortController==='undefined'||options?.signal)return fetch(url,options).then(response=>{finish(response.status,'response');return response},error=>{finish(0,'error');throw error});const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),timeoutMs);return fetch(url,{...options,signal:controller.signal}).then(response=>{finish(response.status,'response');return response},error=>{finish(0,error?.name==='AbortError'?'timeout':'error');throw error}).finally(()=>clearTimeout(timer))}
     async function req(path,opts={}){
       const transition=authTransition,p=path==='/admin/api/topics'?scoped(path):(path.startsWith('/admin/api')?path:scoped(path)),method=String(opts.method||'GET').toUpperCase(),isGet=method==='GET',coalesceGet=opts.coalesceGet!==false,requestOptions={...opts};
-      delete requestOptions.coalesceGet;
+      const timeoutMs=Number(opts.timeoutMs)||20000;
+      delete requestOptions.coalesceGet;delete requestOptions.timeoutMs;
       /* Authenticated endpoints must not be touched until /me has committed
          the current user; otherwise an early 401 could invalidate bootstrap. */
       if(!state.currentUser&&p!=='/admin/api/login'&&p!=='/admin/api/me')throw Error('authentication bootstrap pending');
       if(isGet&&coalesceGet&&pendingGetRequests.has(p))return pendingGetRequests.get(p);
       const request=(async()=>{
-        const r=await fetchWithTimeout(p,{credentials:'include',...requestOptions,headers:requestHeaders(requestOptions)},20000);
+        const r=await fetchWithTimeout(p,{credentials:'include',...requestOptions,headers:requestHeaders(requestOptions)},timeoutMs);
         if(transition!==authTransition)throw Error(friendlyError('stale auth response'));
         if(r.status===401){const expire=()=>{if(transition===authTransition)showLogin()};if(p!=='/admin/api/login')expire();throw Error(friendlyError(p==='/admin/api/login'?'invalid credentials':'جلسه منقضی شده است'))}
         const text=await r.text();let body={};try{body=text?JSON.parse(text):{}}catch{body={detail:text}}
@@ -2306,6 +2307,8 @@ ADMIN_HTML = r'''<!doctype html>
     .info-tip{position:relative;display:inline-grid;place-items:center;width:18px;height:18px;margin-inline-start:6px;border:1px solid currentColor;border-radius:50%;background:transparent;color:var(--muted);font-size:11px;font-weight:800;vertical-align:middle;cursor:help}
     .info-tip-popup{position:absolute;z-index:80;inset-inline-start:0;top:calc(100% + 7px);width:min(280px,70vw);padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);box-shadow:var(--shadow);color:var(--ink);font-size:11px;font-weight:400;line-height:1.6;text-align:start;opacity:0;pointer-events:none;transform:translateY(-3px);transition:opacity .12s ease,transform .12s ease}
     .info-tip:hover .info-tip-popup,.info-tip:focus .info-tip-popup{opacity:1;pointer-events:auto;transform:none}
+    .label-info-row{display:flex;align-items:center;gap:6px;margin-block-end:8px}
+    .label-info-row label{margin:0}
     /* Page guidance is available on demand beside the heading so long
        explanatory subtitles never stretch or shift the page header. */
     .page-head-title{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
@@ -2411,7 +2414,10 @@ ADMIN_HTML = r'''<!doctype html>
 
       function localizeDashboard(){
         const e=en();
-        const ids={stepIngestText:label('فعال','Active'),stepAnalyzeText:'—',stepPublishText:label('خودکار','Automatic'),kpiHealth:label('سالم','Healthy'),kpiHealthNote:label('سرویس سالم است','Service is healthy')};
+        const healthy=state.health?.status==='healthy',pending=!state.health;
+        const ids={stepIngestText:state.scheduler?.enabled?label('فعال','Active'):label('خاموش','Disabled'),stepAnalyzeText:state.meta?.pipeline?.model||'—',stepPublishText:state.meta?.pipeline?.auto_publish?label('خودکار','Automatic'):label('تأیید دستی','Manual approval'),kpiHealth:pending?label('در حال بررسی','Checking'):healthy?label('سالم','Healthy'):label('نیازمند بررسی','Needs attention'),kpiHealthNote:healthy?label('سرویس سالم است','Service is healthy'):label('وابستگی‌های سرویس در دسترس نیستند','Service dependencies are unavailable')};
+        ['kpiHealth','kpiHealthNote','stepIngestText','stepAnalyzeText','stepPublishText'].forEach(id=>{const n=$(id);if(n){n.dataset.dynamicCopy='true';delete n.dataset.faText}});
+        if($('kpiHealthDot'))$('kpiHealthDot').className=healthy?'up':'down';
         Object.entries(ids).forEach(([id,value])=>{const n=$(id);if(n&&n.textContent!==value)n.textContent=value});const updated=$('pipelineUpdated');if(updated)updated.textContent='';
         const flow=[['دریافت محتوا',label('دریافت محتوا','Content ingestion'),label('جمع‌آوری از رسانه‌های انتخاب‌شده','Collect from selected media')],['تحلیل و ارتباط‌سنجی',label('تحلیل و ارتباط‌سنجی','Analysis and relevance'),label('تفکیک واقعیت، خلاصه و ارتباط با بیزینس','Separate facts, summary and business impact')],['بررسی و انتشار',label('بررسی و انتشار','Review and publish'),label('صف تأیید و کانال تلگرام','Approval queue and Telegram channel')]];
         document.querySelectorAll('#view-overview .timeline-row').forEach((row,i)=>{const item=flow[i];if(!item)return;const b=row.querySelector('b'),small=row.querySelector('small');if(b&&b.textContent!==item[1])b.textContent=item[1];if(small&&small.textContent!==item[2])small.textContent=item[2]});
@@ -4001,7 +4007,7 @@ ADMIN_HTML = r'''<!doctype html>
           healthTitle:'Media health check',healthIntro:'Each active source was checked with the same connector and parser used by collection. No content was published.',
           media:'Media',healthy:'Healthy',degraded:'Needs attention',failed:'Unavailable',checked:'Checked',items:'readable items',
           none:'There are no active media sources to check.',
-          suggestTitle:'Suggest media',suggestIntro:'Describe a keyword and optional angle. Up to five credible public media sources will be suggested for this assistant; no source is added automatically.',
+          suggestTitle:'Suggest media',suggestIntro:'Search worldwide for up to 10 public media sources. Review each suggestion before adding it; refresh to search for different publishers.',
           keyword:'Keyword',keywordHint:'For example: embedded finance, AI policy, retail banking',search:'Find media',searching:'Searching…',suggested:'Media suggestions are ready below the list.',noSuggestions:'No suitable media was identified for this search.',
           required:'Enter a media name first.',keywordRequired:'Enter a keyword first.'
         }:{
@@ -4018,7 +4024,7 @@ ADMIN_HTML = r'''<!doctype html>
           healthTitle:'نتیجه سلامت رسانه‌ها',healthIntro:'هر رسانهٔ فعال با همان اتصال و parser مورد استفاده در خزش بررسی شد. در این عملیات هیچ محتوایی منتشر نمی‌شود.',
           media:'رسانه',healthy:'سالم',degraded:'نیازمند بررسی',failed:'در دسترس نیست',checked:'بررسی‌شده',items:'مورد قابل‌خواندن',
           none:'رسانهٔ فعالی برای بررسی وجود ندارد.',
-          suggestTitle:'پیشنهاد رسانه',suggestIntro:'کلیدواژه و در صورت نیاز زاویهٔ موردنظر را بنویسین. حداکثر پنج رسانهٔ عمومی و معتبر برای همین دستیار پیشنهاد می‌شود و هیچ رسانه‌ای خودکار ثبت نخواهد شد.',
+          suggestTitle:'پیشنهاد رسانه',suggestIntro:'تا ۱۰ رسانهٔ عمومی از سراسر جهان جست‌وجو می‌شود. قبل از افزودن هر پیشنهاد آن را مرور کنید؛ برای رسانه‌های متفاوت بازخوانی کنید.',
           keyword:'کلیدواژه',keywordHint:'مثلاً بانکداری باز، هوش مصنوعی یا فین‌تک',search:'پیشنهاد رسانه',searching:'در حال جست‌وجو…',suggested:'پیشنهادهای رسانه زیر فهرست نمایش داده شدند.',noSuggestions:'برای این جست‌وجو رسانهٔ مناسب و قابل اتکایی پیدا نشد.',
           required:'ابتدا نام رسانه را وارد کنین.',keywordRequired:'ابتدا کلیدواژه را وارد کنین.'
         }
@@ -4041,7 +4047,10 @@ ADMIN_HTML = r'''<!doctype html>
           if(!name){toast(c.required,true);$('mediaDraftName')?.focus();return}
           const submit=$('modalSubmit');submit.disabled=true;submit.textContent=c.reviewing;
           try{
-            const response=await req('/admin/api/assistants/'+encodeURIComponent(state.assistantId)+'/sources/draft',{method:'POST',body:JSON.stringify({name,instruction:$('mediaDraftInstruction')?.value.trim()||''})});
+            const assistantId=state.assistantId;
+            const response=await req('/admin/api/assistants/'+encodeURIComponent(assistantId)+'/sources/draft',{method:'POST',timeoutMs:150000,body:JSON.stringify({name,instruction:$('mediaDraftInstruction')?.value.trim()||''})});
+            if(assistantId!==state.assistantId){closeModal();return}
+            response.assistantId=assistantId;
             openMediaDraftReview(response,name);
           }catch(error){submit.disabled=false;submit.textContent=c.review;toast(friendlyError(error.message),true)}
         },c.review);
@@ -4075,6 +4084,10 @@ ADMIN_HTML = r'''<!doctype html>
           }catch(error){submit.disabled=false;submit.textContent=c.save;toast(friendlyError(error.message),true)}
         },c.save);
       };
+      loadSourceSuggestions=async function(){
+        const id=state.assistantId,root=$('sourceSuggestionsRows'),card=$('sourceSuggestionsCard');if(!id||!root||!card)return;
+        try{const payload=await req('/admin/api/assistants/'+encodeURIComponent(id)+'/source-suggestions');if(id!==state.assistantId)return;const rows=payload.suggestions||[];card.classList.toggle('hidden',!rows.length&&state.mediaDiscovery?.assistantId!==id);root.innerHTML=rows.map(row=>{const d=row.draft||{},links=(d.evidence||[]).filter(url=>/^https?:\/\//i.test(url)).slice(0,3);return `<article class="channel-card"><div class="channel-card-head"><div><b>${esc(d.name||row.name)}</b><span class="muted">${esc(d.summary||'')}</span></div><span class="status draft">${esc(localeLabel('در انتظار تأیید مالک','Pending owner approval'))}</span></div><p>${esc(d.fit_reason||'')}</p><div class="muted">${esc([d.region,d.language].filter(Boolean).join(' · '))}</div><div class="media-evidence">${links.map(url=>`<a href="${esc(url)}" target="_blank" rel="noopener noreferrer" data-latin="true">${esc(url)}</a>`).join('<br>')}</div>${payload.can_approve?`<div class="card-actions"><button type="button" class="btn small danger" data-media-reject="${esc(row.id)}">${esc(localeLabel('رد','Reject'))}</button><button type="button" class="btn small primary" data-media-approve="${esc(row.id)}">${esc(localeLabel('تأیید و بررسی اتصال','Approve and check connection'))}</button></div>`:''}</article>`}).join('');root.querySelectorAll('[data-media-approve],[data-media-reject]').forEach(button=>button.addEventListener('click',async()=>{button.disabled=true;try{const approve=Boolean(button.dataset.mediaApprove),suggestion=button.dataset.mediaApprove||button.dataset.mediaReject;await req('/admin/api/assistants/'+encodeURIComponent(id)+'/source-suggestions/'+encodeURIComponent(suggestion)+'/'+(approve?'approve':'reject'),{method:'POST',timeoutMs:120000});if(id===state.assistantId){await loadAll();await loadSourceSuggestions()}}catch(error){button.disabled=false;toast(friendlyError(error.message),true)}}));synchronize()}catch(error){toast(friendlyError(error.message),true)}
+      };
       const openSuggestions=()=>{
         if(!ensureAssistant())return;
         const c=copy();
@@ -4082,7 +4095,10 @@ ADMIN_HTML = r'''<!doctype html>
           const keyword=$('mediaSuggestKeyword')?.value.trim();if(!keyword){toast(c.keywordRequired,true);$('mediaSuggestKeyword')?.focus();return}
           const submit=$('modalSubmit');submit.disabled=true;submit.textContent=c.searching;
           try{
-            const response=await req('/admin/api/assistants/'+encodeURIComponent(state.assistantId)+'/source-suggestions',{method:'POST',body:JSON.stringify({name:keyword,instruction:$('mediaSuggestInstruction')?.value.trim()||''})});
+            const assistantId=state.assistantId,instruction=$('mediaSuggestInstruction')?.value.trim()||'';
+            const response=await req('/admin/api/assistants/'+encodeURIComponent(assistantId)+'/source-suggestions',{method:'POST',timeoutMs:110000,body:JSON.stringify({name:keyword,instruction})});
+            if(assistantId!==state.assistantId){closeModal();return}
+            state.mediaDiscovery={assistantId,name:keyword,instruction,page:0,provider:response.provider,providerStatus:response.provider_status};
             closeModal();await loadSourceSuggestions();
             if(Number(response.count||0)>0){toast(c.suggested);return}
             const alternatives=(response.alternatives||[]).map(value=>String(value).trim()).filter(Boolean).slice(0,3);
@@ -4109,11 +4125,60 @@ ADMIN_HTML = r'''<!doctype html>
         if(probe)probe.textContent=c.health;
         if(suggest)suggest.textContent=c.discover;
         if(add)add.textContent='＋ '+c.add;
+        const card=$('sourceSuggestionsCard');
+        let refresh=$('refreshMediaDiscovery');
+        if(card&&!refresh){refresh=document.createElement('button');refresh.id='refreshMediaDiscovery';refresh.type='button';refresh.className='btn small';card.prepend(refresh);refresh.addEventListener('click',async()=>{const search=state.mediaDiscovery;if(!search||search.assistantId!==state.assistantId)return;refresh.disabled=true;try{const page=Math.min(search.page+1,9);const response=await req('/admin/api/assistants/'+encodeURIComponent(search.assistantId)+'/source-suggestions',{method:'POST',timeoutMs:110000,body:JSON.stringify({...search,page})});if(search.assistantId!==state.assistantId)return;search.page=page;await loadSourceSuggestions();if(!response.count)toast(localeLabel('نتیجهٔ جدیدی پیدا نشد؛ کلیدواژه را دقیق‌تر کنید.','No new results; refine the keyword.'))}catch(error){toast(friendlyError(error.message),true)}finally{refresh.disabled=false}})}
+        if(refresh){refresh.textContent=localeLabel('جست‌وجوی رسانه‌های جدید','Find different media');refresh.hidden=!state.mediaDiscovery||state.mediaDiscovery.assistantId!==state.assistantId}
+        let provider=$('mediaDiscoveryProvider');
+        if(card&&!provider){provider=document.createElement('p');provider.id='mediaDiscoveryProvider';provider.className='muted';provider.setAttribute('data-dynamic-copy','');card.prepend(provider)}
+        if(provider){const search=state.mediaDiscovery,labels={fa:'موتور جست‌وجو',en:'Search provider',tr:'Arama sağlayıcısı',ar:'مزود البحث',de:'Suchanbieter',fr:'Moteur de recherche',es:'Proveedor de búsqueda',it:'Motore di ricerca'};provider.hidden=!search||search.assistantId!==state.assistantId;provider.textContent=(labels[state.language]||labels.en)+': '+(search?.provider==='google'?'Google':search?.provider==='openai_web_search'?'OpenAI web search':localeLabel('فهرست محلی؛ جست‌وجوی زنده در دسترس نیست','Local directory; live search unavailable'))}
       };
       synchronize();
       const originalLanguage=window.setLanguage;
       if(typeof originalLanguage==='function')window.setLanguage=function(language){const result=originalLanguage(language);synchronize();return result};
       document.addEventListener('change',()=>requestAnimationFrame(synchronize),true);
+    })();
+  </script>
+  <script id="project-relevance-settings">
+    (function(){
+      const texts={
+        fa:['ارتباط‌سنجی خبر','حداقل امتیاز ارتباط پروژه','خبر باید هم به این آستانه و هم به آستانهٔ موضوع برسد. امتیاز هوش مصنوعی پیش از انتخاب خبر محاسبه می‌شود.','ذخیره','تحلیل هوش مصنوعی فعال است','تحلیل هوش مصنوعی پیکربندی نشده؛ خبرها خودکار منتشر نمی‌شوند'],
+        en:['News relevance','Minimum project relevance','News must meet both this threshold and the topic threshold. AI scores are computed before news selection.','Save','AI analysis is enabled','AI analysis is not configured; news will not be published automatically'],
+        tr:['Haber ilgililiği','Proje için asgari ilgililik puanı','Haber hem bu eşiği hem de konu eşiğini karşılamalıdır. Yapay zekâ puanları haber seçilmeden önce hesaplanır.','Kaydet','Yapay zekâ analizi etkin','Yapay zekâ analizi yapılandırılmadı; haberler otomatik yayımlanmaz'],
+        ar:['صلة الأخبار','الحد الأدنى لدرجة الصلة بالمشروع','يجب أن يبلغ الخبر هذا الحد وحد الموضوع معًا. تُحسب درجة الذكاء الاصطناعي قبل اختيار الخبر.','حفظ','تحليل الذكاء الاصطناعي مفعّل','تحليل الذكاء الاصطناعي غير مُعدّ؛ لن تُنشر الأخبار تلقائيًا'],
+        de:['Nachrichtenrelevanz','Mindest­relevanz für das Projekt','Nachrichten müssen diesen und den Themen-Schwellenwert erreichen. KI-Bewertungen erfolgen vor der Auswahl.','Speichern','KI-Analyse ist aktiviert','KI-Analyse ist nicht eingerichtet; Nachrichten werden nicht automatisch veröffentlicht'],
+        fr:['Pertinence des actualités','Seuil minimal du projet','Une actualité doit atteindre ce seuil et celui du sujet. Le score IA est calculé avant la sélection.','Enregistrer','Analyse IA activée','Analyse IA non configurée ; aucune publication automatique'],
+        es:['Relevancia de las noticias','Relevancia mínima del proyecto','La noticia debe alcanzar este umbral y el del tema. La IA calcula la puntuación antes de seleccionar noticias.','Guardar','Análisis con IA activado','La IA no está configurada; no se publicarán noticias automáticamente'],
+        it:['Pertinenza delle notizie','Pertinenza minima del progetto','Le notizie devono raggiungere questa soglia e quella dell’argomento. Il punteggio IA viene calcolato prima della selezione.','Salva','Analisi IA attiva','Analisi IA non configurata; nessuna pubblicazione automatica']
+      };
+      function render(){
+        const root=$('view-settings');if(!root)return;
+        let card=$('projectRelevanceCard');
+        if(!card){
+          card=document.createElement('section');card.id='projectRelevanceCard';card.className='card';card.setAttribute('data-dynamic-copy','');
+          card.innerHTML='<h3 id="projectRelevanceTitle"></h3><div class="field"><div class="label-info-row"><label for="projectRelevanceThreshold" id="projectRelevanceLabel"></label><button type="button" class="info-tip" id="projectRelevanceInfo" aria-describedby="projectRelevanceHelp">i<span id="projectRelevanceHelp" class="info-tip-popup" role="tooltip"></span></button></div><input id="projectRelevanceThreshold" type="number" min="0" max="1" step="0.05" required><p id="projectAIState" class="muted"></p></div><div class="card-actions"><button id="saveProjectRelevance" type="button" class="btn primary"></button></div>';
+          root.append(card);
+          $('saveProjectRelevance').addEventListener('click',async()=>{
+            const button=$('saveProjectRelevance'),input=$('projectRelevanceThreshold'),id=state.assistantId,value=Number(input.value);
+            if(!id||!input.reportValidity())return;
+            button.disabled=true;
+            try{
+              const result=await req('/admin/api/assistants/'+encodeURIComponent(id)+'/runtime-settings',{method:'PUT',body:JSON.stringify({relevance_threshold:value})});
+              if(id===state.assistantId){state.runtimeSettings=result;render()}
+              toast(localeLabel('ذخیره شد','Saved'));
+            }catch(error){toast(friendlyError(error.message),true)}finally{button.disabled=false}
+          });
+        }
+        const t=texts[state.language]||texts.en;
+        $('projectRelevanceTitle').textContent=t[0];$('projectRelevanceLabel').textContent=t[1];
+        $('projectRelevanceInfo').setAttribute('aria-label',t[1]);$('projectRelevanceHelp').textContent=t[2];
+        if(document.activeElement!==$('projectRelevanceThreshold'))$('projectRelevanceThreshold').value=state.runtimeSettings?.relevance_threshold??state.meta?.pipeline?.relevance_threshold??0.45;
+        const queueLabels={fa:'خبر در صف امتیازدهی هوش مصنوعی',en:'articles awaiting AI relevance scores',tr:'yapay zekâ ilgililik puanı bekleyen haber',ar:'أخبار تنتظر تقييم الصلة بالذكاء الاصطناعي',de:'Artikel warten auf KI-Relevanzbewertung',fr:'articles en attente du score de pertinence IA',es:'noticias pendientes de puntuación de relevancia IA',it:'notizie in attesa del punteggio di pertinenza IA'};
+        $('projectAIState').textContent=t[state.runtimeSettings?.ai_analysis_ready?4:5]+(Number.isFinite(state.metrics?.pending_ai_articles)?' · '+new Intl.NumberFormat(state.language||'en').format(state.metrics.pending_ai_articles)+' '+(queueLabels[state.language]||queueLabels.en):'');
+        $('saveProjectRelevance').textContent=t[3];$('saveProjectRelevance').hidden=!['admin','assistant_admin','editor','owner'].includes(state.currentUser?.role)&&!state.currentUser?.is_owner;
+      }
+      const baseLoad=loadAll;loadAll=async function(){await baseLoad.apply(this,arguments);render()};
+      const baseLanguage=setLanguage;setLanguage=function(){const value=baseLanguage.apply(this,arguments);render();return value};window.setLanguage=setLanguage;render();
     })();
   </script>
 <style id="google-login-style">#login.google-only #loginForm{display:none!important}.google-login{display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}.google-login[hidden]{display:none!important}#googleAccessPanel table{width:100%}#googleAccessPanel td,#googleAccessPanel th{padding:6px 8px;text-align:start}#googleAccessPanel .actions{display:flex;gap:6px;flex-wrap:wrap}</style>

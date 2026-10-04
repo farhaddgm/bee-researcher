@@ -627,6 +627,45 @@ def parse_html_listing(
     return items
 
 
+class PublicFeedLinks(HTMLParser):
+    """Only publisher-advertised alternate feeds; never guess URL paths."""
+    def __init__(self, base_url: str):
+        super().__init__()
+        self.base_url = base_url
+        self.links: list[tuple[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        kind = str(attributes.get("type") or "").lower().split(";")[0].strip()
+        if tag.lower() == "link" and "alternate" in str(attributes.get("rel") or "").lower().split() and kind in {"application/rss+xml", "application/atom+xml", "application/feed+json"}:
+            try:
+                url = validate_public_url_syntax(urljoin(self.base_url, str(attributes.get("href") or "")))
+                if attributes.get("href"):
+                    pair = (url, "json" if kind == "application/feed+json" else "rss")
+                    if pair not in self.links:
+                        self.links.append(pair)
+            except ValueError:
+                pass
+
+
+class PublicPublisherLinks(HTMLParser):
+    def __init__(self, base_url: str):
+        super().__init__()
+        self.base_url = base_url
+        self.links: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        href = dict(attrs).get("href")
+        if not href or len(self.links) >= 500:
+            return
+        try:
+            self.links.append(validate_public_url_syntax(urljoin(self.base_url, href)))
+        except ValueError:
+            pass
+
+
 class SourceFetcher:
     def __init__(
         self,
@@ -719,6 +758,35 @@ class SourceFetcher:
         parser.parse(response.text.splitlines())
         allowed = parser.can_fetch(self.settings.fetch_user_agent, source.fetch_url)
         return allowed, "allowed" if allowed else "denied"
+
+    async def publisher_links(self, reference_url: str) -> list[str]:
+        """Corroborate an official homepage linked by a real search result."""
+        url = validate_public_url_syntax(reference_url)
+        source = SourceSpec(source_key="REFERENCE", name="Publisher reference", homepage_url=url, fetch_url=url, adapter="html", max_retries=0)
+        async with httpx.AsyncClient(timeout=5, follow_redirects=False, headers={"User-Agent": self.settings.fetch_user_agent}, transport=self.transport) as client:
+            allowed, _ = await self._robots_allowed(client, source)
+            if not allowed:
+                return []
+            response = await self._request(client, url)
+            if response.status_code != 200 or len(response.content) > 2_000_000:
+                return []
+            parser = PublicPublisherLinks(str(response.url))
+            parser.feed(response.text)
+            return parser.links
+
+    async def discover_feeds(self, homepage: str) -> list[tuple[str, str]]:
+        homepage = validate_public_url_syntax(homepage)
+        source = SourceSpec(source_key="DISCOVER", name="Feed discovery", homepage_url=homepage, fetch_url=homepage, adapter="html", max_retries=0)
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False, headers={"User-Agent": self.settings.fetch_user_agent}, transport=self.transport) as client:
+            allowed, _ = await self._robots_allowed(client, source)
+            if not allowed:
+                return []
+            response = await self._request(client, homepage)
+            if response.status_code != 200 or len(response.content) > 2_000_000:
+                return []
+            parser = PublicFeedLinks(str(response.url))
+            parser.feed(response.text)
+            return parser.links[:3]
 
     async def fetch(self, source: SourceSpec) -> FetchResult:
         headers: dict[str, str] = self._connector_headers(source)
