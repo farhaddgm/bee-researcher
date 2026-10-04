@@ -23,6 +23,7 @@ from sqlalchemy import case, delete, func, or_, select, text, true, update
 from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
+from app.ai_models import SUPPORTED_ANALYSIS_MODELS, analysis_model_options
 from app.database import SessionLocal
 from app.models import (
     AdminAuditLog,
@@ -772,8 +773,7 @@ class AssistantRuntimeSettingsUpdate(BaseModel):
             return None
         # Keep the selector explicit and auditable; arbitrary model strings
         # must never be able to bypass the deployment's supported set.
-        allowed = {"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"}
-        if value not in allowed:
+        if value not in SUPPORTED_ANALYSIS_MODELS:
             raise ValueError("analysis_model is not in the supported model list")
         return value
 
@@ -4548,6 +4548,7 @@ async def get_assistant_runtime_settings(assistant_id: uuid.UUID, user: AdminUse
         "limits": limits,
         "telegram_silent_notifications": bool(runtime.get("telegram_silent_notifications", False)),
         "analysis_model": runtime.get("analysis_model", get_settings().analysis_model),
+        "analysis_model_options": analysis_model_options(),
         "relevance_threshold": runtime.get("relevance_threshold", app_settings.relevance_threshold if assistant_id == DEFAULT_ASSISTANT_ID else 0.0),
         "ai_analysis_ready": app_settings.openai_ready,
         "allowed_feedback_usernames": list(runtime.get("allowed_feedback_usernames", sorted(get_settings().allowed_telegram_username_values))),

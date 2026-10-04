@@ -5,7 +5,7 @@ services:
   market-intelligence:
     image: ${MARKET_INTELLIGENCE_IMAGE_REF:?verified release digest is required}
     environment:
-      MARKET_INTELLIGENCE_VERSION: "3.32.0"
+      MARKET_INTELLIGENCE_VERSION: "3.33.0"
       MARKET_INTELLIGENCE_BUILD_REVISION: ${MARKET_INTELLIGENCE_BUILD_REVISION:?verified source commit is required}
       MARKET_INTELLIGENCE_IMAGE_DIGEST: ${MARKET_INTELLIGENCE_IMAGE_DIGEST:?verified image digest is required}
       # Explicit owner approval: requested media discovery and relevance AI.

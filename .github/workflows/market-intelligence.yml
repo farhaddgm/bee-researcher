@@ -141,6 +141,7 @@ jobs:
           npm run admin:support:e2e
           npm run user:e2e
           npm run admin:media:e2e
+          npm run admin:models:e2e
       - name: Run isolated SQL media and publication integration
         env:
           PYTHONPATH: src/market_intelligence

@@ -8,7 +8,8 @@
     "admin:locales": "node scripts/verify_admin_locales.mjs",
     "user:e2e": "node scripts/verify_user_portal.mjs",
     "admin:support:e2e": "node scripts/verify_admin_support.mjs",
-    "admin:media:e2e": "node scripts/verify_media_relevance.mjs"
+    "admin:media:e2e": "node scripts/verify_media_relevance.mjs",
+    "admin:models:e2e": "node scripts/verify_ai_model_settings.mjs"
   },
   "devDependencies": {
     "playwright": "1.55.1"

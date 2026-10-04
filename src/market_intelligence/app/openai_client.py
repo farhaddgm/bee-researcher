@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from app.config import Settings
+from app.ai_models import NEW_MODEL_TOKEN_PRICES
 
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
@@ -309,6 +310,13 @@ class OpenAIClient:
     def configured(self) -> bool:
         return self.settings.openai_ready
 
+    def _estimated_token_cost(self, input_tokens: int, output_tokens: int) -> float:
+        input_rate, output_rate = NEW_MODEL_TOKEN_PRICES.get(
+            self.settings.analysis_model,
+            (self.settings.model_input_usd_per_million_tokens, self.settings.model_output_usd_per_million_tokens),
+        )
+        return (input_tokens * input_rate + output_tokens * output_rate) / 1_000_000
+
     def _headers(self) -> dict[str, str]:
         if not self.settings.external_analysis_approved:
             raise RuntimeError("external OpenAI analysis is not explicitly approved")
@@ -488,10 +496,7 @@ class OpenAIClient:
         usage = result.get("usage") or {}
         input_tokens = int(usage.get("input_tokens") or 0)
         output_tokens = int(usage.get("output_tokens") or 0)
-        estimated_cost = (
-            input_tokens * self.settings.model_input_usd_per_million_tokens
-            + output_tokens * self.settings.model_output_usd_per_million_tokens
-        ) / 1_000_000
+        estimated_cost = self._estimated_token_cost(input_tokens, output_tokens)
         return StructuredAnalysis(
             payload=parsed,
             model=str(result.get("model") or self.settings.analysis_model),
@@ -568,10 +573,7 @@ class OpenAIClient:
         usage = result.get("usage") or {}
         input_tokens = int(usage.get("input_tokens") or 0)
         output_tokens = int(usage.get("output_tokens") or 0)
-        estimated_cost = (
-            input_tokens * self.settings.model_input_usd_per_million_tokens
-            + output_tokens * self.settings.model_output_usd_per_million_tokens
-        ) / 1_000_000
+        estimated_cost = self._estimated_token_cost(input_tokens, output_tokens)
         return StructuredMarketAnalysis(
             payload=parsed,
             model=str(result.get("model") or self.settings.analysis_model),

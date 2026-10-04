@@ -16,7 +16,7 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 
 class Settings(BaseSettings):
     app_name: str = "Bee Researcher"
-    version: str = "3.32.0"
+    version: str = "3.33.0"
     build_revision: str = "unknown"
     image_digest: str | None = None
     environment: str = "production"

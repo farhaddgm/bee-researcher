@@ -396,6 +396,8 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
         )
         self.assertEqual(["farhaadnoroozi"], settings.allowed_feedback_usernames)
         self.assertEqual(7, settings.freshness_window_days)
+        for model in ("gpt-6.1-sol", "gpt-6-luna", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"):
+            self.assertEqual(model, AssistantRuntimeSettingsUpdate(analysis_model=model).analysis_model)
         with self.assertRaises(ValidationError):
             AssistantRuntimeSettingsUpdate(analysis_model="arbitrary-model")
         for invalid in (0, 31):
