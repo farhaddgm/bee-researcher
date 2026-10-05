@@ -63,6 +63,7 @@ const collectionAlerts = {
   fr: { title: 'Collecte et analyse en retard', detail: 'Cet assistant possède des sources actives, mais aucune exécution réussie n’est enregistrée ou la dernière date de plus de 36 heures.', last: 'Dernière exécution réussie', none: 'Aucune exécution réussie enregistrée', severity: { critical: 'Critique', warning: 'Avertissement' }, sources: 'Sources actives', action: 'Vérifier le calendrier' },
 };
 const viewNames = await page.locator('.nav-btn[data-view]').evaluateAll(nodes => [...new Set(nodes.map(node => node.dataset.view).filter(Boolean))]);
+const reportProse = 'خبر ۱۲۳: OpenAI API';
 for (const language of languages) {
   await page.evaluate(value => window.setLanguage?.(value), language);
   await page.evaluate(() => window.setView?.('support'));
@@ -180,17 +181,17 @@ for (const language of languages) {
 // translated as the admin switches language. Use an isolated client fixture;
 // no article or publication is created or edited on the server.
 for (const language of languages) {
-  await page.evaluate(locale => {
+  await page.evaluate(({ locale, prose }) => {
     window.setLanguage(locale);
     window.setView('content');
-    state.publications = [{ id: 'report-language-fixture', status: 'preview', message_text: 'خبر', source_name: 'TechCrunch', created_at: new Date().toISOString() }];
+    state.publications = [{ id: 'report-language-fixture', status: 'preview', message_text: prose, source_name: 'TechCrunch', created_at: new Date().toISOString() }];
     renderPublications();
     openPublication('report-language-fixture');
     translateStaticCopy();
-  }, language);
+  }, { locale: language, prose: reportProse });
   for (const selector of ['.publication-news-cell button', '#articleDetail .article-title', '#articleDetail .article-body']) {
     const text = (await page.locator(selector).first().textContent()).trim();
-    if (text !== 'خبر') throw new Error(`Report prose was changed by UX locale ${language}: ${selector} = ${text}`);
+    if (text !== reportProse) throw new Error(`Report prose was changed by UX locale ${language}: ${selector} = ${text}`);
   }
   await page.evaluate(() => document.querySelector('#closeDrawer')?.click());
 }

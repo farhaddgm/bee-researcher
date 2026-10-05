@@ -417,7 +417,7 @@ ADMIN_HTML = r'''<!doctype html>
     };
     // News/report prose follows the source's output language, never the UX
     // dictionary. A matching word such as «خبر» is data, not a menu label.
-    const reportProseSelector='.publication-news-cell,.article-title,.article-body,#recentRows button';
+    const reportProseSelector='.publication-news-cell,.article-title,.article-body,#recentRows button,[data-user-content="true"]';
     function translateTextNodes(scope=document.body){
       if(!scope)return;
       const root=scope.nodeType===Node.TEXT_NODE?scope.parentElement:scope;
@@ -865,7 +865,7 @@ ADMIN_HTML = r'''<!doctype html>
     function displayDigits(value){return toFaDigits(value)}
     function localizeVisibleNumbers(){
       const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);const skip=new Set(['SCRIPT','STYLE','INPUT','TEXTAREA','PRE','CODE']);let node;
-      while(node=walker.nextNode()){const parent=node.parentElement;if(!parent||skip.has(parent.tagName)||parent.closest('[data-latin="true"]'))continue;const next=displayDigits(node.nodeValue);if(node.nodeValue!==next)node.nodeValue=next}
+      while(node=walker.nextNode()){const parent=node.parentElement;if(!parent||skip.has(parent.tagName)||parent.closest('[data-latin="true"]')||parent.closest(reportProseSelector))continue;const next=displayDigits(node.nodeValue);if(node.nodeValue!==next)node.nodeValue=next}
       const max=$('maxItemsPerRun');if(max&&state.runtimeSettings){const next=displayDigits(state.runtimeSettings.max_items_per_run??2);if(max.value!==next)max.value=next}
     }
     function openNewUserModal(){modal('افزودن کاربر',`<div class="form-grid"><div class="field"><label>نام کاربری</label><input id="uName" autocomplete="username"></div><div class="field"><label>نقش</label><select id="uRole"><option value="viewer">مشاهده‌گر</option><option value="analyst">تحلیل‌گر</option><option value="editor">ویرایشگر</option><option value="assistant_admin">مدیر دستیار</option><option value="admin">مدیر اصلی</option></select></div><div class="field full"><label>رمز عبور (حداقل ۱۲ کاراکتر)</label><input id="uPass" type="password" autocomplete="new-password"></div></div>`,async()=>{try{await req('/admin/api/users',{method:'POST',body:JSON.stringify({username:$('uName').value.trim(),password:$('uPass').value,role:$('uRole').value})});closeModal();toast('کاربر ساخته شد');loadUsers()}catch(err){toast(friendlyError(err.message),true)}});translateStaticCopy()}
@@ -1350,7 +1350,7 @@ ADMIN_HTML = r'''<!doctype html>
           // Article titles, source names, project names and error details are
           // user/source data, not UX Writing.  Leave those values in their
           // original language even when the shell locale changes.
-          if(node.children.length||node.closest('[data-language-select]')||node.closest('#recentRows,#publicationRows,#healthRows,#sourceRows,#topicRows,#assistantGrid,#businessSummary,#telegramDetails,#userRows,#sessionRows'))return;
+          if(node.children.length||node.closest('[data-language-select]')||node.closest(reportProseSelector)||node.closest('#recentRows,#publicationRows,#healthRows,#sourceRows,#topicRows,#assistantGrid,#businessSummary,#telegramDetails,#userRows,#sessionRows'))return;
           const raw=node.dataset.miFaText||node.textContent.trim();if(!raw||!persian.test(raw))return;const translated=label(raw);if(valid(translated)){node.dataset.miFaText=raw;setText(node,translated)}
         });
         dashboard();
@@ -2695,7 +2695,7 @@ ADMIN_HTML = r'''<!doctype html>
       const base=window.setLanguage||setLanguage;
       names.fr='Français';
       function ensureOptions(){document.querySelectorAll('[data-language-select]').forEach(select=>{Object.entries(names).forEach(([value,label])=>{if(!select.querySelector('option[value="'+value+'"]')){const option=document.createElement('option');option.value=value;option.textContent=label;select.appendChild(option)}});select.value=state.language})}
-      function translateNewLocale(){if(state.language==='en'||state.language==='fa')return;translateTextNodes(document.body);document.querySelectorAll('[data-label-fa][data-label-en]').forEach(node=>{const value=translatedCopy(node.dataset.labelFa||'');if(node.classList.contains('nav-btn')){const text=node.querySelector('.nav-text');if(text)text.textContent=value}else node.textContent=value});document.querySelectorAll('body *').forEach(node=>{if(node.children.length||node.closest('[data-language-select]'))return;const raw=node.dataset.faText||node.textContent.trim();if(!raw)return;const key=node.dataset.faText||reverseCopyMap[raw]||raw;const translated=translatedCopy(key);if(translated&&translated!==raw)node.textContent=translated});const title=document.getElementById('pageTitle');if(title&&title.dataset.faText)title.textContent=translatedCopy(title.dataset.faText)}
+      function translateNewLocale(){if(state.language==='en'||state.language==='fa')return;translateTextNodes(document.body);document.querySelectorAll('[data-label-fa][data-label-en]').forEach(node=>{if(node.closest(reportProseSelector))return;const value=translatedCopy(node.dataset.labelFa||'');if(node.classList.contains('nav-btn')){const text=node.querySelector('.nav-text');if(text)text.textContent=value}else node.textContent=value});document.querySelectorAll('body *').forEach(node=>{if(node.children.length||node.closest('[data-language-select]')||node.closest(reportProseSelector))return;const raw=node.dataset.faText||node.textContent.trim();if(!raw)return;const key=node.dataset.faText||reverseCopyMap[raw]||raw;const translated=translatedCopy(key);if(translated&&translated!==raw)node.textContent=translated});const title=document.getElementById('pageTitle');if(title&&title.dataset.faText)title.textContent=translatedCopy(title.dataset.faText)}
       window.setLanguage=function(language){const value=supportedLanguages[language]?language:'en';const result=base.call(this,value);state.language=value;localStorage.setItem('research_bee_language',value);ensureOptions();document.documentElement.lang=value;document.documentElement.dir=supportedLanguages[value].dir;translateNewLocale();return result};setLanguage=window.setLanguage;ensureOptions();document.querySelectorAll('[data-language-select]').forEach(select=>select.addEventListener('change',event=>window.setLanguage(event.target.value)));translateNewLocale();
       // Restore a previously selected locale after the additive wrapper is
       // installed. This prevents the legacy FA/EN setter from collapsing a
@@ -2881,7 +2881,7 @@ ADMIN_HTML = r'''<!doctype html>
           selectors.forEach(selector=>document.querySelectorAll(selector).forEach(root=>{
             const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);let node;
             while(node=walker.nextNode()){
-              const parent=node.parentElement;if(!parent||['SCRIPT','STYLE','INPUT','TEXTAREA','PRE','CODE','OPTION'].includes(parent.tagName)||parent.closest(ignored))continue;
+              const parent=node.parentElement;if(!parent||['SCRIPT','STYLE','INPUT','TEXTAREA','PRE','CODE','OPTION'].includes(parent.tagName)||parent.closest(ignored)||parent.closest(reportProseSelector))continue;
               // Only reviewed catalog aliases and known composite counters are
               // rewritten. Arbitrary user-entered values remain unchanged.
               const raw=node.nodeValue||'',trimmed=raw.trim();if(!trimmed)continue;
