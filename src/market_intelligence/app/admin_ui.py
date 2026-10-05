@@ -415,6 +415,9 @@ ADMIN_HTML = r'''<!doctype html>
       const labels={limitsTitle:['تنظیمات پروژه','Project settings'],limitsSubtitle:['سقف‌های قابل تنظیم برای پروژهٔ انتخاب‌شده؛ فقط مالک می‌تواند آن‌ها را تغییر دهد.','Adjustable limits for the selected project; only the owner can change them.'],limitsNotice:['این سقف‌ها جدا از سقف پردازش ۱۰۰۰ خبر روزانه اعمال می‌شوند.','These limits are separate from the daily processing limit of 1,000 news items.'],limitSourcesLabel:['حداکثر رسانه','Maximum media sources'],limitTopicsLabel:['حداکثر موضوع','Maximum topics'],limitFreshnessLabel:['حداکثر پنجره تازگی (روز)','Maximum freshness window (days)'],limitPublishLabel:['حداکثر انتشار در هر نوبت','Maximum publications per run'],limitBusinessLabel:['حداکثر بیزینس','Maximum businesses'],limitProjectsLabel:['حداکثر پروژه برای هر کاربر','Maximum projects per user'],saveLimitsBtn:['ذخیره سقف‌ها','Save limits']};
       Object.entries(labels).forEach(([id,pair])=>{const node=$(id);if(node){node.textContent=localeLabel(pair[0],pair[1]);node.dataset.faText=pair[0]}});
     };
+    // News/report prose follows the source's output language, never the UX
+    // dictionary. A matching word such as «خبر» is data, not a menu label.
+    const reportProseSelector='.publication-news-cell,.article-title,.article-body,#recentRows button';
     function translateTextNodes(scope=document.body){
       if(!scope)return;
       const root=scope.nodeType===Node.TEXT_NODE?scope.parentElement:scope;
@@ -422,7 +425,7 @@ ADMIN_HTML = r'''<!doctype html>
       const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT);
       const skip=new Set(['SCRIPT','STYLE','INPUT','TEXTAREA','PRE','CODE']);let node;
       while(node=walker.nextNode()){
-        const parent=node.parentElement;if(!parent||skip.has(parent.tagName)||parent.closest('[data-language-select],[data-latin="true"],[data-dynamic-copy]'))continue;
+        const parent=node.parentElement;if(!parent||skip.has(parent.tagName)||parent.closest('[data-language-select],[data-latin="true"],[data-dynamic-copy]')||parent.closest(reportProseSelector))continue;
         const raw=node.nodeValue||'',trimmed=raw.trim();if(!trimmed)continue;
         const key=uxCopyKey(trimmed),known=uxWritingCatalog[key]||copyMap[key]||copyPrefixes.some(([source])=>key.startsWith(source));
         if(!known)continue;
@@ -439,7 +442,7 @@ ADMIN_HTML = r'''<!doctype html>
       document.querySelectorAll('body *').forEach(el=>{
         // Language switch labels are intentionally bilingual product names;
         // do not translate the English button to «انگلیسی» in Persian mode.
-        if(el.children.length||el.closest('[data-label-fa]')||el.closest('[data-language-select]')||el.closest('[data-dynamic-copy]')||ids.has(el.id))return;
+        if(el.children.length||el.closest('[data-label-fa]')||el.closest('[data-language-select]')||el.closest('[data-dynamic-copy]')||el.closest(reportProseSelector)||ids.has(el.id))return;
         const visible=el.textContent.trim(),fa=el.dataset.faText||uxCopyKey(visible)||visible,key=uxCopyKey(fa);
         const known=uxWritingCatalog[key]||copyMap[key]||copyPrefixes.some(([source])=>String(key).startsWith(source));
         if(!fa||!known)return;

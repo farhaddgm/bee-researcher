@@ -13,6 +13,8 @@
   facts, inferences, time horizons and topic-score explanations. Proper names,
   acronyms, model identifiers and URLs are preserved, not blindly translated.
 - Per-source/report language is distinct from the user's backoffice language.
+  News cells, drawer titles/bodies and recent-news titles are excluded from
+  the UI dictionary even when their words match a translated menu label.
   Persist language provenance in citations; localize template headings and the
   time-horizon vocabulary in the eight supported report languages.
 - Remove fictitious banking/customer claims from new deterministic fallbacks.

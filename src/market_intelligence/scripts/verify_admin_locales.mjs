@@ -176,5 +176,24 @@ for (const language of languages) {
   console.log(`operational alerts verified: ${language}`);
 }
 
+// A report word that also exists in the UX dictionary must not be partially
+// translated as the admin switches language. Use an isolated client fixture;
+// no article or publication is created or edited on the server.
+for (const language of languages) {
+  await page.evaluate(locale => {
+    window.setLanguage(locale);
+    window.setView('content');
+    state.publications = [{ id: 'report-language-fixture', status: 'preview', message_text: 'خبر', source_name: 'TechCrunch', created_at: new Date().toISOString() }];
+    renderPublications();
+    openPublication('report-language-fixture');
+    translateStaticCopy();
+  }, language);
+  for (const selector of ['.publication-news-cell button', '#articleDetail .article-title', '#articleDetail .article-body']) {
+    const text = (await page.locator(selector).first().textContent()).trim();
+    if (text !== 'خبر') throw new Error(`Report prose was changed by UX locale ${language}: ${selector} = ${text}`);
+  }
+  await page.evaluate(() => document.querySelector('#closeDrawer')?.click());
+}
+console.log('Report/UX language isolation passed: original report prose preserved in 8 backoffice locales.');
 await browser.close();
 console.log(JSON.stringify({ checkedLocales: languages.length, checkedOperationalAlerts: languages.length * 2, languages }));
