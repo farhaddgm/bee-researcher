@@ -48,7 +48,7 @@ from app.openai_client import (
     sanitize_untrusted_source,
 )
 from app.queue_names import pipeline_lock_key
-from app.report_language import LANGUAGES, LANGUAGE_REVISION, LIST_FIELDS, TEXT_FIELDS, analysis_language, analysis_text, language_issues, prose_matches_language, report_copy
+from app.report_language import LANGUAGES, LANGUAGE_REVISION, LIST_FIELDS, TEXT_FIELDS, ReportLanguageError, analysis_language, analysis_text, language_issues, prose_matches_language, report_copy
 from app.security_controls import redact_sensitive_text
 from app.retention import effective_retention_days
 from app.relevance import (
@@ -1753,7 +1753,11 @@ async def repair_report_translations(settings: Settings, *, assistant_id: uuid.U
                     await _finish_job(attempt, status="succeeded", result={"article_id": str(article.id), "input_chars": input_chars, "purpose": "report_translation", "output_language": target, "report_count": len(batch)})
                 except Exception as exc:
                     failed_reports.update(uuid.UUID(key) for key in batch)
-                    await _finish_job(attempt, status="failed", result={"article_id": str(article.id), "input_chars": input_chars, "purpose": "report_translation", "report_count": len(batch)}, error=type(exc).__name__)
+                    # Language exceptions contain only schema field names,
+                    # never provider output. Keep that safe diagnostic so
+                    # false positives do not require another paid probe.
+                    error = str(exc) if isinstance(exc, ReportLanguageError) else type(exc).__name__
+                    await _finish_job(attempt, status="failed", result={"article_id": str(article.id), "input_chars": input_chars, "purpose": "report_translation", "report_count": len(batch)}, error=error)
                     result["failed"] += 1
                     continue
             translation = translated_reports[analysis.id]

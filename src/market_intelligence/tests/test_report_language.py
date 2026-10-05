@@ -30,6 +30,13 @@ class ReportLanguageTests(unittest.TestCase):
         self.assertTrue(prose_matches_language("OpenAI مدل GPT-6 را با API و GPU معرفی کرد؛ https://example.org/new-model", "fa"))
         self.assertTrue(prose_matches_language("شرکت TechCrunch از Gemini و ChatGPT گزارش داد.", "fa"))
 
+    def test_repeated_proper_names_do_not_reject_complete_translation(self):
+        self.assertTrue(prose_matches_language("مدل Sonnet معرفی شد؛ Sonnet ارتقا یافته و Sonnet قبلی همچنان در دسترس است.", "fa"))
+        self.assertTrue(prose_matches_language("مدل Codex عرضه شد؛ Codex تازه جایگزین Codex قبلی می‌شود.", "fa"))
+        self.assertTrue(prose_matches_language("مدل‌های Sonnet و Opus و Haiku بررسی شدند.", "fa"))
+        self.assertFalse(prose_matches_language("خبر: Google Announced A New Model", "fa"))
+        self.assertFalse(prose_matches_language("مدل برای inference و reasoning آماده است", "fa"))
+
     def test_checks_facts_inferences_and_score_reasons_not_identifiers(self):
         payload = fields()
         payload.update(facts=["The model was announced"], inferences=["Possible market impact"], topic_scores=[{"topic_key": "AI-research", "score": .9, "reason": "This news is relevant"}])

@@ -17,7 +17,7 @@ LIST_FIELDS = ("facts", "inferences")
 _ARABIC = re.compile(r"[\u0600-\u06ff]")
 _LATIN_WORD = re.compile(r"[A-Za-z]+(?:[.'’-][A-Za-z]+)*")
 _URL = re.compile(r"https?://\S+|\b[\w.+-]+@[\w.-]+\.[A-Za-z]+", re.I)
-_NAMES = {"openai", "google", "gemini", "gems", "meta", "muse", "instinct", "microsoft", "anthropic", "claude", "chatgpt", "deepseek", "nvidia", "amd", "intel", "apple", "amazon", "aws", "azure", "techcrunch", "mit", "github", "huggingface", "llama", "qwen", "mistral", "tensorflow", "pytorch", "python", "cuda", "modal", "labs", "accel", "axios", "bloomberg", "world", "fei", "li", "tesla", "xai", "grok", "bee", "researcher"}
+_NAMES = {"openai", "google", "gemini", "gems", "meta", "muse", "instinct", "microsoft", "anthropic", "claude", "sonnet", "opus", "haiku", "chatgpt", "deepseek", "nvidia", "amd", "intel", "apple", "amazon", "aws", "azure", "techcrunch", "mit", "github", "huggingface", "llama", "qwen", "mistral", "tensorflow", "pytorch", "python", "cuda", "modal", "labs", "accel", "axios", "bloomberg", "world", "fei", "li", "tesla", "xai", "grok", "bee", "researcher"}
 
 
 class ReportLanguageError(ValueError):
@@ -41,7 +41,10 @@ def prose_matches_language(value: object, language: str) -> bool:
         # untranslated common nouns inside Persian prose are not.
         if foreign and arabic < 2:
             return False
-        return not any(word.islower() and len(word) >= 4 for word in foreign) and len(foreign) < 3
+        # Repeating the same legitimate TitleCase brand must not turn a
+        # translated sentence into a language failure. Count distinct words;
+        # lowercase untranslated vocabulary is still rejected independently.
+        return not any(word.islower() and len(word) >= 4 for word in foreign) and len({word.casefold() for word in foreign}) < 3
     # All the other supported report languages use Latin script. Do not allow
     # a Persian fallback paragraph to masquerade as their translated report.
     return arabic < 2 or arabic <= max(3, sum(len(word) for word in latin) // 10)
