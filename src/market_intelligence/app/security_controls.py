@@ -27,6 +27,9 @@ CSRF_COOKIE = "research_bee_admin_csrf"
 _BOT_TOKEN_RE = re.compile(r"(https?://api\.telegram\.org/bot)\d{6,20}:[A-Za-z0-9_-]+", re.IGNORECASE)
 _BEARER_RE = re.compile(r"(Bearer\s+)[^\s,;]+", re.IGNORECASE)
 _SECRET_QUERY_RE = re.compile(r"(?i)([?&](?:token|access_token|api_key|apikey|secret|password|auth|signature)=)[^&\s]+")
+_URL_CREDENTIAL_RE = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@")
+_SECRET_FIELD_RE = re.compile(r'''(?ix)(["']?(?:password|passwd|api[_-]?key|access[_-]?token|refresh[_-]?token|authorization|cookie|set-cookie)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s,;}]+)''')
+_API_KEY_RE = re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{12,}\b")
 
 
 def redact_sensitive_text(value: str, *, limit: int = 1000) -> str:
@@ -35,6 +38,9 @@ def redact_sensitive_text(value: str, *, limit: int = 1000) -> str:
     text = _BOT_TOKEN_RE.sub(r"\1[REDACTED]", text)
     text = _BEARER_RE.sub(r"\1[REDACTED]", text)
     text = _SECRET_QUERY_RE.sub(r"\1[REDACTED]", text)
+    text = _URL_CREDENTIAL_RE.sub(r"\1[REDACTED]@", text)
+    text = _SECRET_FIELD_RE.sub(r"\1[REDACTED]", text)
+    text = _API_KEY_RE.sub("[REDACTED]", text)
     return text[:limit]
 
 

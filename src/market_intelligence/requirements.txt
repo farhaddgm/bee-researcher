@@ -1,6 +1,7 @@
 fastapi==0.141.1
 starlette==1.6.0
 httpx==0.28.1
+brotli==1.2.0
 httpx2==2.13.1
 defusedxml==0.7.1
 uvicorn[standard]==0.35.0

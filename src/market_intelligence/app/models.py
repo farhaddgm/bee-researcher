@@ -345,7 +345,7 @@ class Source(Base):
 class SourceItem(Base):
     __tablename__ = "source_items"
     __table_args__ = (
-        UniqueConstraint("fingerprint", name="uq_mi_source_items_fingerprint"),
+        UniqueConstraint("assistant_id", "fingerprint", name="uq_mi_source_items_assistant_fingerprint"),
         Index("ix_mi_source_items_source_published", "source_id", "published_at"),
     )
 

@@ -687,6 +687,7 @@ class SourceFetcher:
         headers: dict[str, str] | None = None,
         *,
         allowed_credential_hosts: frozenset[str] = frozenset(),
+        max_bytes: int | None = None,
     ) -> httpx.Response:
         current = validate_public_url_syntax(url)
         for _ in range(MAX_REDIRECTS + 1):
@@ -697,10 +698,24 @@ class SourceFetcher:
                 if parsed.scheme != "https" or (parsed.hostname or "").lower().rstrip(".") not in allowed_credential_hosts:
                     raise FetchFailure("connector credential cannot be sent to this host")
             await self.resolver(current)
-            response = await client.get(current, headers=headers or {})
-            if response.status_code not in REDIRECT_STATUS_CODES:
-                return response
-            location = response.headers.get("location")
+            # Enforce the bound during download, not after client.get() has
+            # buffered an arbitrarily large (or decompressed) response.
+            limit = max_bytes if max_bytes is not None else self.settings.fetch_max_bytes
+            async with client.stream("GET", current, headers=headers or {}) as response:
+                if response.status_code not in REDIRECT_STATUS_CODES:
+                    length = response.headers.get("content-length", "")
+                    if length.isdigit() and int(length) > limit:
+                        raise FetchFailure("source response exceeds the byte limit", status_code=response.status_code)
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(body) + len(chunk) > limit:
+                            raise FetchFailure("source response exceeds the byte limit", status_code=response.status_code)
+                        body.extend(chunk)
+                    # _content has already been decoded by HTTPX (including
+                    # Brotli). Do not create a new response and decode twice.
+                    response._content = bytes(body)
+                    return response
+                location = response.headers.get("location")
             if not location:
                 raise FetchFailure("redirect response did not include Location")
             current = validate_public_url_syntax(urljoin(current, location))
@@ -746,7 +761,7 @@ class SourceFetcher:
         parsed = urlparse(source.fetch_url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
         try:
-            response = await self._request(client, robots_url)
+            response = await self._request(client, robots_url, max_bytes=512_000)
         except (httpx.HTTPError, OSError, ValueError, FetchFailure):
             return True, "unavailable"
         if response.status_code != 200:
@@ -767,7 +782,7 @@ class SourceFetcher:
             allowed, _ = await self._robots_allowed(client, source)
             if not allowed:
                 return []
-            response = await self._request(client, url)
+            response = await self._request(client, url, max_bytes=2_000_000)
             if response.status_code != 200 or len(response.content) > 2_000_000:
                 return []
             parser = PublicPublisherLinks(str(response.url))
@@ -781,7 +796,7 @@ class SourceFetcher:
             allowed, _ = await self._robots_allowed(client, source)
             if not allowed:
                 return []
-            response = await self._request(client, homepage)
+            response = await self._request(client, homepage, max_bytes=2_000_000)
             if response.status_code != 200 or len(response.content) > 2_000_000:
                 return []
             parser = PublicFeedLinks(str(response.url))
@@ -849,12 +864,9 @@ class SourceFetcher:
                             robots_status=robots_status,
                         )
                     response.raise_for_status()
-                    length = response.headers.get("content-length")
-                    if length and int(length) > self.settings.fetch_max_bytes:
-                        raise FetchFailure("source response exceeds the byte limit")
-                    if len(response.content) > self.settings.fetch_max_bytes:
-                        raise FetchFailure("source response exceeds the byte limit")
                     if source.adapter in {"rss"}:
+                        if b"<!doctype html" in response.content[:500].lower() or b"<html" in response.content[:500].lower():
+                            raise FetchFailure("configured feed returned an HTML page, not an RSS/Atom feed", status_code=response.status_code, attempts=attempt)
                         items = parse_feed(
                             response.content,
                             str(response.url),
@@ -905,7 +917,11 @@ class SourceFetcher:
                         last_modified=response.headers.get("last-modified"),
                         robots_status=robots_status,
                     )
-                except (httpx.TransportError, httpx.TimeoutException) as exc:
+                except FetchFailure as exc:
+                    if not exc.attempts:
+                        exc.attempts = attempt
+                    raise
+                except (httpx.TransportError, httpx.TimeoutException, OSError) as exc:
                     last_error = exc
                     if attempt < attempts:
                         await self.sleeper(min(2 ** (attempt - 1), 4))

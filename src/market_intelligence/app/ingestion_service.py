@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Iterable, TypeVar
 
@@ -18,6 +18,8 @@ from app.fetchers import FetchFailure, FetchResult, SourceFetcher, SourceSpec, i
 from app.models import ArticleAnalysis, NormalizedArticle, Source, SourceFetchRun, SourceItem, Topic
 from app.queue_names import queue_key
 from app.relevance import combine_topic_score, lexical_topic_score
+from app.observability import log_event
+from app.security_controls import redact_sensitive_text
 
 
 T = TypeVar("T")
@@ -145,7 +147,9 @@ async def _record_result(
     status_code: int | None = None,
     attempts: int = 0,
     content_extraction_ok: bool = True,
+    update_ingestion_state: bool = True,
 ) -> None:
+    error = redact_sensitive_text(error, limit=2000) if error else None
     finished_at = datetime.now(timezone.utc)
     async with SessionLocal() as session:
         source = await session.get(Source, source_id, with_for_update=True)
@@ -178,7 +182,7 @@ async def _record_result(
             )
         )
         source.last_attempt_at = started_at
-        if status != "rate_limited":
+        if update_ingestion_state and status != "rate_limited":
             source.next_allowed_at = finished_at + timedelta(
                 seconds=source.rate_limit_seconds
             )
@@ -189,7 +193,7 @@ async def _record_result(
             source.health_status = "healthy"
             source.consecutive_failures = 0
             source.last_error = None
-            if result is not None:
+            if result is not None and update_ingestion_state:
                 source.etag = result.etag or source.etag
                 source.last_modified = result.last_modified or source.last_modified
         elif status in {"succeeded", "not_modified"} and not content_extraction_ok:
@@ -208,6 +212,12 @@ async def _record_result(
             source.consecutive_failures += 1
             source.last_error = (error or status)[:2000]
         await session.commit()
+        log_event(
+            "source_fetch_finished", assistant_id=str(source.assistant_id),
+            source_id=str(source_id), status=status, status_code=actual_code,
+            items_seen=seen, items_inserted=inserted, attempts=actual_attempts,
+            extraction_ok=content_extraction_ok and status in {"succeeded", "not_modified"}, probe=not update_ingestion_state,
+        )
 
 
 async def _store_items(
@@ -234,7 +244,7 @@ async def _store_items(
     statement = (
         postgresql_insert(SourceItem)
         .values(rows)
-        .on_conflict_do_nothing(index_elements=[SourceItem.fingerprint])
+        .on_conflict_do_nothing(index_elements=[SourceItem.assistant_id, SourceItem.fingerprint])
         .returning(SourceItem.id)
     )
     async with SessionLocal() as session:
@@ -257,12 +267,16 @@ async def _ingest_source(
             return SourceRunResult(str(source_id), "disabled")
         source_key = source.source_key
         if not force and source.next_allowed_at and source.next_allowed_at > started_at:
-            await _record_result(source_id, started_at, None, status="rate_limited")
+            await _record_result(source_id, started_at, None, status="rate_limited", update_ingestion_state=store_items)
             return SourceRunResult(source_key, "rate_limited")
         spec = _source_spec(source)
+        if not store_items:
+            # A health check must read content, not inherit a conditional 304,
+            # and must never acknowledge data that ingestion has not stored.
+            spec = replace(spec, etag=None, last_modified=None)
 
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
-    lock_segment = f"ingest_lock_{source_key.lower().replace('-', '_')}"
+    lock_segment = f"ingest_lock_{source_id.hex}"
     lock_name = queue_key(lock_segment, settings=settings)
     lock_token = uuid.uuid4().hex
     acquired = False
@@ -286,6 +300,7 @@ async def _ingest_source(
                 result,
                 status="robots_denied",
                 error="robots.txt denied the configured fetch URL",
+                update_ingestion_state=store_items,
             )
             return SourceRunResult(source_key, "robots_denied")
         # A health probe deliberately fetches and records the source outcome
@@ -306,6 +321,7 @@ async def _ingest_source(
             status="succeeded" if result.status == "degraded" else result.status,
             inserted=inserted,
             content_extraction_ok=extraction_ok,
+            update_ingestion_state=store_items,
         )
         return SourceRunResult(
             source_key,
@@ -316,7 +332,7 @@ async def _ingest_source(
             status_code=result.status_code,
         )
     except FetchFailure as exc:
-        error = f"FetchFailure: {exc}"
+        error = redact_sensitive_text(f"FetchFailure: {exc}", limit=2000)
         await _record_result(
             source_id,
             started_at,
@@ -325,6 +341,7 @@ async def _ingest_source(
             error=error,
             status_code=exc.status_code,
             attempts=exc.attempts,
+            update_ingestion_state=store_items,
         )
         return SourceRunResult(
             source_key,
@@ -334,13 +351,14 @@ async def _ingest_source(
             error=error,
         )
     except Exception as exc:
-        error = f"{type(exc).__name__}: {exc}"[:2000]
+        error = redact_sensitive_text(f"{type(exc).__name__}: {exc}", limit=2000)
         await _record_result(
             source_id,
             started_at,
             None,
             status="failed",
             error=error,
+            update_ingestion_state=store_items,
         )
         return SourceRunResult(source_key, "failed", error=error)
     finally:

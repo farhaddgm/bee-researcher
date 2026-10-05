@@ -23,6 +23,7 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import get_settings
+from app.observability import configure_logging
 from app.database import SessionLocal, check_database
 from app.models import AssistantWorkspace
 from app.ingestion_service import (
@@ -271,6 +272,7 @@ _ADMIN_ASSETS = {
 
 
 settings = get_settings()
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
