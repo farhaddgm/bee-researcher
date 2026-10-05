@@ -314,6 +314,7 @@ class _ClientErrorRateLimiter:
 
 
 _client_error_rate_limiter = _ClientErrorRateLimiter()
+_csp_log_rate_limiter = _ClientErrorRateLimiter(limit=60, window_seconds=60, max_clients=1)
 
 
 def _safe_telemetry_token(value: object, limit: int = 64) -> str:
@@ -421,7 +422,6 @@ def _csp_report_items(payload: object) -> list[dict[str, object]]:
         "document-uri",
         "effective-directive",
         "line-number",
-        "original-policy",
         "source-file",
         "violated-directive",
     }
@@ -429,14 +429,38 @@ def _csp_report_items(payload: object) -> list[dict[str, object]]:
     for report in reports[:20]:
         if not isinstance(report, dict):
             continue
+        if isinstance(report.get("body"), dict):
+            report = report["body"]
+        aliases = {
+            "blockedURL": "blocked-uri", "documentURL": "document-uri",
+            "effectiveDirective": "effective-directive", "lineNumber": "line-number",
+            "sourceFile": "source-file", "violatedDirective": "violated-directive",
+        }
+        report = {aliases.get(key, key): value for key, value in report.items()}
         cleaned: dict[str, object] = {}
         for key in allowed:
             if key not in report:
                 continue
             value = report[key]
             if isinstance(value, str):
-                cleaned[key] = redact_sensitive_text(value, limit=300)
-            elif isinstance(value, (int, float)) and key == "line-number":
+                if key in {"blocked-uri", "document-uri", "source-file"}:
+                    try:
+                        parsed = urlsplit(value)
+                    except ValueError:
+                        continue
+                    if parsed.scheme in {"http", "https"} and parsed.hostname:
+                        # Queries/fragments/userinfo may include private search
+                        # text, OAuth codes or credentials. Retain only the
+                        # origin and a known application path, not user IDs.
+                        path = parsed.path if parsed.path in {"/admin", "/user", "/user/settings"} else "/"
+                        cleaned[key] = f"{parsed.scheme}://{parsed.hostname}{path}"[:300]
+                    elif value in {"inline", "eval", "self", "none"}:
+                        cleaned[key] = value
+                    elif parsed.scheme in {"data", "blob"}:
+                        cleaned[key] = parsed.scheme
+                elif re.fullmatch(r"[a-z-]{1,48}", value):
+                    cleaned[key] = value
+            elif isinstance(value, int) and not isinstance(value, bool) and key == "line-number" and 0 <= value <= 1_000_000:
                 cleaned[key] = value
         if cleaned:
             items.append(cleaned)
@@ -466,7 +490,7 @@ async def csp_report(request: Request) -> Response:
     except (UnicodeDecodeError, json.JSONDecodeError):
         return Response(status_code=400)
     items = _csp_report_items(payload)
-    if items:
+    if items and _csp_log_rate_limiter.allow("csp-log"):
         logger.info("csp_report_only_violation count=%d reports=%s", len(items), items)
     return Response(status_code=204)
 

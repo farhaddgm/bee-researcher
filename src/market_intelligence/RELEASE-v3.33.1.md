@@ -7,6 +7,9 @@
   Configure only the `app` namespace, with bounded JSON and content-free exception
   frames; HTTP clients remain quiet. Redact secrets in fields, URL credentials and
   API keys. Source outcomes now log only IDs, status, counts and probe flags.
+  Browser CSP reporting excludes policies/nonces, URL queries/fragments,
+  userinfo, private paths and source samples; legacy and modern report formats
+  are supported. Limit public CSP log entries to 60/minute per process.
 - Zoomit's HTTP 200 RSS used `Content-Encoding: br`, but HTTPX had no Brotli
   decoder. Install pinned Brotli 1.2.0 and test actual compressed feed parsing.
 - Health probes could advance ETag/Last-Modified without storing articles and

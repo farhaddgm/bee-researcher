@@ -20,6 +20,7 @@ from app.main import (  # noqa: E402
     _redact_http_detail,
     _reader_assistant_is_accessible,
     _safe_telemetry_token,
+    _csp_report_items,
     app,
     settings,
 )
@@ -359,6 +360,28 @@ class MainTest(unittest.TestCase):
         self.assertEqual(204, client.post("/admin/api/security/csp-report").status_code)
         self.assertEqual(400, client.post("/admin/api/security/csp-report", content=b"not-json").status_code)
         self.assertEqual(413, client.post("/admin/api/security/csp-report", content=b"x" * 64_001).status_code)
+
+    def test_csp_telemetry_discards_nonce_queries_fragments_and_user_paths(self):
+        payload = {"csp-report": {
+            "original-policy": "script-src 'nonce-private-nonce'",
+            "document-uri": "https://user:private-pass@example.org/admin?query=private-search#private-fragment",
+            "source-file": "https://example.org/user/private-user-id",
+            "blocked-uri": "data:text/plain,private-content",
+            "effective-directive": "style-src-attr", "line-number": 42,
+        }}
+        result = _csp_report_items(payload)
+        self.assertEqual([{"document-uri": "https://example.org/admin", "source-file": "https://example.org/", "blocked-uri": "data", "effective-directive": "style-src-attr", "line-number": 42}], result)
+        self.assertNotIn("private", str(result))
+
+    def test_csp_modern_reporting_api_is_supported_without_collecting_samples(self):
+        result = _csp_report_items([{"type": "csp-violation", "body": {
+            "documentURL": "https://example.org/user?private=1",
+            "effectiveDirective": "script-src-elem", "blockedURL": "inline",
+            "lineNumber": 8, "sample": "private body", "originalPolicy": "nonce-private",
+        }}])
+        self.assertEqual("https://example.org/user", result[0]["document-uri"])
+        self.assertEqual("script-src-elem", result[0]["effective-directive"])
+        self.assertNotIn("private", str(result))
 
     def test_csp_report_endpoint_stays_public_with_an_admin_cookie(self):
         client = TestClient(app)
