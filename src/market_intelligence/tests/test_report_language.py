@@ -44,6 +44,14 @@ class ReportLanguageTests(unittest.TestCase):
         self.assertIn("Attribution Non-Commercial No Derivatives = انتساب", language_instructions("fa"))
         self.assertNotIn("اخبار ام‌آی‌تی", language_instructions("en"))
 
+    def test_multiple_unknown_proper_names_are_not_an_english_sentence(self):
+        for value in ("شرکت Peak با پشتیبانی Partners و Surge سرمایه جذب کرد.", "این خبر به نقل از Reuters و Financial Times منتشر شده است.", "مدل Eufy Video Doorbell معرفی شد.", "شرکت Quartermaster از Insight Partners سرمایه گرفت."):
+            self.assertTrue(prose_matches_language(value, "fa"), value)
+
+    def test_titlecase_and_allcaps_english_prose_are_still_rejected(self):
+        for value in ("خبر: Google Announced A New Model", "خبر: GOOGLE ANNOUNCED A NEW MODEL", "به گفتهٔ شرکت: THIS MODEL IS NOW AVAILABLE", "خبر با Attribution Non-Commercial No Derivatives عرضه شد"):
+            self.assertFalse(prose_matches_language(value, "fa"), value)
+
     def test_checks_facts_inferences_and_score_reasons_not_identifiers(self):
         payload = fields()
         payload.update(facts=["The model was announced"], inferences=["Possible market impact"], topic_scores=[{"topic_key": "AI-research", "score": .9, "reason": "This news is relevant"}])

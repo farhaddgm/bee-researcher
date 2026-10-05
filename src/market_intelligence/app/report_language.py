@@ -18,6 +18,10 @@ _ARABIC = re.compile(r"[\u0600-\u06ff]")
 _LATIN_WORD = re.compile(r"[A-Za-z]+(?:[.'’-][A-Za-z]+)*")
 _URL = re.compile(r"https?://\S+|\b[\w.+-]+@[\w.-]+\.[A-Za-z]+", re.I)
 _NAMES = {"openai", "google", "gemini", "gems", "meta", "muse", "instinct", "microsoft", "anthropic", "claude", "sonnet", "opus", "haiku", "chatgpt", "deepseek", "nvidia", "amd", "intel", "apple", "amazon", "aws", "azure", "techcrunch", "mit", "github", "huggingface", "llama", "qwen", "mistral", "tensorflow", "pytorch", "python", "cuda", "modal", "labs", "accel", "axios", "bloomberg", "world", "fei", "li", "tesla", "xai", "grok", "bee", "researcher"}
+_NAMED_PHRASES = re.compile(r"\b(?:Creative Commons|The New York Times|The Wall Street Journal|The Verge|The Guardian)\b", re.I)
+# Sentence vocabulary, not a count of proper names scattered throughout the
+# report. Three unrelated investors/product names do not make English prose.
+_ENGLISH_PROSE = {"the", "this", "that", "these", "those", "is", "are", "was", "were", "been", "has", "have", "had", "will", "would", "should", "could", "their", "which", "because", "although", "despite", "however", "according", "announced", "launches", "launched", "raises", "raised", "introduces", "introduced", "plans", "reported", "reports", "said", "says", "inference", "reasoning", "agentic", "generative", "training", "attribution", "commercial", "derivatives"}
 
 
 class ReportLanguageError(ValueError):
@@ -30,21 +34,24 @@ def normalize_language(value: object) -> str:
 
 
 def prose_matches_language(value: object, language: str) -> bool:
-    text = _URL.sub("", str(value or "")).strip()
+    text = _NAMED_PHRASES.sub("", _URL.sub("", str(value or ""))).strip()
     if not text:
         return True
     arabic = len(_ARABIC.findall(text))
     latin = _LATIN_WORD.findall(text)
     if language in {"fa", "ar"}:
+        if any(word.casefold() in _ENGLISH_PROSE and word.casefold() not in _NAMES for word in latin):
+            return False
         foreign = [word for word in latin if word.casefold() not in _NAMES and not word.isupper() and not (any(c.isupper() for c in word[1:]) and any(c.islower() for c in word))]
         # Acronyms/model names are legitimate. Whole English sentences and
         # untranslated common nouns inside Persian prose are not.
         if foreign and arabic < 2:
             return False
-        # Repeating the same legitimate TitleCase brand must not turn a
-        # translated sentence into a language failure. Count distinct words;
-        # lowercase untranslated vocabulary is still rejected independently.
-        return not any(word.islower() and len(word) >= 4 for word in foreign) and len({word.casefold() for word in foreign}) < 3
+        # Unknown TitleCase proper names in otherwise Persian prose are
+        # permitted; English sentence words/verbs and lowercase untranslated
+        # vocabulary remain blocked. Counting brand names produced repeated
+        # false positives for investors, publishers and product identifiers.
+        return not any(word.islower() and len(word) >= 4 for word in foreign)
     # All the other supported report languages use Latin script. Do not allow
     # a Persian fallback paragraph to masquerade as their translated report.
     return arabic < 2 or arabic <= max(3, sum(len(word) for word in latin) // 10)
