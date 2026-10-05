@@ -62,7 +62,7 @@ async def main():
             hashes = [r.context_hash for r in rows]
             assert all(hashes) and hashes[0] != hashes[-1], "Project contexts share a scorer cache"
 
-        good_analysis = StructuredAnalysis(payload={"headline": "Model launch", "news_summary": "A new model was announced.", "business_connection": "No business is configured.", "opportunity": "", "risk": "", "suggested_action": "Review the release", "time_horizon": "نامشخص", "confidence": .9, "facts": ["A model was announced"], "inferences": [], "topic_scores": [{"topic_key": "AI", "score": .92, "reason": "Model news"}]}, model=cfg.analysis_model, input_tokens=10, output_tokens=10, estimated_cost_usd=0)
+        good_analysis = StructuredAnalysis(payload={"headline": "معرفی مدل جدید", "news_summary": "مدل جدیدی معرفی شد.", "business_connection": "کسب‌وکاری معرفی نشده است.", "opportunity": "", "risk": "", "suggested_action": "خبر مرور شود", "time_horizon": "نامشخص", "confidence": .9, "facts": ["مدلی معرفی شد"], "inferences": [], "topic_scores": [{"topic_key": "AI", "score": .92, "reason": "خبر معرفی مدل"}], "_report_language": {"output_language": "fa"}}, model=cfg.analysis_model, input_tokens=10, output_tokens=10, estimated_cost_usd=0)
         with patch.object(pipeline.OpenAIClient, "analyze", new=AsyncMock(return_value=good_analysis)) as model:
             result = await pipeline.analyze_pending_articles(cfg, limit=10, assistant_id=ids[0])
             assert result["model_calls"] == 1 and model.await_count == 1, "Negative/unrelated news consumed analysis calls"
@@ -70,6 +70,19 @@ async def main():
         async with SessionLocal() as session:
             publication = (await session.scalars(select(Publication).where(Publication.assistant_id == ids[0]))).one()
             publication_id = publication.id
+            translated = await session.get(ArticleAnalysis, publication.analysis_id)
+            translated.status = "fallback"
+            translated_summary = translated.news_summary
+            await session.commit()
+        # An unavailable provider must not replace a completed Persian
+        # translation with its source-language excerpt on the next run.
+        unavailable = cfg.model_copy(update={"external_analysis_approved": False, "openai_api_key": None})
+        await pipeline.analyze_pending_articles(unavailable, limit=10, assistant_id=ids[0])
+        async with SessionLocal() as session:
+            translated = await session.get(ArticleAnalysis, publication.analysis_id)
+            assert translated.news_summary == translated_summary, "A budget/provider outage destroyed the completed translation"
+            translated.status = "succeeded"
+            await session.commit()
         with patch.object(pipeline, "_send_claimed_publication", new=AsyncMock(return_value={"status": "fixture-delivery"})) as send:
             assert (await pipeline.publish_publication(publication_id))["status"] == "fixture-delivery"
             assert send.await_count == 1

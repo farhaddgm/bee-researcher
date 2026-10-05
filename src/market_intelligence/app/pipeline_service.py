@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import re
@@ -47,6 +48,7 @@ from app.openai_client import (
     sanitize_untrusted_source,
 )
 from app.queue_names import pipeline_lock_key
+from app.report_language import LANGUAGES, LANGUAGE_REVISION, LIST_FIELDS, TEXT_FIELDS, analysis_language, analysis_text, language_issues, prose_matches_language, report_copy
 from app.security_controls import redact_sensitive_text
 from app.retention import effective_retention_days
 from app.relevance import (
@@ -127,19 +129,30 @@ def _render_publication_message(
     source: Source,
     business_name: str = "داتین",
     template_blocks: list[dict[str, object]] | None = None,
+    output_language: str | None = None,
 ) -> str:
-    """Render one Telegram message from canonical article data.
+    """Keep native titles canonical; foreign titles need faithful translation.
 
-    The source title is deliberately the only title passed to the renderer.
-    Model-generated headlines remain useful for analysis, but must never
-    replace the title shown to readers in a published message.
+    Never splice untranslated excerpts into localized template headings. A
+    budget/provider failure is a pending translation, not a translated report.
+    The original title/body remain immutable in NormalizedArticle.
     """
+    language = output_language or analysis_language(analysis, source)
+    copy = report_copy(language)
+    headline = article.title
+    translated_title = str(getattr(analysis, "headline", "") or "")
+    original_language = str(getattr(article, "language", "") or getattr(source, "language", "") or "").casefold()
+    if (original_language in LANGUAGES and original_language != language) or not prose_matches_language(headline, language):
+        headline = translated_title
+    issues = language_issues(analysis_text(analysis), language)
+    stale_language = any(isinstance(citation, dict) and citation.get("output_language") and citation["output_language"] != language for citation in (getattr(analysis, "citations", None) or []))
+    pending = bool(stale_language or issues or not headline or not prose_matches_language(headline, language))
     return render_analysis_message(
-        headline=article.title,
-        summary=analysis.news_summary,
-        business_connection=analysis.business_connection,
-        opportunity=analysis.opportunity,
-        risk=analysis.risk,
+        headline=copy["pending_title"] if pending else headline,
+        summary=copy["pending_summary"] if pending else analysis.news_summary,
+        business_connection=copy["analysis_pending"] if pending else analysis.business_connection,
+        opportunity="" if pending else analysis.opportunity,
+        risk="" if pending else analysis.risk,
         action=analysis.suggested_action,
         confidence=analysis.confidence,
         source_name=source.name,
@@ -148,6 +161,7 @@ def _render_publication_message(
         incomplete=article.extraction_status == "partial",
         business_name=business_name or "داتین",
         template_blocks=template_blocks,
+        output_language=language,
     )
 
 
@@ -966,10 +980,7 @@ def _fallback_analysis(
             sentences.append(candidate)
     summary = " ".join(sentences[:3])[:1200] or safe_title or article.title
     topic_names = "، ".join(topic.name for topic, score in topic_rows if score.selected)
-    connection = (
-        f"این خبر به‌دلیل ارتباط با {topic_names or 'موضوعات مالی'} می‌تواند برای "
-        f"{profile.business_name} و مشتریان بانکی آن قابل بررسی باشد."
-    )
+    connection = f"این خبر برای بررسی موضوعات {topic_names or 'این دستیار'} انتخاب شده است؛ تحلیل تکمیلی هنوز آماده نیست."
     return {
         "status": "fallback",
         "headline": safe_title or article.title,
@@ -989,6 +1000,8 @@ def _fallback_analysis(
             {
                 "source": source.name,
                 "url": article.canonical_url,
+                "output_language": _source_output_language(source, profile),
+                "translation_pending": not prose_matches_language(summary, _source_output_language(source, profile)),
                 "published_at": article.published_at.isoformat() if article.published_at else None,
             }
         ],
@@ -1122,9 +1135,8 @@ def _structured_analysis_payload(
     inferences = list(model_payload["inferences"])
     source_safety = model_payload.get("_source_content_safety")
     if isinstance(source_safety, dict) and source_safety.get("detected"):
-        inferences.append(
-            "یادداشت ایمنی منبع: الگوهای دستوری مشکوک از محتوای خارجی حذف و برای تحلیل نادیده گرفته شد."
-        )
+        metadata = model_payload.get("_report_language") or {}
+        inferences.append(report_copy(str(metadata.get("output_language") or "fa"))["safety_note"])
     return {
         "status": "succeeded",
         **{
@@ -1147,6 +1159,7 @@ def _structured_analysis_payload(
             {
                 "source": source.name,
                 "url": article.canonical_url,
+                **(model_payload.get("_report_language") or {}),
                 "published_at": (
                     article.published_at.isoformat() if article.published_at else None
                 ),
@@ -1200,7 +1213,7 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
         )
         rows = (
             await session.execute(
-                select(NormalizedArticle, SourceItem, Source)
+                select(NormalizedArticle, SourceItem, Source, ArticleAnalysis)
                 .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
                 .join(Source, Source.id == SourceItem.source_id)
                 .outerjoin(
@@ -1232,7 +1245,7 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
     model_calls = 0
     fallback_calls = 0
     created = 0
-    for article, item, source in rows[:limit]:
+    for article, item, source, existing_report in rows[:limit]:
         async with SessionLocal() as session:
             topic_rows = (
                 await session.execute(
@@ -1306,6 +1319,10 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                 reason="model unavailable or configured request/input budget reached",
             )
             fallback_calls += 1
+        if payload["status"] == "fallback" and existing_report is not None and not language_issues(analysis_text(existing_report), _source_output_language(source, profile)):
+            # Budget outages must not destroy a previously completed
+            # translation by replacing it with the original English excerpt.
+            continue
         statement = (
             postgresql_insert(ArticleAnalysis)
             .values(
@@ -1341,6 +1358,14 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
         )
         async with SessionLocal() as session:
             inserted = (await session.execute(statement)).scalar_one_or_none()
+            if inserted is not None and payload["status"] == "succeeded":
+                current = await session.get(ArticleAnalysis, inserted)
+                preview = await session.scalar(select(Publication).where(Publication.analysis_id == inserted, Publication.assistant_id == assistant_id, Publication.status == "preview"))
+                if current is not None and preview is not None:
+                    blocks = (settings.message_templates.get("feedback") or {}).get("blocks") if isinstance(settings.message_templates, dict) else None
+                    preview.message_text = _render_publication_message(analysis=current, article=article, source=source, business_name=settings.business_name, template_blocks=blocks if isinstance(blocks, list) else None, output_language=_source_output_language(source, profile))
+                    preview.audit = {**(preview.audit or {}), "translation_pending": False, "message_template": MESSAGE_TEMPLATE_VERSION}
+                    preview.updated_at = _utcnow()
             await session.commit()
             created += int(inserted is not None)
     return {
@@ -1651,6 +1676,114 @@ async def refresh_publication_previews(*, limit: int = 200) -> dict[str, int]:
     return {"candidates": len(rows), "refreshed": len(rows)}
 
 
+async def repair_report_translations(settings: Settings, *, assistant_id: uuid.UUID, limit: int = 5, apply: bool = False) -> dict[str, Any]:
+    """Scoped, budgeted repair; original source/scores/delivery stay immutable.
+
+    Only previews are repaired. Never sends or edits Telegram, and never
+    changes a published/edited/closed article or another assistant's report.
+    Provider failures retain original evidence for a later bounded retry.
+    """
+    settings = await settings_for_assistant(settings, assistant_id)
+    async with SessionLocal() as session:
+        assistant = await session.get(AssistantWorkspace, assistant_id)
+        if assistant is None or assistant.deleted_at is not None:
+            raise ValueError("assistant not found")
+        profile = await _profile_for_assistant(session, assistant_id)
+        context: BusinessContext = profile or _general_market_profile(assistant)
+        rows = (await session.execute(
+            select(ArticleAnalysis, NormalizedArticle, Source, Publication)
+            .join(NormalizedArticle, NormalizedArticle.id == ArticleAnalysis.article_id)
+            .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
+            .join(Source, Source.id == SourceItem.source_id)
+            .join(Publication, Publication.analysis_id == ArticleAnalysis.id)
+            .where(ArticleAnalysis.assistant_id == assistant_id, Source.assistant_id == assistant_id, Publication.assistant_id == assistant_id, Publication.status == "preview")
+            .order_by(ArticleAnalysis.created_at.desc())
+        )).all()
+    result: dict[str, Any] = {"assistant_id": str(assistant_id), "apply": apply, "candidates": 0, "translated": 0, "refreshed": 0, "failed": 0, "budget_deferred": 0, "items": []}
+    calls = 0
+    translated_reports: dict[uuid.UUID, StructuredAnalysis] = {}
+    failed_reports: set[uuid.UUID] = set()
+    client = OpenAIClient(settings)
+    template = (settings.message_templates.get("feedback") or {}).get("blocks") if isinstance(settings.message_templates, dict) else None
+    for row_index, (analysis, article, source, publication) in enumerate(rows):
+        target = _source_output_language(source, context)
+        needs_translation = bool(language_issues(analysis_text(analysis), target))
+        rendered = _render_publication_message(analysis=analysis, article=article, source=source, business_name=settings.business_name, template_blocks=template if isinstance(template, list) else None, output_language=target)
+        if not needs_translation and rendered == publication.message_text:
+            continue
+        result["candidates"] += 1
+        result["items"].append({"analysis_id": str(analysis.id), "translation_required": needs_translation, "output_language": target})
+        if not apply:
+            continue
+        fields = analysis_text(analysis)
+        original = json.dumps(fields, ensure_ascii=False, sort_keys=True)
+        translation = None
+        attempt = None
+        if needs_translation:
+            if analysis.id in failed_reports:
+                result["failed"] += 1
+                continue
+            if analysis.id not in translated_reports and (calls >= min(max(limit, 1), settings.model_max_requests_per_run) or not client.configured):
+                result["budget_deferred"] += 1
+                continue
+            if analysis.id not in translated_reports:
+                batch: dict[str, dict[str, Any]] = {}
+                for candidate, candidate_article, candidate_source, _preview in rows[row_index:]:
+                    if len(batch) >= 3:
+                        break
+                    if candidate.id in failed_reports or candidate.id in translated_reports or _source_output_language(candidate_source, context) != target or not language_issues(analysis_text(candidate), target):
+                        continue
+                    candidate_fields = analysis_text(candidate)
+                    # Translate evidence, not the legacy fallback's invented
+                    # banking connection. Keep its fallback status unchanged.
+                    if candidate.status == "fallback":
+                        candidate_fields.update(business_connection=report_copy(target)["analysis_pending"], opportunity="", risk="", suggested_action=report_copy(target)["analysis_pending"], inferences=[])
+                    candidate_fields["headline"] = candidate_article.title
+                    batch[str(candidate.id)] = candidate_fields
+                input_chars = len(json.dumps(batch, ensure_ascii=False))
+                attempt = await _reserve_relevance_budget(settings, assistant_id, input_chars, job_type="analysis_model", article_id=article.id)
+                if attempt is None:
+                    result["budget_deferred"] += 1
+                    continue
+                calls += 1
+                try:
+                    batch_result = await client.translate_reports(reports=batch, output_language=target)
+                    for index, item in enumerate(batch_result.payload["reports"]):
+                        translated_reports[uuid.UUID(item["report_id"])] = StructuredAnalysis(payload=item, model=batch_result.model, input_tokens=batch_result.input_tokens // len(batch) + int(index < batch_result.input_tokens % len(batch)), output_tokens=batch_result.output_tokens // len(batch) + int(index < batch_result.output_tokens % len(batch)), estimated_cost_usd=batch_result.estimated_cost_usd / len(batch))
+                    await _finish_job(attempt, status="succeeded", result={"article_id": str(article.id), "input_chars": input_chars, "purpose": "report_translation", "output_language": target, "report_count": len(batch)})
+                except Exception as exc:
+                    failed_reports.update(uuid.UUID(key) for key in batch)
+                    await _finish_job(attempt, status="failed", result={"article_id": str(article.id), "input_chars": input_chars, "purpose": "report_translation", "report_count": len(batch)}, error=type(exc).__name__)
+                    result["failed"] += 1
+                    continue
+            translation = translated_reports[analysis.id]
+        async with SessionLocal() as session:
+            current = await session.get(ArticleAnalysis, analysis.id, with_for_update=True)
+            preview = await session.get(Publication, publication.id, with_for_update=True)
+            # An owner/scheduler may have published or reanalysed while the
+            # provider was running. Don't overwrite their concurrent work.
+            current_source = await session.get(Source, source.id)
+            current_assistant = await session.get(AssistantWorkspace, assistant_id)
+            current_profile = await _profile_for_assistant(session, assistant_id)
+            current_target = _source_output_language(current_source, current_profile or _general_market_profile(current_assistant)) if current_source is not None else None
+            if current is None or preview is None or preview.status != "preview" or preview.message_text != publication.message_text or current.status != analysis.status or current_target != target or json.dumps(analysis_text(current), ensure_ascii=False, sort_keys=True) != original:
+                result["failed"] += 1
+                continue
+            if translation is not None:
+                for key in (*TEXT_FIELDS, *LIST_FIELDS):
+                    setattr(current, key, translation.payload[key])
+                current.input_tokens += translation.input_tokens
+                current.output_tokens += translation.output_tokens
+                current.estimated_cost_usd += translation.estimated_cost_usd
+                current.citations = [{**citation, "output_language": target, "language_revision": LANGUAGE_REVISION, "translation_pending": False, "translation_model": translation.model} for citation in (current.citations or [{"source": source.name, "url": article.canonical_url}])]
+            preview.message_text = _render_publication_message(analysis=current, article=article, source=source, business_name=settings.business_name, template_blocks=template if isinstance(template, list) else None, output_language=target)
+            preview.audit = {**(preview.audit or {}), "message_template": MESSAGE_TEMPLATE_VERSION, "translation_repaired_at": _utcnow().isoformat(), "output_language": target}
+            preview.updated_at = _utcnow()
+            await session.commit()
+        result["translated" if translation else "refreshed"] += 1
+    return result
+
+
 PUBLISH_CLAIM_STALE_AFTER = timedelta(minutes=15)
 
 
@@ -1743,6 +1876,13 @@ async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: b
                 raise RuntimeError("automatic publication requires completed AI analysis")
             current_topics = (await session.scalars(select(Topic).where(Topic.assistant_id == assistant_id, Topic.enabled.is_(True)).order_by(Topic.topic_key))).all()
             current_profile = await _profile_for_assistant(session, assistant_id)
+            target_language = _source_output_language(observer_row[2], current_profile or _general_market_profile(assistant))
+            if language_issues(analysis_text(observer_row[0]), target_language):
+                raise RuntimeError("publication requires a complete translation in the configured output language")
+            stored_language = analysis_language(observer_row[0], observer_row[2])
+            recorded = next((citation.get("output_language") for citation in (observer_row[0].citations or []) if isinstance(citation, dict) and citation.get("output_language")), stored_language)
+            if stored_language != target_language or recorded != target_language:
+                raise RuntimeError("publication translation must match the current output language")
             current_hash = _relevance_hash(effective, assistant, current_topics, current_profile)
             eligible = await session.scalar(select(ArticleTopic.id).join(Topic, Topic.id == ArticleTopic.topic_id).where(
                 ArticleTopic.article_id == observer_row[1].id, ArticleTopic.assistant_id == assistant_id,
