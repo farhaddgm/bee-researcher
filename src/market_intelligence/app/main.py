@@ -27,6 +27,7 @@ from app.observability import configure_logging
 from app.database import SessionLocal, check_database
 from app.models import AssistantWorkspace
 from app.ingestion_service import (
+    DEFAULT_ASSISTANT_ID,
     list_sources,
     run_degraded_source_health_probe,
     run_ingestion,
@@ -1825,6 +1826,21 @@ async def metrics(
     return await pipeline_metrics(assistant_id=assistant_id)
 
 
+@app.get("/operations/status")
+async def product_operations_status(
+    assistant_id: uuid.UUID,
+    token: str | None = Cookie(default=None, alias="research_bee_admin_session"),
+) -> dict[str, object]:
+    from app.product_status import operations_status
+
+    await require_workspace_scope(token, assistant_id)
+    result = await operations_status(assistant_id=assistant_id)
+    if not is_owner(await current_admin(token)):
+        result.pop("budgets", None)
+        result.pop("budget_day_start", None)
+    return result
+
+
 @app.post("/relevance/rescore")
 async def relevance_rescore(
     limit: int = Query(default=1000, ge=1, le=5000),
@@ -1838,22 +1854,26 @@ async def relevance_rescore(
 @app.post("/analysis/regenerate-fallbacks")
 async def analysis_regenerate_fallbacks(
     limit: int = Query(default=200, ge=1, le=1000),
+    assistant_id: uuid.UUID | None = None,
     token: str | None = Cookie(default=None, alias="research_bee_admin_session"),
 ) -> dict[str, int]:
     if not is_owner(await current_admin(token)):
         raise HTTPException(status_code=403, detail="owner role required")
-    return await regenerate_fallback_analyses(limit=limit)
+    await require_workspace_scope(token, assistant_id, write=True)
+    return await regenerate_fallback_analyses(limit=limit, assistant_id=assistant_id)
 
 
 @app.post("/analysis/reanalyze-fallbacks")
 async def analysis_reanalyze_fallbacks(
     limit: int = Query(default=5, ge=1, le=20),
+    assistant_id: uuid.UUID | None = None,
     token: str | None = Cookie(default=None, alias="research_bee_admin_session"),
 ) -> dict[str, object]:
     if not is_owner(await current_admin(token)):
         raise HTTPException(status_code=403, detail="owner role required")
     try:
-        return await reanalyze_fallback_articles(settings, limit=limit)
+        await require_workspace_scope(token, assistant_id, write=True)
+        return await reanalyze_fallback_articles(settings, limit=limit, assistant_id=assistant_id)
     except Exception as exc:
         logger.exception("fallback reanalysis failed")
         raise HTTPException(status_code=500, detail="fallback reanalysis failed") from exc
@@ -1989,10 +2009,13 @@ async def publications(
 async def relevance_assessments(
     assistant_id: uuid.UUID,
     limit: int = Query(default=200, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=500),
+    state: str | None = Query(default=None, pattern="^(selected|borderline|rejected|pending)$"),
+    query: str | None = Query(default=None, max_length=200),
     token: str | None = Cookie(default=None, alias="research_bee_admin_session"),
 ) -> dict[str, object]:
     await require_workspace_scope(token, assistant_id)
-    return await list_relevance_assessments(assistant_id=assistant_id, limit=limit)
+    return await list_relevance_assessments(assistant_id=assistant_id, limit=limit, offset=offset, state=state, query=query)
 
 
 @app.get("/insights")
@@ -2127,6 +2150,7 @@ async def weekly_report_run(
 ) -> dict[str, object]:
     if not is_owner(await current_admin(token)):
         raise HTTPException(status_code=403, detail="owner role required")
+    await require_workspace_scope(token, assistant_id or DEFAULT_ASSISTANT_ID)
     return await generate_weekly_report(assistant_id=assistant_id)
 
 

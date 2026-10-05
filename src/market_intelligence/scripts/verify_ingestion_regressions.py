@@ -12,7 +12,7 @@ from sqlalchemy import delete, func, select
 from app.config import get_settings
 from app.database import SessionLocal, engine
 from app.fetchers import DiscoveredItem, FetchResult
-from app.models import AssistantWorkspace, Source, SourceItem
+from app.models import AssistantWorkspace, Source, SourceItem, Topic
 from app import ingestion_service as ingestion
 
 
@@ -62,6 +62,15 @@ async def main():
                 assert dict(rows) == {aids[0]: 1, aids[1]: 1}
                 source = await session.get(Source, sids[0])
                 assert source.etag == '"new-data"', "Stored ingestion did not acknowledge its cache"
+                session.add(Topic(id=uuid.uuid4(),assistant_id=aids[0],topic_key="CURRENT",name="Current response",definition="Fixture",positive_terms=["currenttextmarker"],negative_terms=[],threshold=.1,source_revision="fixture"))
+                await session.commit()
+            fetch.return_value=FetchResult("succeeded",(DiscoveredItem("Synthetic common headline","https://example.org/common-news",excerpt="currenttextmarker",published_at=datetime.now(timezone.utc)),),1,200,"https://example.org/feed")
+            probe=await ingestion.run_source_probe(sids[0],assistant_id=aids[0],settings=cfg)
+            assert probe["score_kind"]=="lexical_diagnostic" and probe["ai_state"]=="pending" and probe["no_ai_request"]
+            assert "currenttextmarker" in probe["top_results"][0]["matched_terms"],"Probe used an old stored excerpt instead of the fetched text"
+            fetch.return_value=FetchResult("succeeded",(),1,200,"https://example.org/feed")
+            empty=await ingestion.run_source_probe(sids[0],assistant_id=aids[0],settings=cfg)
+            assert empty["status"]=="degraded" and empty["texts_extractable"]==0 and not empty["top_results"],"Old stored news made an empty live response look healthy"
         print("Ingestion SQL/Redis regression passed: probe cache isolation, concurrent shared media, per-workspace deduplication")
     finally:
         async with SessionLocal() as session:

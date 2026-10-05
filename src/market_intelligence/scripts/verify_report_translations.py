@@ -3,6 +3,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
+from pydantic import SecretStr
 
 from sqlalchemy import delete, select
 
@@ -19,7 +20,7 @@ async def main():
     if config.environment != "test" or config.postgres_db != "assistant_test" or config.openai_ready or config.telegram_ready:
         raise RuntimeError("Requires isolated test DB and disabled external providers")
     ids = [uuid.uuid4(), uuid.uuid4()]
-    cfg = config.model_copy(update={"external_analysis_approved": True, "openai_api_key": "fixture-not-a-real-key"})
+    cfg = config.model_copy(update={"external_analysis_approved": True, "openai_api_key": SecretStr("fixture-not-a-real-key")})
     original_title = "Google announced a new model"
     original_text = "Google announced a new language model. It supports new reasoning tasks."
     now = datetime.now(timezone.utc)

@@ -1,187 +1,109 @@
-# Bee Researcher
+# Bee Researcher — 3.35.0
 
-Bee CFO v3.5.1 adds the approved post-phase-one governance layer: measurable
-shadow-pilot runs, direct-source decisions, attention budgets, staged USD/BTC
-packs, a private typed `/why <report-uuid>` explanation, and a design-only
-phase-two privacy boundary. These controls are append-only and fail closed;
-they do not enable scheduling, markets, sources, personal-data processing, or
-personalized advice. The latest source-decision gate also requires an approved,
-passed and unexpired owner record before any live price can be published; an
-active catalog source alone is not sufficient.
+A private, multi-workspace news collection, evidence-based AI relevance and
+publication service. The administration portal is `/admin`; authorized readers
+use `/user`. `market-intelligence` is the legacy deployment service name, NOT
+permission to modify other Bee applications.
 
-Bee CFO phase one is implemented as an independently removable bounded
-context in [`app/bee_cfo/README.md`](app/bee_cfo/README.md). It adds public
-market analysis, source provenance, scenarios, change alerts, and forecast
-evaluation without enabling the back-office UI or personalized advice.
+## Product flow
 
-The v2.97.0 operational layer stores one auditable row per article-level forecast
-statement. It preserves different horizons and same-outlet conflicts, groups
-the Telegram outlook by horizon, downweights syndicated narratives, keeps a
-source/analyst/horizon evaluation ledger, and exposes owner-editable weighting
-scenarios through the Bee CFO API. Horizon-specific expiry and no-look-ahead
-guards keep stale/future statements out of consensus; weighting changes and
-resets are recorded in a separate audit table. Existing Researcher tables,
-routes, and runtime namespaces remain outside this bounded context.
+1. Create an assistant workspace with its mission. A business is optional.
+2. Add readable public sources; select each source's report output language.
+3. Add enabled topics, definitions, positive/excluded terms and thresholds.
+4. Owner configures collection/analysis slots in Settings. Publication slots
+   belong to Channels. These schedules are independent.
+5. Collection stores source items; extraction retains original article evidence.
+6. AI evaluates every active topic with score, confidence and verifiable quotes.
+7. Current topic threshold plus any explicit project floor decides selected,
+   borderline, rejected or pending. Lexical matches and user feedback NEVER
+   authorize publication on their own.
+8. Selected or eligible borderline articles receive a complete localized report.
+9. Scheduled delivery requires current evidence, full valid report language,
+   active workspace/source, authorized destination and publication limits.
+   Manual borderline approval is bounded and tied to the exact current score,
+   content and threshold. No report/provider failure silently publishes fallback.
 
-Independent Market Intelligence service through roadmap phases `MI-004` to
-`MI-011`, version `2.97.0`.
+Changing a threshold does not require a paid re-score. Changing topic meaning,
+model, business or article content invalidates incompatible cached evidence.
+Pending articles are retained and retryable; they are not confirmed irrelevant.
 
-v2.97.0 also adds the approved Telegram output contract: a standalone price
-card followed only by one name-only media-direction card per active horizon;
-the default historical media lookback is seven days while price comparison
-remains twenty-four hours. It also retains the benchmark-informed operational
-controls: decomposed
-confidence budgets, actionable coverage gaps, alert maturity, source failover
-health, horizon/source/analyst scorecards, point-in-time replay, source-aware
-report diffs, bounded capacity budgets, and Telegram ordering/idempotency UAT.
-All are persisted in report snapshots or derived from existing Bee CFO ledgers;
-no new Researcher table or queue is required.
+## Operator diagnostics
 
-## Isolation contract
+- Overview/Operations distinguish process liveness from observed AI health.
+  API configuration is not proof that the account has credits or model access.
+- Quota, authentication and model errors are safe actionable codes, with a dated
+  observation and owner-only request budgets. Read-only diagnostics do not call AI.
+- News List's expandable collected-news list shows all four AI decision states,
+  title/source search, numbered pages and quote/rationale details. Its disclosed
+  window is the most recent 500 search matches within the freshness window.
+- Source Check verifies connection, extraction and keyword matches only. It does
+  not calculate AI relevance or claim cross-language matches are irrelevant.
+- Recovery endpoints reuse the scoped pipeline: current AI gates, optional
+  business, per-workspace budgets and immutable published content. Complete
+  translations survive provider outages and fallback regeneration.
 
-- Docker service and image: `market-intelligence` / `ai-market-intelligence:3.5.1`
+## Runtime boundaries
 
-v2.98.0 preserves those approved price and media cards exactly, then appends
-bounded evidence-first cards for factors, model estimates/scenarios, data
-quality, and follow-up items only when their individual publication gates pass.
-- PostgreSQL schema: `market_intelligence`
-- Alembic version table: `market_intelligence.alembic_version`
-- Redis database: `2`
-- Redis namespace: `market-intelligence:*`
-- Environment prefix: `MARKET_INTELLIGENCE_`
-- Runtime port: `8010` on the private Compose network; host binding is limited
-  to localhost and public access is served only through the TLS domain.
+- Python 3.13, FastAPI, PostgreSQL schema `market_intelligence`, private Redis
+  database/namespace. Current Alembic revision: `0040_workspace_reports`.
+- Never restore the shared database, restart the entire compose project, or edit
+  Consultant/other services to publish Researcher. Only the Researcher service
+  may be recreated. The reports migration changes one unique constraint and
+  retains every report; no article, user or source is deleted.
+- Secrets remain server environment/secret-manager values. Do not paste keys,
+  cookies or account data into reports, commits or tickets.
+- OpenAI API funding is separate from Codex usage. A quota error is an external
+  account blocker, not evidence of successful AI operation.
+- Official Google Search is used only with configured API key and engine ID.
+  Otherwise discovery uses actual provider web-search evidence, never guessed
+  URLs. No implementation can promise exhaustive coverage of the entire web.
+- Existing configured models are preserved; releases do not silently substitute
+  a cheaper model, raise budgets or change schedules.
 
-The physical PostgreSQL and Redis services are reused. No Python module, table,
-queue key, token, release number, or mutable runtime state is shared with the
-legacy `research_*` implementation in `assistant-api`.
+## Verification
 
-## Product defaults
-
-- Business: داتین
-- Topics: financial services, banking services, Central Bank of Iran, and
-  Iranian financial-policy regulations
-- Timezone: `Europe/Berlin` by default; each assistant may override it from the back-office settings.
-- Daily schedule: `07:00`, `12:00`, `21:00`
-- Maximum selected items per run: `5`
-- Pilot mode: enabled
-- Automatic Telegram publishing: disabled
-
-## Pipeline
-
-1. Fetch approved public feeds/listing pages with bounded retries, conditional
-   requests, source health tracking, global fingerprint deduplication, public-URL
-   validation, and `robots.txt` awareness.
-2. Select a balanced candidate set across sources and fetch full public article
-   pages with byte/time/concurrency limits.
-3. Extract canonical URL, title, author, publication date, language, raw HTML,
-   normalized text, quality, status, and provenance.
-4. Score every active topic with explainable lexical evidence and optional
-   embeddings, reject generic non-financial matches, and cluster similar events.
-5. Produce a structured Persian business analysis. If the dedicated model key is
-   absent or a cost cap is reached, use a zero-cost deterministic fallback.
-6. Create auditable, formal HTML Telegram previews with no media preview, no
-   informal emoji, and a 2,000-character maximum. Publish only when all pilot,
-   configuration, permission, and explicit publish gates are open.
-7. Collect and analyse enabled media once per local hour with Redis locking and
-   idempotency. Publish only at the project's selected Tehran schedule slots;
-   the per-slot delivery cap is independent from the daily processing budget.
-   Missed-slot recovery, weekly trend reports, feedback capture, metrics, and
-   retention policies remain enabled.
-
-## External-data safety gates
-
-`MARKET_INTELLIGENCE_EXTERNAL_ANALYSIS_APPROVED` is a hard application gate.
-Leave it `false` until the owner explicitly approves sending normalized article
-text and the Dotin business profile to OpenAI. The deployment may reuse the
-project's existing API key, but the client refuses egress without this flag.
-Responses requests use strict JSON Schema and `store: false`.
-
-Telegram also requires a dedicated bot. Never put either secret in source control
-or Google Sheets. Configure only these deployment secrets after approval:
-
-```dotenv
-MARKET_INTELLIGENCE_EXTERNAL_ANALYSIS_APPROVED=false
-MARKET_INTELLIGENCE_TELEGRAM_BOT_TOKEN=
-MARKET_INTELLIGENCE_TELEGRAM_CHANNEL_ID=-1000000000000
-```
-
-For Telegram, create the private channel, add the dedicated bot as an administrator
-with post/edit/delete permissions, obtain the numeric `-100...` channel ID, and
-keep `MARKET_INTELLIGENCE_PILOT_MODE=true` plus
-`MARKET_INTELLIGENCE_AUTO_PUBLISH=false` during UAT.
-
-## Test, deploy, and verify
+Run in an isolated `test` database (`assistant_test`) with real AI and Telegram
+credentials disabled. Never point regression fixtures at production.
 
 ```bash
-docker compose --profile market-intelligence build market-intelligence
-docker compose --profile market-intelligence run --rm --no-deps \
-  market-intelligence python -m unittest discover -s tests -v
-docker compose --profile market-intelligence up -d market-intelligence
-docker compose --profile market-intelligence ps
+python -m unittest discover -s tests -v
+ruff check --config ruff.toml app
+mypy app --ignore-missing-imports
+python scripts/check_csp_inline_budget.py
+python scripts/check_i18n_catalog.py
+alembic upgrade head
+python scripts/verify_media_pipeline.py
+python scripts/verify_product_reliability.py
+python scripts/verify_ingestion_regressions.py
+python scripts/verify_report_translations.py
+python scripts/verify_media_discovery_sql.py
+npm ci --ignore-scripts --no-audit --no-fund
+node scripts/verify_product_diagnostics.mjs
+npm run admin:media:e2e
+npm run admin:models:e2e
+npm run admin:locales
+npm run admin:support:e2e
+npm run user:e2e
 ```
 
-The service runs its independent Alembic chain before startup. The production
-head for v1.0.0 is `0003_full_pipeline`.
+Browser scripts require isolated `BEE_ADMIN_URL`/`BEE_USER_URL` and test account
+environment variables. Semantic accuracy needs the separate opt-in,
+budget-reserved live benchmark `scripts/verify_live_relevance.py`; mocks do not
+prove model quality or account access. Dry run makes zero provider calls.
 
-Private-network operations endpoints:
+## Release and recovery
 
-- `GET /health` (liveness), `/ready` (traffic readiness), `/meta`, `/metrics`,
-  `/sources`, `/scheduler/status`
-- `POST /ingestion/run`, `/pipeline/run`, `/relevance/rescore`
-- `POST /analysis/reanalyze-fallbacks?limit=5` (requires the explicit external
-  analysis gate and reanalyzes selected preview rows in place)
-- `GET /publications`, `POST /publications/refresh-previews`,
-  `POST /publications/{id}/publish`
-- `GET /telegram/readiness`, `POST /feedback`
-- `POST /weekly-reports/run`, `/retention/run`
+Build an immutable image from the reviewed commit. Record source/image identity,
+actual tests/scans, a fresh schema-scoped backup, signed manifest and deployment
+receipt. Deploy only `market-intelligence` with `--no-deps --no-build --pull never`.
+Check `/health`, `/ready`, authenticated diagnostics and both public Bee domains.
 
-Manual safe pilot run:
+Prefer a forward fix. Do NOT run automatic Alembic downgrade or restore shared
+PostgreSQL to roll back an application image. The previous image does not know
+revision 0040; a reviewed rollback override must retain the forward-compatible
+schema and start its Uvicorn process directly (without its Alembic startup step).
+Weekly reporting remains fixed only in 3.35.0 and later. No schema downgrade may
+remove duplicate per-workspace reports to satisfy an older global constraint.
 
-```bash
-docker compose --profile market-intelligence exec -T market-intelligence \
-  python -m app.pipeline_cli --idempotency-key manual-pilot-001
-```
-
-`--publish` cannot bypass pilot mode, disabled auto-publish, missing credentials,
-or missing Telegram administrator permissions.
-
-## Retention and backup
-
-Raw HTML is cleared after 30 days and normalized articles after 365 days by
-default. Retention is destructive; inspect eligible counts before invoking it
-manually. The scheduler collects and analyses enabled media once per local hour;
-publication is attempted only at the selected project schedule slots.
-
-Create a PostgreSQL custom-format dump before and after deployment, validate with
-`pg_restore --list`, and perform restore drills only in an isolated temporary
-PostgreSQL instance.
-
-## Rollback
-
-1. Disable scheduling/publishing and stop only `market-intelligence`.
-2. Preserve logs and create a current custom-format database dump.
-3. Restore the previous image or Git revision.
-4. If database rollback is required, downgrade from `0003_full_pipeline` to
-   `0002_source_registry`; this removes only MI-004 through MI-010 tables and
-   restores service metadata to `0.3.0 / mi-003`.
-5. Verify the core `assistant-api`, both existing Telegram bots, task worker,
-   PostgreSQL, Redis, and Qdrant remain healthy.
-
-v2.99.0 completes the Phase-1 proposal traceability pass: the forecasting
-engine now exposes its available conservative components and explicit no-call
-for unproven macro inputs, while coverage gaps disclose language, authority,
-and source-independence limitations without making market claims.
-
-v2.99.1 is a safety hotfix for public media-outlook cards: directional calls
-now require an asset-specific local context, generic “price” matches are not
-accepted, and legacy stored calls are revalidated before Telegram delivery.
-
-v2.99.2 tightens market relevance for public follow-up events: the canonical
-article title is the final ingestion gate and a follow-up event must name the
-selected market before it can reach Telegram.
-
-v2.99.3 separates a controlled, explicitly requested manual pilot from
-automatic scheduled publication. The readiness API now exposes both gates;
-the former never turns the scheduler on, while the latter still requires an
-active profile and owner-configured time slots.
+Design and prioritized steps: `docs/product-reliability-3.35.0-fa.md`.
+Earlier media/relevance rationale: `docs/media-discovery-relevance-3.34.0-fa.md`.

@@ -715,7 +715,7 @@ class WeeklyReport(Base):
             "status IN ('preview', 'published', 'failed')",
             name="weekly_reports_status",
         ),
-        UniqueConstraint("period_start", "period_end", name="uq_mi_weekly_reports_period"),
+        UniqueConstraint("assistant_id", "period_start", "period_end", name="uq_mi_weekly_reports_assistant_period"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

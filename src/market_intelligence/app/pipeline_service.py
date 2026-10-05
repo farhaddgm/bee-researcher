@@ -635,6 +635,14 @@ async def _reserve_relevance_budget(settings: Settings, assistant_id: uuid.UUID,
         workspace = await session.get(AssistantWorkspace, assistant_id, with_for_update=True)
         if workspace is None or workspace.status != "active" or workspace.deleted_at is not None:
             return None
+        # The workspace row lock serializes reservations. Recovery and the
+        # scheduled pipeline must not pay to analyse the same article twice.
+        if article_id is not None and await session.scalar(select(JobRun.id).where(
+            JobRun.assistant_id == assistant_id, JobRun.job_type == job_type,
+            JobRun.status == "running", JobRun.created_at >= now - timedelta(minutes=10),
+            JobRun.result["article_id"].as_string() == str(article_id),
+        ).limit(1)) is not None:
+            return None
         count, chars = (await session.execute(select(func.count(JobRun.id), func.coalesce(func.sum(JobRun.result["input_chars"].as_integer()), 0)).where(
             JobRun.assistant_id == assistant_id, JobRun.job_type == job_type,
             JobRun.created_at >= _local_day_start_utc(now, settings.timezone),
@@ -643,7 +651,7 @@ async def _reserve_relevance_budget(settings: Settings, assistant_id: uuid.UUID,
         if int(count) >= cap or int(chars) + input_chars > settings.model_daily_input_char_cap:
             return None
         job_id = uuid.uuid4()
-        budget_result: dict[str, object] = {"input_chars": input_chars}
+        budget_result: dict[str, object] = {"input_chars": input_chars, "model": settings.analysis_model}
         if article_id is not None:
             budget_result["article_id"] = str(article_id)
         session.add(JobRun(id=job_id, assistant_id=assistant_id, job_type=job_type, status="running", idempotency_key=job_type + ":" + str(job_id), scheduled_for=now, started_at=now, attempt=1, result=budget_result))
@@ -701,7 +709,10 @@ async def score_pending_articles(
     ai_scores: dict[tuple[str, str], tuple[float, str]] = {}
     semantic_status = "disabled"
     client = OpenAIClient(settings)
-    if client.configured:
+    health = client.provider_health()
+    if health["state"] == "cooldown":
+        semantic_status = "provider_failed:" + str(health["code"])
+    elif client.configured:
         requests = 0
         # Bound output size as well as input size: 20 topics must not cause
         # 160 score objects to be truncated in one model response.
@@ -1053,11 +1064,10 @@ def _fallback_analysis(
     }
 
 
-async def regenerate_fallback_analyses(*, limit: int = 200) -> dict[str, int]:
+async def regenerate_fallback_analyses(*, limit: int = 200, assistant_id: uuid.UUID | None = None) -> dict[str, int]:
+    """Repair incomplete fallback previews, never completed translations or sends."""
+    base_settings = get_settings()
     async with SessionLocal() as session:
-        profile = await session.get(BusinessProfile, 1)
-        if profile is None:
-            raise RuntimeError("approved business profile is missing")
         rows = (
             await session.execute(
                 select(ArticleAnalysis, NormalizedArticle, SourceItem, Source, Publication)
@@ -1065,19 +1075,35 @@ async def regenerate_fallback_analyses(*, limit: int = 200) -> dict[str, int]:
                 .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
                 .join(Source, Source.id == SourceItem.source_id)
                 .outerjoin(Publication, Publication.analysis_id == ArticleAnalysis.id)
-                .where(ArticleAnalysis.status == "fallback")
+                .where(ArticleAnalysis.status == "fallback",
+                       ArticleAnalysis.assistant_id == NormalizedArticle.assistant_id,
+                       Source.assistant_id == NormalizedArticle.assistant_id,
+                       or_(Publication.id.is_(None), Publication.status == "preview"),
+                       ArticleAnalysis.assistant_id == assistant_id if assistant_id is not None else true())
                 .order_by(ArticleAnalysis.created_at.desc())
                 .limit(limit)
             )
         ).all()
         updated = 0
         preview_updated = 0
+        preserved = 0
+        contexts: dict[uuid.UUID, tuple[Settings, BusinessContext]] = {}
         for analysis, article, item, source, publication in rows:
+            aid = article.assistant_id
+            if aid not in contexts:
+                effective = await settings_for_assistant(base_settings, aid)
+                assistant = await session.get(AssistantWorkspace, aid)
+                profile_row = await _profile_for_assistant(session, aid)
+                contexts[aid] = (effective, profile_row or _general_market_profile(assistant))
+            effective, profile = contexts[aid]
+            if not language_issues(analysis_text(analysis), _source_output_language(source, profile)):
+                preserved += 1
+                continue
             topic_rows = (
                 await session.execute(
                     select(Topic, ArticleTopic)
                     .join(ArticleTopic, ArticleTopic.topic_id == Topic.id)
-                    .where(ArticleTopic.article_id == article.id)
+                    .where(ArticleTopic.article_id == article.id, Topic.assistant_id == aid, Topic.enabled.is_(True))
                     .order_by(ArticleTopic.combined_score.desc())
                 )
             ).all()
@@ -1103,16 +1129,20 @@ async def regenerate_fallback_analyses(*, limit: int = 200) -> dict[str, int]:
             analysis.error_message = str(payload["error_message"])
             updated += 1
             if publication is not None and publication.status == "preview":
+                blocks = (effective.message_templates.get("feedback") or {}).get("blocks") if isinstance(effective.message_templates, dict) else None
                 publication.message_text = _render_publication_message(
                     analysis=analysis,
                     article=article,
                     source=source,
                     business_name=profile.business_name,
+                    template_blocks=blocks if isinstance(blocks, list) else None,
+                    output_language=_source_output_language(source, profile),
                 )
+                publication.audit = {**(publication.audit or {}), "translation_pending": True}
                 publication.updated_at = _utcnow()
                 preview_updated += 1
         await session.commit()
-    return {"analyses_updated": updated, "previews_updated": preview_updated}
+    return {"analyses_updated": updated, "previews_updated": preview_updated, "translations_preserved": preserved}
 
 
 async def _model_budget(settings: Settings, *, assistant_id: uuid.UUID | None = None) -> tuple[int, int]:
@@ -1213,11 +1243,11 @@ def _structured_analysis_payload(
     }
 
 
-async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_id: uuid.UUID | None = None) -> dict[str, object]:
+async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_id: uuid.UUID | None = None, fallback_only: bool = False) -> dict[str, object]:
     if assistant_id is None:
         async with SessionLocal() as session:
             ids = (await session.scalars(select(AssistantWorkspace.id).where(AssistantWorkspace.status == "active", AssistantWorkspace.deleted_at.is_(None)))).all()
-        results = [await analyze_pending_articles(settings, limit=limit, assistant_id=aid) for aid in ids]
+        results = [await analyze_pending_articles(settings, limit=limit, assistant_id=aid, fallback_only=fallback_only) for aid in ids]
         return {"succeeded": sum(_payload_int(r.get("succeeded")) for r in results), "workspaces": results}
     settings = await settings_for_assistant(settings, assistant_id)
     daily_count, daily_chars = await _model_budget(settings, assistant_id=assistant_id)
@@ -1252,8 +1282,12 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                     ArticleAnalysis.article_id == NormalizedArticle.id,
                 )
                 .where(
-                    or_(ArticleAnalysis.id.is_(None), ArticleAnalysis.status.in_(["fallback", "failed"])),
+                    (and_(ArticleAnalysis.status == "fallback", exists(select(Publication.id).where(Publication.analysis_id == ArticleAnalysis.id, Publication.assistant_id == assistant_id, Publication.status == "preview")))
+                     if fallback_only else or_(ArticleAnalysis.id.is_(None), ArticleAnalysis.status.in_(["fallback", "failed"]))),
                     NormalizedArticle.assistant_id == assistant_id if assistant_id is not None else true(),
+                    Source.assistant_id == assistant_id,
+                    Source.enabled.is_(True),
+                    ~exists(select(Publication.id).where(Publication.analysis_id == ArticleAnalysis.id, Publication.status != "preview")),
                     reviewable_topic,
                 )
                 .where(_freshness_condition(NormalizedArticle.published_at, settings))
@@ -1278,7 +1312,8 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
     model_calls = 0
     fallback_calls = 0
     created = 0
-    provider_blocked = False
+    succeeded = 0
+    provider_blocked = client.provider_health()["state"] == "cooldown"
     for article, item, source, existing_report in rows[:limit]:
         async with SessionLocal() as session:
             topic_rows = (
@@ -1338,7 +1373,7 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                 provider_code = str(getattr(exc, "code", type(exc).__name__))
                 provider_blocked = provider_code in {"provider_quota_exhausted", "provider_authentication_failed", "provider_model_unavailable"}
                 if attempt_id is not None:
-                    await _finish_job(attempt_id, status="failed", result={"input_chars": input_chars, "article_id": str(article.id)}, error=provider_code)
+                    await _finish_job(attempt_id, status="failed", result={"input_chars": input_chars, "article_id": str(article.id), "model": settings.analysis_model}, error=provider_code)
                 payload = _fallback_analysis(
                     article,
                     profile=profile,
@@ -1405,7 +1440,9 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                     preview.updated_at = _utcnow()
             await session.commit()
             created += int(inserted is not None)
+            succeeded += int(inserted is not None and payload["status"] == "succeeded")
     return {
+        "succeeded": succeeded,
         "candidates": len(rows[:limit]),
         "created": created,
         "model_calls": model_calls,
@@ -1420,145 +1457,32 @@ async def reanalyze_fallback_articles(
     settings: Settings,
     *,
     limit: int = 5,
+    assistant_id: uuid.UUID | None = None,
 ) -> dict[str, object]:
-    client = OpenAIClient(settings)
-    if not client.configured:
-        raise RuntimeError(
-            "OpenAI analysis requires both an API key and explicit external approval"
-        )
-    daily_count, daily_chars = await _model_budget(settings)
-    available_requests = max(0, settings.model_daily_request_cap - daily_count)
-    request_limit = min(limit, settings.model_max_requests_per_run, available_requests)
-    async with SessionLocal() as session:
-        profile = await session.get(BusinessProfile, 1)
-        if profile is None:
-            raise RuntimeError("approved business profile is missing")
-        assistant = await session.get(AssistantWorkspace, profile.assistant_id)
-        knowledge_library = ((assistant.config or {}).get("business_knowledge") if assistant is not None else {}) or {}
-        rows = (
-            await session.execute(
-                select(ArticleAnalysis, NormalizedArticle, Source, Publication)
-                .join(NormalizedArticle, NormalizedArticle.id == ArticleAnalysis.article_id)
-                .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
-                .join(Source, Source.id == SourceItem.source_id)
-                .join(Publication, Publication.analysis_id == ArticleAnalysis.id)
-                .where(
-                    ArticleAnalysis.status == "fallback",
-                    Publication.status == "preview",
-                    NormalizedArticle.id.in_(
-                        select(ArticleTopic.article_id).where(
-                            ArticleTopic.selected.is_(True)
-                        )
-                    ),
-                )
-                .order_by(ArticleAnalysis.created_at.desc())
-                .limit(request_limit)
-            )
-        ).all()
+    """Use the authoritative pipeline for recovery, with a total call ceiling.
 
-    succeeded = 0
-    failed = 0
-    analysis_ids: list[str] = []
-    for analysis, article, source, publication in rows:
-        if daily_chars + len(article.normalized_text) > settings.model_daily_input_char_cap:
+    No legacy profile #1, historical selected flag, direct send or unpaid
+    retry path. The same context, evidence, translation and budget gates apply.
+    """
+    async with SessionLocal() as session:
+        ids = (await session.scalars(select(AssistantWorkspace.id).where(
+            AssistantWorkspace.status == "active", AssistantWorkspace.deleted_at.is_(None),
+            AssistantWorkspace.id == assistant_id if assistant_id is not None else true(),
+        ).order_by(AssistantWorkspace.created_at))).all()
+    remaining = max(0, min(limit, 20))
+    results: list[dict[str, object]] = []
+    for aid in ids:
+        if remaining <= 0:
             break
-        async with SessionLocal() as session:
-            topic_rows = (
-                await session.execute(
-                    select(Topic, ArticleTopic)
-                    .join(ArticleTopic, ArticleTopic.topic_id == Topic.id)
-                    .where(ArticleTopic.article_id == article.id)
-                    .order_by(ArticleTopic.combined_score.desc())
-                )
-            ).all()
-        try:
-            result = await client.analyze(
-                article_title=article.title,
-                article_text=article.normalized_text,
-                source_name=source.name,
-                source_url=article.canonical_url,
-                published_at=(
-                    article.published_at.isoformat() if article.published_at else None
-                ),
-                business_profile={**_profile_payload(profile), "knowledge_library": knowledge_library, "message_template_guidance": _template_guidance(settings.message_templates)},
-                topics=[
-                    {
-                        "topic_key": topic.topic_key,
-                        "name": topic.name,
-                        "definition": topic.definition,
-                        "current_score": score.ai_score,
-                        "evidence": assessment_metadata(score.explanation).get("evidence", []),
-                    }
-                    for topic, score in topic_rows
-                ],
-                incomplete_text=article.extraction_status == "partial",
-                output_language=_source_output_language(source, profile),
-            )
-            payload = _structured_analysis_payload(
-                result,
-                article=article,
-                source=source,
-            )
-            async with SessionLocal() as session:
-                current_analysis = await session.get(
-                    ArticleAnalysis, analysis.id, with_for_update=True
-                )
-                current_publication = await session.get(
-                    Publication, publication.id, with_for_update=True
-                )
-                if current_analysis is None or current_publication is None:
-                    raise RuntimeError("analysis or preview disappeared during reanalysis")
-                current_analysis.status = str(payload["status"])
-                current_analysis.headline = str(payload["headline"])[:2000]
-                current_analysis.news_summary = str(payload["news_summary"])
-                current_analysis.business_connection = str(payload["business_connection"])
-                current_analysis.opportunity = str(payload["opportunity"])
-                current_analysis.risk = str(payload["risk"])
-                current_analysis.suggested_action = str(payload["suggested_action"])
-                current_analysis.time_horizon = str(payload["time_horizon"])
-                current_analysis.confidence = _payload_float(payload["confidence"])
-                current_analysis.facts = payload["facts"]
-                current_analysis.inferences = payload["inferences"]
-                current_analysis.citations = payload["citations"]
-                current_analysis.topic_scores = payload["topic_scores"]
-                current_analysis.model = str(payload["model"])
-                current_analysis.input_chars = len(article.normalized_text)
-                current_analysis.input_tokens = _payload_int(payload["input_tokens"])
-                current_analysis.output_tokens = _payload_int(payload["output_tokens"])
-                current_analysis.estimated_cost_usd = _payload_float(payload["estimated_cost_usd"])
-                current_analysis.error_message = None
-                current_publication.message_text = _render_publication_message(
-                    analysis=current_analysis,
-                    article=article,
-                    source=source,
-                    business_name=profile.business_name,
-                )
-                current_publication.updated_at = _utcnow()
-                current_publication.audit = {
-                    **current_publication.audit,
-                    "analysis_mode": "openai-approved",
-                }
-                await session.commit()
-            daily_chars += len(article.normalized_text)
-            succeeded += 1
-            analysis_ids.append(str(analysis.id))
-        except Exception as exc:
-            async with SessionLocal() as session:
-                current_analysis = await session.get(ArticleAnalysis, analysis.id)
-                if current_analysis is not None:
-                    current_analysis.error_message = (
-                        f"approved model reanalysis failed: {type(exc).__name__}: {exc}"
-                    )[:2000]
-                    await session.commit()
-            failed += 1
-    return {
-        "candidates": len(rows),
-        "succeeded": succeeded,
-        "failed": failed,
-        "analysis_ids": analysis_ids,
-        "daily_model_requests_before_run": daily_count,
-        "daily_input_chars_after_run": daily_chars,
-    }
+        result = await analyze_pending_articles(settings, limit=remaining, assistant_id=aid, fallback_only=True)
+        calls = _payload_int(result.get("model_calls"))
+        remaining -= calls
+        results.append({"assistant_id": str(aid), **result})
+    succeeded = sum(_payload_int(r.get("succeeded")) for r in results)
+    calls = sum(_payload_int(r.get("model_calls")) for r in results)
+    return {"candidates": sum(_payload_int(r.get("candidates")) for r in results),
+            "succeeded": succeeded, "failed": max(0, calls - succeeded),
+            "model_calls": calls, "no_publish": True, "workspaces": results}
 
 
 async def create_publication_previews(settings: Settings, *, limit: int, assistant_id: uuid.UUID | None = None) -> dict[str, int]:
@@ -2465,51 +2389,60 @@ async def list_publications(*, status: str | None = None, limit: int = 50, assis
     ]
 
 
-async def list_relevance_assessments(*, assistant_id: uuid.UUID, limit: int = 200) -> dict[str, object]:
-    """Observe rejected/pending articles too, without generating or publishing reports."""
+async def list_relevance_assessments(*, assistant_id: uuid.UUID, limit: int = 200, offset: int = 0, state: str | None = None, query: str | None = None) -> dict[str, object]:
+    """Paginate a disclosed recent 500-item window using current AI decisions.
+
+    Search is performed before the window is bounded. Decision filters never
+    reuse historical selected flags. This GET cannot create paid reports.
+    """
     settings = await settings_for_assistant(get_settings(), assistant_id)
     async with SessionLocal() as session:
-        rows = (await session.execute(select(NormalizedArticle, Source.name)
+        statement = (select(NormalizedArticle, Source.name)
                 .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
                 .join(Source, Source.id == SourceItem.source_id)
                 .where(NormalizedArticle.assistant_id == assistant_id, Source.assistant_id == assistant_id,
-                       _freshness_condition(NormalizedArticle.published_at, settings))
-                .order_by(NormalizedArticle.extracted_at.desc()).limit(limit))).all()
+                       _freshness_condition(NormalizedArticle.published_at, settings)))
+        if query and query.strip():
+            term = "%" + query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            statement = statement.where(or_(NormalizedArticle.title.ilike(term, escape="\\"), Source.name.ilike(term, escape="\\")))
+        available = int(await session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
+        rows = (await session.execute(statement.order_by(NormalizedArticle.extracted_at.desc(), NormalizedArticle.id).limit(500))).all()
         decisions = await _article_decisions(session, [r[0] for r in rows], settings)
     counts = {state: sum(d["relevance_state"] == state for d in decisions.values()) for state in ("selected", "borderline", "rejected", "pending")}
-    return {"revision": SCORER_REVISION, "counts": counts, "limit": limit, "articles": [
+    filtered = [r for r in rows if not state or decisions[r[0].id]["relevance_state"] == state]
+    page_rows = filtered[max(0, offset):max(0, offset) + min(max(limit, 1), 200)]
+    return {"revision": SCORER_REVISION, "counts": counts, "counts_scope": "recent_search_window", "window_limit": 500,
+            "window_capped": available > 500, "total_available": available, "total": len(filtered),
+            "offset": offset, "limit": limit, "no_external_request": True, "articles": [
         {"id": str(article.id), "title": article.title, "source_name": source_name,
-         "published_at": article.published_at, **decisions[article.id]} for article, source_name in rows]}
+         "source_url": article.canonical_url, "published_at": article.published_at, **decisions[article.id]} for article, source_name in page_rows]}
 
 
 async def generate_weekly_report(*, now: datetime | None = None, assistant_id: uuid.UUID | None = None) -> dict[str, object]:
+    assistant_id = assistant_id or DEFAULT_ASSISTANT_ID
     now = now or _utcnow()
     period_start = now - timedelta(days=7)
     async with SessionLocal() as session:
-        topic_rows = (
-            await session.execute(
-                select(Topic.name, func.count(distinct(ArticleTopic.article_id)))
-                .join(ArticleTopic, ArticleTopic.topic_id == Topic.id)
-                .join(
-                    ArticleAnalysis,
-                    ArticleAnalysis.article_id == ArticleTopic.article_id,
-                )
-                .where(
-                    ArticleTopic.selected.is_(True),
-                    ArticleAnalysis.created_at >= period_start,
-                    ArticleAnalysis.created_at < now,
-                )
-                .where(ArticleTopic.assistant_id == assistant_id if assistant_id is not None else true())
-                .group_by(Topic.name)
-                .order_by(func.count(distinct(ArticleTopic.article_id)).desc())
-            )
-        ).all()
+        articles = (await session.scalars(select(NormalizedArticle).join(ArticleAnalysis, ArticleAnalysis.article_id == NormalizedArticle.id).where(
+            NormalizedArticle.assistant_id == assistant_id, ArticleAnalysis.assistant_id == assistant_id,
+            ArticleAnalysis.status == "succeeded", ArticleAnalysis.created_at >= period_start, ArticleAnalysis.created_at < now,
+        ))).all()
+        decisions = await _article_decisions(session, articles, await settings_for_assistant(get_settings(), assistant_id))
+        names = {t.topic_key: t.name for t in (await session.scalars(select(Topic).where(Topic.assistant_id == assistant_id, Topic.enabled.is_(True)))).all()}
+        trend_counts: dict[str, int] = {}
+        for decision in decisions.values():
+            key = decision.get("relevance_topic")
+            if decision["publishable"] and key in names:
+                name = names[key]
+                trend_counts[name] = trend_counts.get(name, 0) + 1
+        topic_rows = sorted(trend_counts.items(), key=lambda row: (-row[1], row[0]))
         profile = await _profile_for_assistant(session, assistant_id)
         analysis_count = (
             await session.execute(
                 select(func.count(ArticleAnalysis.id)).where(
                     ArticleAnalysis.created_at >= period_start,
                     ArticleAnalysis.created_at < now,
+                    ArticleAnalysis.status == "succeeded",
                 )
                 .where(ArticleAnalysis.assistant_id == assistant_id if assistant_id is not None else true())
             )
@@ -2553,20 +2486,23 @@ async def generate_weekly_report(*, now: datetime | None = None, assistant_id: u
             postgresql_insert(WeeklyReport)
             .values(
                 id=report_id,
+                assistant_id=assistant_id,
                 period_start=period_start,
                 period_end=now,
                 status="preview",
                 digest="\n".join(digest_lines),
                 trends=trends,
                 competitor_mentions=competitor_mentions,
-                metrics={"analyses": analysis_count, "feedback": feedback_metrics},
+                metrics={"analyses": analysis_count, "feedback": feedback_metrics, "trend_basis": "current_ai_evidence"},
             )
             .on_conflict_do_nothing(
-                index_elements=[WeeklyReport.period_start, WeeklyReport.period_end]
+                index_elements=[WeeklyReport.assistant_id, WeeklyReport.period_start, WeeklyReport.period_end]
             )
             .returning(WeeklyReport.id)
         )
         inserted = (await session.execute(statement)).scalar_one_or_none()
+        if inserted is None:
+            inserted = await session.scalar(select(WeeklyReport.id).where(WeeklyReport.assistant_id == assistant_id, WeeklyReport.period_start == period_start, WeeklyReport.period_end == now))
         await session.commit()
     return {
         "report_id": str(inserted or report_id),
@@ -2650,7 +2586,7 @@ async def apply_retention(settings: Settings) -> dict[str, object]:
 
 
 async def pipeline_metrics(*, assistant_id: uuid.UUID | None = None) -> dict[str, object]:
-    active_settings = get_settings()
+    active_settings = await settings_for_assistant(get_settings(), assistant_id)
     local_now = _utcnow().astimezone(ZoneInfo(active_settings.timezone))
     today_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
     async with SessionLocal() as session:

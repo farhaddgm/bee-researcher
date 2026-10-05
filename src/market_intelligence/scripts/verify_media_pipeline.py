@@ -8,6 +8,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
+from pydantic import SecretStr
 
 from sqlalchemy import delete, select
 
@@ -25,7 +26,7 @@ async def main():
         raise RuntimeError("Integration test requires the isolated test database with real external providers disabled")
     ids = [uuid.uuid4(), uuid.uuid4()]
     article_ids = []
-    cfg = config.model_copy(update={"external_analysis_approved": True, "openai_api_key": "fixture-not-a-real-key"})
+    cfg = config.model_copy(update={"external_analysis_approved": True, "openai_api_key": SecretStr("fixture-not-a-real-key")})
     now = datetime.now(timezone.utc)
     try:
         async with SessionLocal() as session:

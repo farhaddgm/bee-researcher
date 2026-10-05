@@ -14,7 +14,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import Settings, get_settings
 from app.database import SessionLocal
-from app.fetchers import FetchFailure, FetchResult, SourceFetcher, SourceSpec, item_fingerprint
+from app.fetchers import DiscoveredItem, FetchFailure, FetchResult, SourceFetcher, SourceSpec, item_fingerprint
 from app.models import ArticleAnalysis, NormalizedArticle, Source, SourceFetchRun, SourceItem, Topic
 from app.queue_names import queue_key
 from app.relevance import combine_topic_score, lexical_topic_score
@@ -259,6 +259,7 @@ async def _ingest_source(
     settings: Settings,
     force: bool,
     store_items: bool = True,
+    observed_items: list[DiscoveredItem] | None = None,
 ) -> SourceRunResult:
     started_at = datetime.now(timezone.utc)
     async with SessionLocal() as session:
@@ -293,6 +294,8 @@ async def _ingest_source(
             return SourceRunResult(source_key, "skipped_locked")
         fetcher = SourceFetcher(settings)
         result = await fetcher.fetch(spec)
+        if observed_items is not None:
+            observed_items.extend(result.items)
         if result.status == "robots_denied":
             await _record_result(
                 source_id,
@@ -483,9 +486,9 @@ async def run_source_probe(
 
     This is the bounded, operator-facing smoke test used immediately after a
     source is saved.  It deliberately reuses the production ingestion lock,
-    parser and item store, then applies the same lexical relevance contract
-    as the pipeline.  No normalized article, publication or Telegram send is
-    created here; the result is only a reviewable diagnostic.
+    parser and item store. Keyword matches are diagnostics, NOT AI relevance
+    decisions. No normalized article, paid model call, publication or Telegram
+    send is created here. A cross-language source needs normal AI analysis.
     """
     bounded_limit = min(max(int(limit), 10), 20)
     base_settings = settings or get_settings()
@@ -505,11 +508,13 @@ async def run_source_probe(
         source_key = source.source_key
         source_name = source.name
 
+    observed: list[DiscoveredItem] = []
     run = await _ingest_source(
         source_id,
         settings=probe_settings,
         force=True,
         store_items=True,
+        observed_items=observed,
     )
     if run.status == "degraded":
         return {
@@ -550,20 +555,10 @@ async def run_source_probe(
                 .order_by(Topic.importance.desc(), Topic.display_order, Topic.topic_key)
             )
         ).scalars().all()
-        items = (
-            await session.execute(
-                select(SourceItem)
-                .where(
-                    SourceItem.source_id == source_id,
-                    SourceItem.assistant_id == assistant_id,
-                )
-                .order_by(
-                    SourceItem.published_at.desc().nullslast(),
-                    SourceItem.discovered_at.desc(),
-                )
-                .limit(bounded_limit)
-            )
-        ).scalars().all()
+        # Use the fetched text itself: stored fingerprint duplicates may have
+        # an older excerpt or a retention-purged tombstone. Neither describes
+        # the extractability of the current HTTP response.
+        items = observed[:bounded_limit]
         current_source = await session.get(Source, source_id)
 
     thresholds = [
@@ -597,7 +592,9 @@ async def run_source_probe(
                 score.positive_matches,
                 score.negative_matches,
             )
-            if best is None or candidate[0] > best[0]:
+            # A lower raw score passing its own topic threshold is more
+            # meaningful than a higher score that misses a stricter threshold.
+            if best is None or (candidate[0] >= candidate[2], candidate[0] - candidate[2]) > (best[0] >= best[2], best[0] - best[2]):
                 best = candidate
         score_value = best[0] if best else 0.0
         threshold = best[2] if best else default_threshold
@@ -617,6 +614,8 @@ async def run_source_probe(
                 "state": state,
                 "topic": best[1] if best else None,
                 "matched_terms": list(best[3]) if best else [],
+                "score_kind": "lexical_diagnostic",
+                "ai_state": "pending",
             }
         )
     def relevance_sort_key(row: dict[str, object]) -> float:
@@ -638,6 +637,9 @@ async def run_source_probe(
         "related": related,
         "near_threshold": near,
         "top_results": results[:5],
+        "score_kind": "lexical_diagnostic",
+        "ai_state": "pending",
+        "no_ai_request": True,
         "error": error,
         "no_publish": True,
     }
