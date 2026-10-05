@@ -13,7 +13,8 @@ from sqlalchemy import delete, select
 
 from app.config import get_settings
 from app.database import SessionLocal, engine
-from app.models import ArticleAnalysis, ArticleTopic, AssistantWorkspace, NormalizedArticle, Publication, Source, SourceItem, Topic
+from app.models import AdminUser, ArticleAnalysis, ArticleTopic, AssistantWorkspace, NormalizedArticle, Publication, Source, SourceItem, Topic
+from app import admin
 from app.openai_client import StructuredAnalysis
 from app import pipeline_service as pipeline
 
@@ -65,11 +66,14 @@ async def main():
             assert not primary[article_ids[2]].selected, "An approved negative term was ignored"
             hashes = [r.context_hash for r in rows]
             assert all(hashes) and hashes[0] != hashes[-1], "Project contexts share a scorer cache"
+            primary[article_ids[0]].combined_score = .12  # feedback/ranking must not bias report evidence
+            await session.commit()
 
         good_analysis = StructuredAnalysis(payload={"headline": "معرفی مدل جدید", "news_summary": "مدل جدیدی معرفی شد.", "business_connection": "کسب‌وکاری معرفی نشده است.", "opportunity": "", "risk": "", "suggested_action": "خبر مرور شود", "time_horizon": "نامشخص", "confidence": .9, "facts": ["مدلی معرفی شد"], "inferences": [], "topic_scores": [{"topic_key": "AI", "score": .92, "reason": "خبر معرفی مدل"}], "_report_language": {"output_language": "fa"}}, model=cfg.analysis_model, input_tokens=10, output_tokens=10, estimated_cost_usd=0)
         with patch.object(pipeline.OpenAIClient, "analyze", new=AsyncMock(return_value=good_analysis)) as model:
             result = await pipeline.analyze_pending_articles(cfg, limit=10, assistant_id=ids[0])
             assert result["model_calls"] == 1 and model.await_count == 1, "Negative/unrelated news consumed analysis calls"
+            assert model.call_args.kwargs["topics"][0]["current_score"] == .92, "Feedback adjustment biased report analysis"
         await pipeline.create_publication_previews(cfg, limit=10, assistant_id=ids[0])
         async with SessionLocal() as session:
             publication = (await session.scalars(select(Publication).where(Publication.assistant_id == ids[0]))).one()
@@ -77,7 +81,10 @@ async def main():
             translated = await session.get(ArticleAnalysis, publication.analysis_id)
             translated.status = "fallback"
             translated_summary = translated.news_summary
+            owner = (await session.scalars(select(AdminUser).where(AdminUser.email == admin.owner_email()))).one()
             await session.commit()
+        explanation = await admin.publication_explanation(ids[0], publication.analysis_id, owner)
+        assert explanation["relevance"]["score"] == .92, "Explanation API exposed a feedback/lexical score as AI relevance"
         # An unavailable provider must not replace a completed Persian
         # translation with its source-language excerpt on the next run.
         unavailable = cfg.model_copy(update={"external_analysis_approved": False, "openai_api_key": None})
@@ -169,6 +176,7 @@ async def main():
                 await session.flush()
                 session.add(NormalizedArticle(id=uuid.uuid4(), assistant_id=ids[0], source_item_id=iid, title=f"Bulk model {n}", normalized_text="Model news", canonical_url="https://example.org/" + str(iid), published_at=now, extraction_status="complete", extraction_method="fixture"))
             await session.commit()
+        assert (await pipeline.pipeline_metrics(assistant_id=ids[0]))["pending_ai_articles"] == 183, "Incomplete topic coverage disappeared from Overview"
         bulk = await pipeline.score_pending_articles(config, limit=200, rescore=True, assistant_id=ids[0])
         assert bulk["scores"] == 183 * 16, "Large score matrix was truncated or failed to persist"
         print("Pipeline SQL integration passed: workspace isolation, optional business, multilingual AI selection, negative terms, live thresholds, stale delivery gate, outage retry, fallback recovery, failed-call budget.")

@@ -4713,6 +4713,8 @@ async def publication_explanation(assistant_id: uuid.UUID, analysis_id: uuid.UUI
     """Return a score/evidence chain made only from persisted source data."""
     await _require_assistant_access(assistant_id, user)
     from app.insights import quality_projection
+    from app.ai_relevance import assessment_metadata
+    from app.pipeline_service import _article_decisions
 
     async with SessionLocal() as session:
         row = (await session.execute(
@@ -4725,8 +4727,9 @@ async def publication_explanation(assistant_id: uuid.UUID, analysis_id: uuid.UUI
         if row is None:
             raise HTTPException(status_code=404, detail="analysis not found")
         analysis, article, source = row
+        decision = (await _article_decisions(session, [article], get_settings()))[article.id]
         topic_rows = (await session.execute(
-            select(ArticleTopic, Topic).join(Topic, Topic.id == ArticleTopic.topic_id).where(ArticleTopic.assistant_id == assistant_id, ArticleTopic.article_id == article.id).order_by(ArticleTopic.combined_score.desc())
+            select(ArticleTopic, Topic).join(Topic, Topic.id == ArticleTopic.topic_id).where(ArticleTopic.assistant_id == assistant_id, ArticleTopic.article_id == article.id, Topic.enabled.is_(True)).order_by(ArticleTopic.ai_score.desc().nullslast())
         )).all()
         cluster_ids = [value for value in (await session.execute(select(ClusterMember.cluster_id).where(ClusterMember.assistant_id == assistant_id, ClusterMember.article_id == article.id))).scalars().all()]
         related_rows: list[Any] = []
@@ -4745,7 +4748,7 @@ async def publication_explanation(assistant_id: uuid.UUID, analysis_id: uuid.UUI
         "analysis_id": str(analysis_id),
         "article": {"title": article.title, "url": article.canonical_url, "published_at": article.published_at, "language": article.language, "extraction_status": article.extraction_status},
         "source": {"name": source.name, "source_key": source.source_key, "health_status": source.health_status, "url": source.fetch_url},
-        "relevance": {"score": max((float(item.combined_score) for item, _topic in topic_rows), default=0.0), "topics": [{"name": topic.name, "combined_score": float(item.combined_score), "lexical_score": float(item.lexical_score), "semantic_score": item.semantic_score, "explanation": item.explanation, "matched_positive": item.matched_positive, "matched_negative": item.matched_negative, "selected": bool(item.selected)} for item, topic in topic_rows]},
+        "relevance": {**decision, "score": decision["relevance_score"] if decision["relevance_state"] != "pending" else None, "topics": [{"name": topic.name, "ai_score": item.ai_score, "score_kind": "historical_diagnostic", "explanation": assessment_metadata(item.explanation).get("reason", ""), "evidence": assessment_metadata(item.explanation).get("evidence", []), "matched_positive": item.matched_positive, "matched_negative": item.matched_negative} for item, topic in topic_rows]},
         "quality": quality,
         "analysis": {"status": analysis.status, "confidence": float(analysis.confidence), "facts": analysis.facts, "inferences": analysis.inferences, "citations": analysis.citations, "model": analysis.model, "created_at": analysis.created_at},
         "corroboration": [{"title": title, "source": name, "url": url} for title, name, url in related_rows],

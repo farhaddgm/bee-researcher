@@ -196,6 +196,12 @@ class DiscoveryTest(unittest.IsolatedAsyncioTestCase):
 
 
 class RelevanceTest(unittest.IsolatedAsyncioTestCase):
+    def test_explanation_uses_live_ai_decision_not_combined_score(self):
+        import inspect
+        from app.admin import publication_explanation
+        self.assertIn('_article_decisions', inspect.getsource(publication_explanation))
+        self.assertNotIn('item.combined_score', inspect.getsource(publication_explanation))
+
     def test_ai_news_is_not_capped_by_financial_vocabulary(self):
         value, positive, _ = lexical_topic_score(title="ChatGPT launches new AI model", text="ChatGPT introduces a new model. ChatGPT can code.", positive_terms=["ChatGPT"], negative_terms=[])
         self.assertGreater(value, 0.4)

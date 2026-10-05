@@ -22,6 +22,8 @@
   remain available. Stop additional analysis calls in the affected run.
 - Scoped read-only relevance assessments expose pending and rejected source
   articles without generating a paid report or publishing test messages.
+- Explanation API also uses the live decision; report prompts do not reuse
+  feedback-adjusted scores. Overview recognizes incomplete topic coverage.
 - Successful search evidence has a bounded ten-minute, model/provider-scoped
   cache. Identical concurrent searches share evidence; failures are not cached.
   At most two paid searches run concurrently. Terminal account errors open a

@@ -1319,8 +1319,8 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                             "topic_key": topic.topic_key,
                             "name": topic.name,
                             "definition": topic.definition,
-                            "current_score": score.combined_score,
-                            "evidence": score.explanation,
+                            "current_score": score.ai_score,
+                            "evidence": assessment_metadata(score.explanation).get("evidence", []),
                         }
                         for topic, score in topic_rows
                     ],
@@ -1486,8 +1486,8 @@ async def reanalyze_fallback_articles(
                         "topic_key": topic.topic_key,
                         "name": topic.name,
                         "definition": topic.definition,
-                        "current_score": score.combined_score,
-                        "evidence": score.explanation,
+                        "current_score": score.ai_score,
+                        "evidence": assessment_metadata(score.explanation).get("evidence", []),
                     }
                     for topic, score in topic_rows
                 ],
@@ -1564,16 +1564,6 @@ async def reanalyze_fallback_articles(
 async def create_publication_previews(settings: Settings, *, limit: int, assistant_id: uuid.UUID | None = None) -> dict[str, int]:
     settings = await settings_for_assistant(settings, assistant_id)
     async with SessionLocal() as session:
-        has_selected_topic = exists(
-            select(ArticleTopic.id).join(Topic, Topic.id == ArticleTopic.topic_id).where(
-                ArticleTopic.article_id == ArticleAnalysis.article_id,
-                ArticleTopic.selected.is_(True),
-                ArticleTopic.ai_score.is_not(None),
-                Topic.enabled.is_(True), Topic.assistant_id == ArticleAnalysis.assistant_id,
-                ArticleTopic.combined_score >= Topic.threshold,
-                ArticleTopic.combined_score >= settings.relevance_threshold,
-            )
-        )
         # Once clustering has grouped several sources into one event, only
         # the representative article enters the publication queue. Every
         # member remains visible through the cluster/insights endpoints for
@@ -1588,7 +1578,7 @@ async def create_publication_previews(settings: Settings, *, limit: int, assista
         )
         rows = (
             await session.execute(
-                select(ArticleAnalysis, NormalizedArticle, SourceItem, Source, has_selected_topic.label("has_selected_topic"))
+                select(ArticleAnalysis, NormalizedArticle, SourceItem, Source)
                 .join(NormalizedArticle, NormalizedArticle.id == ArticleAnalysis.article_id)
                 .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
                 .join(Source, Source.id == SourceItem.source_id)
@@ -1612,7 +1602,7 @@ async def create_publication_previews(settings: Settings, *, limit: int, assista
         else None
     )
     created = 0
-    for analysis, article, item, source, has_selected_topic in rows:
+    for analysis, article, item, source in rows:
         _, _, source_safety = sanitize_untrusted_source(
             title=article.title,
             text=article.normalized_text,
@@ -2753,7 +2743,12 @@ async def pipeline_metrics(*, assistant_id: uuid.UUID | None = None) -> dict[str
                 NormalizedArticle.assistant_id == assistant_id,
                 NormalizedArticle.extraction_status.in_(["complete", "partial"]),
                 _freshness_condition(NormalizedArticle.published_at, active_settings),
-                ~exists(select(ArticleTopic.id).where(ArticleTopic.article_id == NormalizedArticle.id, ArticleTopic.ai_score.is_not(None), ArticleTopic.context_hash == current_hash)),
+                true() if not topics else select(func.count(ArticleTopic.id)).where(
+                    ArticleTopic.article_id == NormalizedArticle.id,
+                    ArticleTopic.ai_score.is_not(None), ArticleTopic.context_hash == current_hash,
+                    ArticleTopic.topic_id.in_([t.id for t in topics]),
+                    ArticleTopic.scored_at >= NormalizedArticle.extracted_at,
+                ).correlate(NormalizedArticle).scalar_subquery() < len(topics),
             )) or 0)
             counts["relevance_model_requests_today"] = int(await session.scalar(select(func.count(JobRun.id)).where(
                 JobRun.assistant_id == assistant_id, JobRun.job_type == "relevance_model",
