@@ -162,7 +162,7 @@ class PipelineWorkspaceScopeTest(unittest.TestCase):
         )
         self.assertIn("REVIEW_MARGIN", inspect.getsource(analyze_pending_articles))
         self.assertIn('"review_only"', inspect.getsource(create_publication_previews))
-        self.assertIn('"review_only"', inspect.getsource(publish_ready_previews))
+        self.assertIn('"publishable"', inspect.getsource(publish_ready_previews))
         self.assertIn("hourly_processing_slot", (inspect.getsource(scheduler_tick) + inspect.getsource(_tick_assistant)))
         self.assertIn("publish=False", (inspect.getsource(scheduler_tick) + inspect.getsource(_tick_assistant)))
 

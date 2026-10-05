@@ -22,7 +22,7 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from app.article_extraction import ArticleDocument, ArticleFetcher
 from app.config import Settings, get_settings
-from app.ai_relevance import classify_articles, relevance_context_hash
+from app.ai_relevance import SCORER_REVISION, article_digest, assessment_metadata, classify_articles, relevance_context_hash, relevance_decision
 from app.database import SessionLocal
 from app.fetchers import FetchFailure
 from app.ingestion_service import DEFAULT_ASSISTANT_ID, run_ingestion, run_sources_independently
@@ -322,14 +322,41 @@ async def _profile_for_assistant(session, assistant_id: uuid.UUID | None) -> Bus
 
 def _relevance_hash(settings: Settings, assistant: AssistantWorkspace | None, topics: Sequence[Topic], profile: BusinessProfile | None) -> str:
     return relevance_context_hash({
-        "revision": "ai-v1", "model": settings.analysis_model,
-        "threshold": settings.relevance_threshold,
+        "revision": SCORER_REVISION, "model": settings.analysis_model,
+        "assistant_id": str(getattr(assistant, "id", "")),
         "topics": [{"topic_key": t.topic_key, "name": t.name, "definition": t.definition,
-                    "positive_terms": list(t.positive_terms), "negative_terms": list(t.negative_terms),
-                    "threshold": t.threshold} for t in topics],
+                    "positive_terms": list(t.positive_terms), "negative_terms": list(t.negative_terms)} for t in topics],
         "business": _profile_payload(profile) if profile else {},
         "mission": str(getattr(assistant, "description", "") or ""),
     })
+
+
+async def _article_decisions(session, articles: Sequence[NormalizedArticle], settings: Settings) -> dict[uuid.UUID, dict]:
+    """Bulk read; never trust historical selected flags or lexical/feedback scores."""
+    decisions = {}
+    for assistant_id in {a.assistant_id for a in articles}:
+        scoped = [a for a in articles if a.assistant_id == assistant_id]
+        effective = await settings_for_assistant(settings, assistant_id)
+        assistant = await session.get(AssistantWorkspace, assistant_id)
+        profile = await _profile_for_assistant(session, assistant_id)
+        topics = (await session.scalars(select(Topic).where(Topic.assistant_id == assistant_id, Topic.enabled.is_(True)).order_by(Topic.topic_key))).all()
+        context_hash = _relevance_hash(effective, assistant, topics, profile)
+        by_topic = {t.id: t for t in topics}
+        scores = (await session.scalars(select(ArticleTopic).where(ArticleTopic.assistant_id == assistant_id, ArticleTopic.article_id.in_([a.id for a in scoped]), ArticleTopic.topic_id.in_(by_topic)))).all()
+        grouped: dict[uuid.UUID, list] = {}
+        for score in scores:
+            grouped.setdefault(score.article_id, []).append(score)
+        for article in scoped:
+            content_hash = article_digest(article.title, article.normalized_text, article.extraction_status != "complete")
+            assessed = []
+            for score in grouped.get(article.id, []):
+                metadata = assessment_metadata(score.explanation)
+                topic = by_topic[score.topic_id]
+                assessed.append({**metadata, "score": score.ai_score, "topic_key": topic.topic_key,
+                                 "threshold": max(topic.threshold, effective.relevance_threshold),
+                                 "valid": score.ai_score is not None and score.context_hash == context_hash and metadata.get("content_hash") == content_hash})
+            decisions[article.id] = relevance_decision(assessed, topic_count=len(topics), incomplete=article.extraction_status != "complete")
+    return decisions
 
 
 def _general_market_profile(assistant: AssistantWorkspace | None) -> GeneralMarketContext:
@@ -647,7 +674,7 @@ async def score_pending_articles(
         assistant = await session.get(AssistantWorkspace, assistant_id)
         profile = await _profile_for_assistant(session, assistant_id)
         business = _profile_payload(profile) if profile is not None else {}
-        topic_context = [{"topic_key": t.topic_key, "name": t.name, "definition": t.definition, "positive_terms": list(t.positive_terms), "negative_terms": list(t.negative_terms), "threshold": t.threshold} for t in topics]
+        topic_context = [{"topic_key": t.topic_key, "name": t.name, "definition": t.definition, "positive_terms": list(t.positive_terms), "negative_terms": list(t.negative_terms)} for t in topics]
         mission = str(getattr(assistant, "description", "") or "")
         context_hash = _relevance_hash(settings, assistant, topics, profile)
         article_statement = (
@@ -657,14 +684,16 @@ async def score_pending_articles(
                 NormalizedArticle.assistant_id == assistant_id if assistant_id is not None else true(),
                 _freshness_condition(NormalizedArticle.published_at, settings),
             )
-            .order_by(NormalizedArticle.extracted_at.asc())
+            .order_by(NormalizedArticle.extracted_at.desc())
             .limit(limit)
         )
         if not rescore:
-            article_statement = article_statement.where(~exists(select(ArticleTopic.id).where(
+            article_statement = article_statement.where(select(func.count(ArticleTopic.id)).where(
                 ArticleTopic.article_id == NormalizedArticle.id,
                 ArticleTopic.ai_score.is_not(None), ArticleTopic.context_hash == context_hash,
-            )))
+                ArticleTopic.topic_id.in_([t.id for t in topics]),
+                ArticleTopic.scored_at >= NormalizedArticle.extracted_at,
+            ).correlate(NormalizedArticle).scalar_subquery() < len(topics))
         articles = (await session.execute(article_statement)).scalars().all()
     if not topics or not articles:
         return {"articles": len(articles), "scores": 0, "semantic": "not_needed"}
@@ -676,7 +705,7 @@ async def score_pending_articles(
         requests = 0
         # Bound output size as well as input size: 20 topics must not cause
         # 160 score objects to be truncated in one model response.
-        batch_size = min(settings.relevance_batch_size, max(1, 40 // len(topics)))
+        batch_size = min(settings.relevance_batch_size, max(1, 24 // len(topics)))
         for offset in range(0, len(articles), batch_size):
             if requests >= settings.relevance_max_requests_per_run:
                 semantic_status = "budget_deferred"
@@ -695,8 +724,9 @@ async def score_pending_articles(
                 semantic_status = "succeeded"
             except Exception as exc:
                 # No model evidence -> review-only lexical data, retried next run.
-                semantic_status = "provider_failed:" + type(exc).__name__
-                await _finish_job(job_id, status="failed", result={"input_chars": input_chars}, error=type(exc).__name__)
+                provider_code = str(getattr(exc, "code", type(exc).__name__))
+                semantic_status = "provider_failed:" + provider_code
+                await _finish_job(job_id, status="failed", result={"input_chars": input_chars, "model": settings.analysis_model, "scorer_revision": SCORER_REVISION}, error=provider_code)
                 break
 
     rows: list[dict[str, object]] = []
@@ -720,7 +750,11 @@ async def score_pending_articles(
             )
             model_score = ai_scores.get((str(article.id), topic.topic_key))
             combined = model_score[0] if model_score is not None else score.combined_score
-            selected = model_score is not None and combined >= max(topic.threshold, settings.relevance_threshold) and not negative
+            metadata = assessment_metadata(model_score[1]) if model_score else {}
+            decision = relevance_decision([{**metadata, "valid": bool(metadata), "score": combined,
+                                           "threshold": max(topic.threshold, settings.relevance_threshold)}], topic_count=1,
+                                          incomplete=article.extraction_status != "complete")
+            selected = decision["publishable"]
             selected_articles.update([article.id] if selected else [])
             rows.append(
                 {
@@ -735,7 +769,7 @@ async def score_pending_articles(
                     "combined_score": combined,
                     "matched_positive": list(score.positive_matches),
                     "matched_negative": list(score.negative_matches),
-                    "explanation": score.explanation + ("; ai=" + str(model_score[0]) + "; reason=" + model_score[1] if model_score else "; ai_pending=" + semantic_status),
+                    "explanation": model_score[1] if model_score else score.explanation + "; ai_pending=" + semantic_status,
                     "selected": selected,
                 }
             )
@@ -759,10 +793,13 @@ async def score_pending_articles(
                     "selected": excluded.selected,
                     "scored_at": _utcnow(),
                 },
+                where=or_(excluded.ai_score.is_not(None), ArticleTopic.ai_score.is_(None)),
             )
+            # A temporary provider/quota failure must not erase valid model
+            # evidence. Changed contexts are still invalidated on every read.
             await session.execute(insert_statement)
         invalidated = 0
-        if rescore:
+        if rescore and semantic_status == "succeeded":
             valid_articles = select(ArticleTopic.article_id).where(
                 ArticleTopic.selected.is_(True), ArticleTopic.assistant_id == assistant_id,
                 ArticleTopic.context_hash == context_hash,
@@ -777,11 +814,7 @@ async def score_pending_articles(
                     Publication.status == "preview",
                     Publication.assistant_id == assistant_id,
                 )
-                .values(
-                    status="failed",
-                    error_message="invalidated by relevance scorer revision",
-                    updated_at=_utcnow(),
-                )
+                .values(audit=Publication.audit.op("||")({"review_only": True}), updated_at=_utcnow())
             )
             invalidated = int(invalidation.rowcount or 0)
         await session.commit()
@@ -805,13 +838,17 @@ async def cluster_pending_articles(settings: Settings, *, limit: int, assistant_
             await session.execute(
                 select(NormalizedArticle)
                 .join(ArticleTopic, ArticleTopic.article_id == NormalizedArticle.id)
+                .join(Topic, Topic.id == ArticleTopic.topic_id)
                 .outerjoin(ClusterMember, ClusterMember.article_id == NormalizedArticle.id)
-                .where(ArticleTopic.selected.is_(True), ClusterMember.id.is_(None), NormalizedArticle.assistant_id == assistant_id if assistant_id is not None else true(), _freshness_condition(NormalizedArticle.published_at, settings))
+                .where(ArticleTopic.ai_score.is_not(None), Topic.enabled.is_(True), ArticleTopic.ai_score >= Topic.threshold,
+                       ClusterMember.id.is_(None), NormalizedArticle.assistant_id == assistant_id if assistant_id is not None else true(), _freshness_condition(NormalizedArticle.published_at, settings))
                 .group_by(NormalizedArticle.id)
                 .order_by(NormalizedArticle.extracted_at.desc())
                 .limit(limit)
             )
         ).scalars().all()
+        decisions = await _article_decisions(session, articles, settings)
+        articles = [a for a in articles if decisions[a.id]["publishable"]]
         existing_rows = (
             await session.execute(
                 select(EventCluster, NormalizedArticle)
@@ -1201,14 +1238,8 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                 ArticleTopic.article_id == NormalizedArticle.id,
                 Topic.enabled.is_(True), Topic.assistant_id == assistant_id,
                 ArticleTopic.ai_score.is_not(None),
-                ArticleTopic.matched_negative == [],
                 ArticleTopic.context_hash == current_hash,
-                or_(
-                    ArticleTopic.selected.is_(True),
-                    ArticleTopic.combined_score
-                    >= func.greatest(Topic.threshold, settings.relevance_threshold)
-                    - REVIEW_MARGIN,
-                ),
+                ArticleTopic.ai_score >= func.greatest(Topic.threshold, settings.relevance_threshold) - REVIEW_MARGIN,
             )
         )
         rows = (
@@ -1230,6 +1261,8 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                 .limit(max(limit, settings.max_items_per_run))
             )
         ).all()
+        decisions = await _article_decisions(session, [r[0] for r in rows], settings)
+        rows = [r for r in rows if decisions[r[0].id]["relevance_state"] in {"selected", "borderline"}]
         # A missing business profile is valid for general market monitoring.
         # Keep the profile-shaped analysis payload stable with an in-memory
         # context rather than aborting the whole run.
@@ -1245,6 +1278,7 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
     model_calls = 0
     fallback_calls = 0
     created = 0
+    provider_blocked = False
     for article, item, source, existing_report in rows[:limit]:
         async with SessionLocal() as session:
             topic_rows = (
@@ -1258,6 +1292,7 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
         payload: dict[str, object]
         can_call_model = (
             client.configured
+            and not provider_blocked
             and model_calls < request_limit
             and daily_chars + len(article.normalized_text) <= settings.model_daily_input_char_cap
         )
@@ -1300,14 +1335,16 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                 if attempt_id is not None:
                     await _finish_job(attempt_id, status="succeeded", result={"input_chars": input_chars, "article_id": str(article.id), "model": settings.analysis_model})
             except Exception as exc:
+                provider_code = str(getattr(exc, "code", type(exc).__name__))
+                provider_blocked = provider_code in {"provider_quota_exhausted", "provider_authentication_failed", "provider_model_unavailable"}
                 if attempt_id is not None:
-                    await _finish_job(attempt_id, status="failed", result={"input_chars": input_chars, "article_id": str(article.id)}, error=type(exc).__name__)
+                    await _finish_job(attempt_id, status="failed", result={"input_chars": input_chars, "article_id": str(article.id)}, error=provider_code)
                 payload = _fallback_analysis(
                     article,
                     profile=profile,
                     topic_rows=topic_rows,
                     source=source,
-                    reason=f"model fallback: {type(exc).__name__}",
+                    reason=f"model fallback: {provider_code}",
                 )
                 fallback_calls += 1
         else:
@@ -1566,6 +1603,7 @@ async def create_publication_previews(settings: Settings, *, limit: int, assista
                 .limit(limit)
             )
         ).all()
+        decisions = await _article_decisions(session, [r[1] for r in rows], settings)
     preview_settings = settings
     telegram = TelegramClient(preview_settings)
     feedback_template = (
@@ -1611,8 +1649,8 @@ async def create_publication_previews(settings: Settings, *, limit: int, assista
                     "message_template": MESSAGE_TEMPLATE_VERSION,
                     # Borderline items are visible in the review queue but are
                     # never eligible for automatic Telegram delivery.
-                    "review_only": not bool(has_selected_topic),
-                    "relevance_state": "selected" if has_selected_topic else "borderline",
+                    "review_only": decisions[article.id]["review_only"],
+                    "relevance_state": decisions[article.id]["relevance_state"],
                     "source_content_safety": source_safety.as_dict(),
                 },
             )
@@ -1876,8 +1914,8 @@ async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: b
             published_at = observer_row[1].published_at
             if published_at is not None and published_at < _utcnow() - timedelta(days=effective.freshness_window_days):
                 raise RuntimeError("publication is outside the configured freshness window")
-            if observer_row[0].status != "succeeded" and not (publication.audit or {}).get("borderline_approved"):
-                raise RuntimeError("automatic publication requires completed AI analysis")
+            if observer_row[0].status != "succeeded":
+                raise RuntimeError("publication requires completed AI analysis")
             current_topics = (await session.scalars(select(Topic).where(Topic.assistant_id == assistant_id, Topic.enabled.is_(True)).order_by(Topic.topic_key))).all()
             current_profile = await _profile_for_assistant(session, assistant_id)
             target_language = _source_output_language(observer_row[2], current_profile or _general_market_profile(assistant))
@@ -1887,16 +1925,13 @@ async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: b
             recorded = next((citation.get("output_language") for citation in (observer_row[0].citations or []) if isinstance(citation, dict) and citation.get("output_language")), stored_language)
             if stored_language != target_language or recorded != target_language:
                 raise RuntimeError("publication translation must match the current output language")
-            current_hash = _relevance_hash(effective, assistant, current_topics, current_profile)
-            eligible = await session.scalar(select(ArticleTopic.id).join(Topic, Topic.id == ArticleTopic.topic_id).where(
-                ArticleTopic.article_id == observer_row[1].id, ArticleTopic.assistant_id == assistant_id,
-                Topic.assistant_id == assistant_id, Topic.enabled.is_(True),
-                ArticleTopic.ai_score.is_not(None), ArticleTopic.selected.is_(True),
-                ArticleTopic.context_hash == current_hash,
-                ArticleTopic.combined_score >= Topic.threshold,
-                ArticleTopic.combined_score >= effective.relevance_threshold,
-            ).limit(1))
-            if eligible is None and not (publication.audit or {}).get("borderline_approved"):
+            decision = (await _article_decisions(session, [observer_row[1]], effective))[observer_row[1].id]
+            approval = (publication.audit or {}).get("relevance_approval") or {}
+            manually_approved = bool(decision["can_approve"] and approval.get("context_hash") == _relevance_hash(effective, assistant, current_topics, current_profile)
+                                     and approval.get("threshold") == decision["relevance_threshold"]
+                                     and approval.get("score") == decision["relevance_score"]
+                                     and approval.get("content_hash") == article_digest(observer_row[1].title, observer_row[1].normalized_text, observer_row[1].extraction_status != "complete"))
+            if not decision["publishable"] and not manually_approved:
                 raise RuntimeError("publication requires current AI relevance above the project/topic threshold")
         # Claim before releasing the row lock: from here on no other caller
         # can start a second send of this publication.
@@ -2074,12 +2109,22 @@ async def approve_borderline_publication(publication_id: uuid.UUID) -> dict[str,
         if publication is None:
             raise KeyError("publication not found")
         audit = dict(publication.audit or {})
-        if not audit.get("review_only"):
+        article = await session.scalar(select(NormalizedArticle).join(ArticleAnalysis, ArticleAnalysis.article_id == NormalizedArticle.id).where(ArticleAnalysis.id == publication.analysis_id))
+        if article is None or article.assistant_id != publication.assistant_id:
+            raise RuntimeError("publication requires its original article")
+        settings = await settings_for_assistant(get_settings(), publication.assistant_id)
+        assistant = await session.get(AssistantWorkspace, publication.assistant_id, with_for_update=True)
+        topics = (await session.scalars(select(Topic).where(Topic.assistant_id == publication.assistant_id, Topic.enabled.is_(True)).order_by(Topic.topic_key))).all()
+        profile = await _profile_for_assistant(session, publication.assistant_id)
+        decision = (await _article_decisions(session, [article], settings))[article.id]
+        if not decision["can_approve"]:
             raise RuntimeError("publication is not a borderline review item")
+        day_start = datetime.now(ZoneInfo(settings.timezone)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         approved = (await session.execute(
             select(Publication).where(
-                Publication.updated_at >= day_start,
-                Publication.status.in_(["published", "edited"]),
+                Publication.audit["borderline_approved_at"].astext >= day_start.isoformat(),
+                Publication.assistant_id == publication.assistant_id,
+                Publication.id != publication.id,
             ).with_for_update()
         )).scalars().all()
         used_today = sum(1 for item in approved if bool((item.audit or {}).get("borderline_approved")))
@@ -2090,6 +2135,9 @@ async def approve_borderline_publication(publication_id: uuid.UUID) -> dict[str,
             "review_only": False,
             "borderline_approved": True,
             "borderline_approved_at": now.isoformat(),
+            "relevance_approval": {"context_hash": _relevance_hash(settings, assistant, topics, profile),
+                                   "threshold": decision["relevance_threshold"], "score": decision["relevance_score"],
+                                   "content_hash": article_digest(article.title, article.normalized_text, article.extraction_status != "complete")},
         }
         publication.updated_at = now
         await session.commit()
@@ -2120,20 +2168,21 @@ async def publish_ready_previews(
             filters.append(Publication.created_at >= created_after)
         candidates = (
             await session.execute(
-                select(Publication)
+                select(Publication, NormalizedArticle)
                 .join(ArticleAnalysis, ArticleAnalysis.id == Publication.analysis_id)
                 .join(NormalizedArticle, NormalizedArticle.id == ArticleAnalysis.article_id)
                 .where(*filters)
                 .order_by(Publication.created_at.desc() if newest_first else Publication.created_at)
             )
-        ).scalars().all()
+        ).all()
         # A borderline article is an operator signal, not an automatic
         # delivery candidate.  Filter after the freshness/scope query so a
         # large review queue cannot starve genuinely selected items.
+        decisions = await _article_decisions(session, [article for _, article in candidates], settings)
         ids = [
             publication.id
-            for publication in candidates
-            if not bool((publication.audit or {}).get("review_only"))
+            for publication, article in candidates
+            if decisions[article.id]["publishable"]
             and (((publication.audit or {}).get("approval") or {}).get("state") in {None, "", "unmanaged", "approved"})
         ][:limit]
     results: list[dict[str, object]] = []
@@ -2374,14 +2423,8 @@ async def apply_feedback_ranking(*, idempotency_key: str | None = None, min_samp
 
 
 async def list_publications(*, status: str | None = None, limit: int = 50, assistant_id: uuid.UUID | None = None, query: str | None = None) -> list[dict[str, object]]:
-    relevance_score = (
-        select(func.max(ArticleTopic.combined_score))
-        .where(ArticleTopic.article_id == ArticleAnalysis.article_id)
-        .correlate(ArticleAnalysis)
-        .scalar_subquery()
-    )
     statement = (
-        select(Publication, ArticleAnalysis, NormalizedArticle, SourceItem, Source, relevance_score.label("relevance_score"))
+        select(Publication, ArticleAnalysis, NormalizedArticle, SourceItem, Source)
         .join(ArticleAnalysis, ArticleAnalysis.id == Publication.analysis_id)
         .join(NormalizedArticle, NormalizedArticle.id == ArticleAnalysis.article_id)
         .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
@@ -2404,6 +2447,7 @@ async def list_publications(*, status: str | None = None, limit: int = 50, assis
         )
     async with SessionLocal() as session:
         rows = (await session.execute(statement)).all()
+        decisions = await _article_decisions(session, [r[2] for r in rows], get_settings())
     return [
         {
             "id": str(publication.id),
@@ -2420,15 +2464,32 @@ async def list_publications(*, status: str | None = None, limit: int = 50, assis
             "error_message": publication.error_message,
             "source_name": source.name,
             "source_key": source.source_key,
-            "relevance_score": float(score) if score is not None else None,
-            "review_only": bool((publication.audit or {}).get("review_only")),
-            "relevance_state": (publication.audit or {}).get("relevance_state", "selected"),
+            **decisions[_article.id],
+            "analysis_ready": _analysis.status == "succeeded",
+            "can_approve": decisions[_article.id]["can_approve"] and _analysis.status == "succeeded" and publication.status == "preview",
             "approval_state": ((publication.audit or {}).get("approval") or {}).get("state", "unmanaged"),
             "approval": (publication.audit or {}).get("approval") or None,
             "bulk_label": (publication.audit or {}).get("label"),
         }
-        for publication, _analysis, _article, _item, source, score in rows
+        for publication, _analysis, _article, _item, source in rows
     ]
+
+
+async def list_relevance_assessments(*, assistant_id: uuid.UUID, limit: int = 200) -> dict[str, object]:
+    """Observe rejected/pending articles too, without generating or publishing reports."""
+    settings = await settings_for_assistant(get_settings(), assistant_id)
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(NormalizedArticle, Source.name)
+                .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
+                .join(Source, Source.id == SourceItem.source_id)
+                .where(NormalizedArticle.assistant_id == assistant_id, Source.assistant_id == assistant_id,
+                       _freshness_condition(NormalizedArticle.published_at, settings))
+                .order_by(NormalizedArticle.extracted_at.desc()).limit(limit))).all()
+        decisions = await _article_decisions(session, [r[0] for r in rows], settings)
+    counts = {state: sum(d["relevance_state"] == state for d in decisions.values()) for state in ("selected", "borderline", "rejected", "pending")}
+    return {"revision": SCORER_REVISION, "counts": counts, "limit": limit, "articles": [
+        {"id": str(article.id), "title": article.title, "source_name": source_name,
+         "published_at": article.published_at, **decisions[article.id]} for article, source_name in rows]}
 
 
 async def generate_weekly_report(*, now: datetime | None = None, assistant_id: uuid.UUID | None = None) -> dict[str, object]:

@@ -50,7 +50,7 @@ from app.models import (
 from app.openai_client import OpenAIClient
 from app.fetchers import FetchFailure, SourceFetcher, SourceSpec, validate_connector_binding, validate_public_url_syntax
 from app.google_auth import GoogleAuthError, GoogleIdentity, is_gmail, normalize_email
-from app.media_discovery import discover_media, publisher_host
+from app.media_discovery import discover_media, normalized_name, publisher_host, publisher_identity
 from app.retention import MIN_RETENTION_DAYS, effective_retention_days
 from app.security_controls import CSRF_COOKIE, new_csrf_token
 from app.telegram_delivery import render_analysis_message
@@ -3062,9 +3062,9 @@ def _media_query_tokens(value: str) -> set[str]:
 
 def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] | None:
     """Resolve a known public source without depending on an external model."""
-    requested = str(name or "").strip().casefold()
+    requested = normalized_name(str(name or ""))
     for entry in _LOCAL_MEDIA_DIRECTORY:
-        aliases = [value.casefold() for value in _string_values(entry.get("aliases"))]
+        aliases = [normalized_name(value) for value in _string_values(entry.get("aliases"))]
         if requested in aliases:
             return {
                 "name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
@@ -3303,16 +3303,26 @@ async def _catalog_draft(
     instruction: str,
 ) -> dict[str, object]:
     if kind == "source":
+        if name.strip().startswith(("https://", "http://")):
+            # Explicit public URLs remain usable when external drafting is
+            # unavailable; verification still applies the normal SSRF/parser gates.
+            direct = _local_source_draft(name.strip(), instruction)
+            if direct is not None:
+                # Preserve channel/article paths; t.me/ alone is not a source.
+                direct.update(homepage_url=name.strip(), fetch_url=name.strip(),
+                              adapter="telegram_public" if publisher_host(name.strip()) in {"t.me", "telegram.me"} else "html")
+                return direct
         try:
             return await asyncio.wait_for(discover_media(get_settings(), name=name, instruction=instruction, schema=_SOURCE_DRAFT_SCHEMA), timeout=90)
         except Exception as exc:
-            provider_status = type(exc).__name__
+            provider_status = str(getattr(exc, "code", type(exc).__name__))
         local_draft = _local_source_draft(name, instruction)
         if local_draft is not None:
             local_draft["provider_status"] = provider_status
             return local_draft
         aliases = {alias: str(row["name"]) for row in _LOCAL_MEDIA_DIRECTORY for alias in _string_values(row.get("aliases"))}
-        names = list(dict.fromkeys(aliases.get(a, a) for a in difflib.get_close_matches(name.casefold(), list(aliases), n=3, cutoff=0.55)))
+        aliases = {normalized_name(alias): value for alias, value in aliases.items()}
+        names = list(dict.fromkeys(aliases.get(a, a) for a in difflib.get_close_matches(normalized_name(name), list(aliases), n=3, cutoff=0.55)))
         return {"name": name, "homepage_url": "", "fetch_url": "", "adapter": "html", "language": "unknown", "output_language": "source", "region": "Global", "priority": 3, "match_status": "uncertain", "match_explanation": "جست‌وجوی آنلاین موقتاً در دسترس نیست؛ این به معنی نبود رسانه نیست. دوباره تلاش کنید یا آدرس عمومی را وارد کنید.", "alternatives": names[:3], "draft_source": "fallback", "provider_status": provider_status}
     settings = get_settings()
     client = OpenAIClient(settings)
@@ -3357,7 +3367,7 @@ async def _source_suggestions(
     instruction: str,
     *, exclude: list[str] | None = None, page: int = 0,
 ) -> dict[str, object]:
-    """Return up to five concise, review-first media candidates.
+    """Return up to ten concise, evidenced, review-first media candidates.
 
     The discovery step deliberately does not fabricate feed adapters or
     credentials. Those operational details are resolved only after the owner
@@ -3367,9 +3377,9 @@ async def _source_suggestions(
     try:
         return await asyncio.wait_for(discover_media(get_settings(), name=keyword, instruction=instruction, schema=_SOURCE_SUGGESTIONS_SCHEMA, suggestions=True, exclude=exclude, page=page), timeout=90)
     except Exception as exc:
-        excluded = {publisher_host(url) for url in (exclude or [])}
-        local["suggestions"] = [row for row in _mapping_rows(local.get("suggestions")) if publisher_host(str(row.get("homepage_url") or "")) not in excluded]
-        local["provider_status"] = type(exc).__name__
+        excluded = {publisher_identity(url) for url in (exclude or [])}
+        local["suggestions"] = [row for row in _mapping_rows(local.get("suggestions")) if publisher_identity(str(row.get("homepage_url") or "")) not in excluded]
+        local["provider_status"] = str(getattr(exc, "code", type(exc).__name__))
         local["draft_source"] = "local_directory"
         local["message"] = "جست‌وجوی آنلاین موقتاً در دسترس نیست؛ فقط نتایج فهرست محلی نمایش داده می‌شوند."
         return local
@@ -3388,7 +3398,8 @@ async def _assistant_media_context(assistant_id: uuid.UUID) -> dict[str, object]
             select(BusinessProfile).where(BusinessProfile.assistant_id == assistant_id).order_by(BusinessProfile.id)
         )).all()
         selected_id = str((assistant.config or {}).get("active_business_id") or "")
-        profile = next((row for row in profiles if str(row.id) == selected_id), profiles[0] if profiles else None)
+        legacy_profile = profiles[0] if profiles and "active_business_id" not in (assistant.config or {}) else None
+        profile = next((row for row in profiles if str(row.id) == selected_id), legacy_profile)
         sources = (await session.scalars(
             select(Source.name).where(Source.assistant_id == assistant_id).order_by(Source.priority.desc(), Source.name).limit(20)
         )).all()
@@ -3421,12 +3432,16 @@ async def _verify_source_draft(draft: dict[str, object]) -> dict[str, object]:
 
     The test uses the same SSRF checks, robots policy and parsers as runtime
     collection, but does not persist a Source, article or publication.  It is
-    intentionally bounded to a single request attempt and 20 seconds.
+    bounded to two discovered feeds and the evidenced HTML, within 30 seconds.
     """
     homepage = str(draft.get("homepage_url") or "").strip()
     fetch_url = str(draft.get("fetch_url") or "").strip()
     adapter = str(draft.get("adapter") or "rss").strip()
     match_status = str(draft.get("match_status") or "uncertain")
+    provider_status = str(draft.get("provider_status") or "")
+    if (not homepage or not fetch_url) and provider_status and provider_status != "succeeded":
+        return {"status": "provider_unavailable", "provider_status": provider_status,
+                "message": "سرویس AI در دسترس نیست؛ این به معنی نبود رسانه نیست.", "items_found": 0, "editable": True}
     if match_status == "not_found" or not homepage or not fetch_url:
         return {
             "status": "not_found",
@@ -3450,29 +3465,39 @@ async def _verify_source_draft(draft: dict[str, object]) -> dict[str, object]:
             "message": "آدرس‌های پیشنهادی عمومی و معتبر نیستند؛ این رسانه ثبت نشد.",
             "items_found": 0,
         }
-    try:
+    async def verify_candidates():
+        fetcher = SourceFetcher(get_settings())
+        candidates = [(fetch_url, adapter)]
         if adapter == "html":
             try:
-                feeds = await asyncio.wait_for(SourceFetcher(get_settings()).discover_feeds(homepage), timeout=15)
-                if feeds:
-                    fetch_url, adapter = feeds[0]
-                    draft["fetch_url"], draft["adapter"] = fetch_url, adapter
+                feeds = await asyncio.wait_for(fetcher.discover_feeds(homepage), timeout=7)
+                candidates = feeds[:2] + candidates
             except (FetchFailure, ValueError, OSError, asyncio.TimeoutError):
-                pass  # Keep the evidenced HTML connector editable.
-        result = await asyncio.wait_for(
-            SourceFetcher(get_settings()).fetch(
-                SourceSpec(
-                    source_key="DRAFT-VERIFY",
-                    name=str(draft.get("name") or "media draft")[:160],
-                    homepage_url=homepage,
-                    fetch_url=fetch_url,
-                    adapter=adapter,
-                    request_timeout_seconds=20,
-                    max_retries=0,
-                )
-            ),
-            timeout=25,
-        )
+                pass
+        elif adapter == "rss":
+            # An evidenced but obsolete RSS URL must not hide readable HTML.
+            candidates.append((homepage, "html"))
+        transient = False
+        last = None
+        for candidate_url, candidate_adapter in dict.fromkeys(candidates):
+            try:
+                result = await asyncio.wait_for(fetcher.fetch(SourceSpec(
+                    source_key="DRAFT-VERIFY", name=str(draft.get("name") or "media draft")[:160],
+                    homepage_url=homepage, fetch_url=candidate_url, adapter=candidate_adapter,
+                    request_timeout_seconds=7, max_retries=0)), timeout=8)
+            except (FetchFailure, ValueError, OSError, asyncio.TimeoutError) as error:
+                transient |= getattr(error, "status_code", None) is None
+                continue
+            last = result
+            if result.status == "succeeded" and result.items:
+                draft["fetch_url"], draft["adapter"] = candidate_url, candidate_adapter
+                return {"status": "ready", "message": "اتصال رسانه و خواندن نمونه‌ای از محتوای آن تأیید شد.",
+                        "items_found": len(result.items), "response_url": result.response_url}
+        return {"status": "needs_review" if transient else "not_usable", "editable": True,
+                "message": "اتصال موقتاً در دسترس نیست؛ مشخصات رسانه را بررسی کنید." if transient else "رسانه پاسخ داد، اما محتوای قابل‌خواندن پیدا نشد.",
+                "items_found": 0, "response_url": last.response_url if last else homepage}
+    try:
+        return await asyncio.wait_for(verify_candidates(), timeout=30)
     except (FetchFailure, ValueError, OSError, asyncio.TimeoutError) as exc:
         # A transport/DNS/timeout failure is not proof that the publication
         # is invalid.  Keep the candidate editable so the owner can correct
@@ -3484,26 +3509,13 @@ async def _verify_source_draft(draft: dict[str, object]) -> dict[str, object]:
         if status_code is None:
             return {
                 "status": "needs_review",
-                "message": f"اتصال خودکار موقتاً در دسترس نبود؛ آدرس و نوع اتصال را مرور و سپس ثبت کنین: {str(exc)[:260]}",
+                "message": "اتصال خودکار موقتاً در دسترس نبود؛ آدرس و نوع اتصال را مرور و سپس ثبت کنید.",
                 "items_found": 0,
                 "editable": True,
             }
-        return {"status": "not_usable", "message": f"رسانه پاسخ HTTP معتبر نداد: {str(exc)[:300]}", "items_found": 0, "editable": True}
+        return {"status": "not_usable", "message": "رسانه پاسخ HTTP معتبر نداد.", "items_found": 0, "editable": True}
     except Exception:
         return {"status": "not_usable", "message": "اتصال یا خواندن محتوای رسانه تأیید نشد.", "items_found": 0}
-    if result.status == "succeeded" and result.items:
-        return {
-            "status": "ready",
-            "message": "اتصال رسانه و خواندن نمونه‌ای از محتوای آن تأیید شد.",
-            "items_found": len(result.items),
-            "response_url": result.response_url,
-        }
-    return {
-        "status": "not_usable",
-        "message": "رسانه پاسخ داد، اما محتوای قابل‌خواندن برای این نوع اتصال پیدا نشد.",
-        "items_found": len(result.items),
-        "response_url": result.response_url,
-    }
 
 
 async def draft_source(assistant_id: uuid.UUID, payload: CatalogDraftRequest, user: AdminUser) -> dict[str, object]:
@@ -3730,7 +3742,7 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
         workspace = await session.get(AssistantWorkspace, assistant_id)
         existing = (await session.scalars(select(Source.homepage_url).where(Source.assistant_id == assistant_id))).all()
         config_before = dict(workspace.config or {}) if workspace else {}
-    history_key = hashlib.sha256((keyword.casefold() + "\n" + payload.instruction.strip()).encode()).hexdigest()
+    history_key = hashlib.sha256((normalized_name(keyword) + "\n" + payload.instruction.strip()).encode()).hexdigest()
     histories = dict(config_before.get("source_discovery_seen") or {})
     exclude = list(existing) + payload.exclude_urls
     exclude.extend(str(_object_mapping(row.get("draft")).get("homepage_url") or "") for row in _source_suggestion_rows(config_before))
@@ -3752,12 +3764,12 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
             str(_object_mapping(row.get("draft")).get("homepage_url") or "").strip().rstrip("/").casefold()
             for row in rows if row.get("status", "pending") == "pending"
         }
-        seen_hosts = {publisher_host(url) for url in exclude if publisher_host(url)}
+        seen_hosts = {publisher_identity(url) for url in exclude if publisher_identity(url)}
         for candidate in candidates[:10]:
             candidate_name = str(candidate.get("name") or "").strip()[:160]
             candidate_homepage = str(candidate.get("homepage_url") or "").strip()[:2048]
             homepage_key = candidate_homepage.rstrip("/").casefold()
-            if not publisher_host(candidate_homepage) or publisher_host(candidate_homepage) in seen_hosts or not candidate_name or candidate_name.casefold() in existing_names or homepage_key in existing_homepages or homepage_key in pending_homepages:
+            if not publisher_identity(candidate_homepage) or publisher_identity(candidate_homepage) in seen_hosts or not candidate_name or candidate_name.casefold() in existing_names or homepage_key in existing_homepages or homepage_key in pending_homepages:
                 continue
             suggestion: dict[str, object] = {
                 "id": str(uuid.uuid4()),
@@ -3782,7 +3794,7 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
                 rows.insert(0, suggestion)
                 pending_homepages.add(homepage_key)
                 suggestions.append(suggestion)
-                seen_hosts.add(publisher_host(candidate_homepage))
+                seen_hosts.add(publisher_identity(candidate_homepage))
         config["source_suggestions"] = rows[:50]
         histories = dict(config.get("source_discovery_seen") or {})
         histories[history_key] = list(dict.fromkeys((histories.get(history_key) or []) + [str(_object_mapping(row.get("draft")).get("homepage_url") or "") for row in suggestions]))[-100:]
@@ -3845,17 +3857,15 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
         # website. Resolve the operational feed/adapter details lazily at
         # approval time, outside any database transaction.
         draft = dict(_object_mapping(suggestion.get("draft")))
+        connector_keys = ("homepage_url", "fetch_url", "adapter")
+        requested_connector = {key: draft.get(key) for key in connector_keys}
         context = await _assistant_media_context(assistant_id)
         if not str(draft.get("fetch_url") or "").strip():
-            enriched = await _catalog_draft(
-                "source",
-                str(draft.get("name") or suggestion.get("name") or "").strip(),
-                f"تکمیل اطلاعات فنی رسانه برای کلیدواژه: {suggestion.get('keyword') or ''}",
-            )
-            if isinstance(enriched, dict):
-                # Preserve any newer non-empty values saved on the suggestion
-                # while filling only the missing operational fields.
-                draft = {**enriched, **{key: value for key, value in draft.items() if value not in (None, "")}}
+            # Use the exact evidenced publisher the owner chose. Searching
+            # its name again could silently switch to a different namesake.
+            homepage = str(draft.get("homepage_url") or "").strip()
+            is_telegram = publisher_host(homepage) in {"t.me", "telegram.me"}
+            draft.update(fetch_url=homepage, adapter="telegram_public" if is_telegram else "html", match_status="match", access_policy="public_only")
 
         verification = await _verify_source_draft(draft)
         if verification.get("status") != "ready":
@@ -3875,9 +3885,11 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
             if suggestion.get("status") != "pending":
                 return suggestion
             latest_draft = _object_mapping(suggestion.get("draft"))
+            if any(latest_draft.get(key) != requested_connector[key] for key in connector_keys):
+                raise HTTPException(status_code=409, detail="source suggestion changed during verification; verify the new publisher again")
             draft = {
                 **draft,
-                **{key: value for key, value in latest_draft.items() if value not in (None, "")},
+                **{key: value for key, value in latest_draft.items() if value not in (None, "") and key not in connector_keys},
             }
             homepage = str(draft.get("homepage_url") or "").strip()
             fetch_url = str(draft.get("fetch_url") or "").strip()

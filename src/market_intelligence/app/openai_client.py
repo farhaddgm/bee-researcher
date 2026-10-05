@@ -4,6 +4,9 @@ import asyncio
 import copy
 import json
 import math
+import logging
+import hashlib
+import time
 import re
 from dataclasses import dataclass
 from typing import Any, cast
@@ -17,6 +20,15 @@ from app.report_language import LANGUAGES, LANGUAGE_REVISION, LIST_FIELDS, TEXT_
 
 OPENAI_BASE_URL = "https://api.openai.com/v1"
 RETRYABLE_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
+LOGGER = logging.getLogger(__name__)
+_PROVIDER_COOLDOWNS: dict[str, tuple[float, str]] = {}
+
+
+class AIProviderError(RuntimeError):
+    """Safe actionable provider code; never retain response bodies or tokens."""
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
 
 
 # Article bodies and titles come from public web pages.  They are data, never
@@ -312,6 +324,17 @@ class OpenAIClient:
     def configured(self) -> bool:
         return self.settings.openai_ready
 
+    def _provider_key(self) -> str:
+        key = self.settings.openai_api_key.get_secret_value() if self.settings.openai_api_key else ""
+        return hashlib.sha256((OPENAI_BASE_URL + key).encode()).hexdigest()
+
+    def provider_health(self) -> dict[str, object]:
+        failure = _PROVIDER_COOLDOWNS.get(self._provider_key())
+        cooling = bool(failure and failure[0] > time.monotonic())
+        return {"configured": self.configured, "state": "cooldown" if cooling else "not_checked" if self.configured else "not_configured",
+                "code": failure[1] if cooling and failure else None,
+                "retry_after_seconds": max(0, int(failure[0] - time.monotonic())) if cooling and failure else 0}
+
     def _estimated_token_cost(self, input_tokens: int, output_tokens: int) -> float:
         input_rate, output_rate = NEW_MODEL_TOKEN_PRICES.get(
             self.settings.analysis_model,
@@ -330,6 +353,12 @@ class OpenAIClient:
         }
 
     async def _post(self, path: str, payload: dict[str, object]) -> dict[str, Any]:
+        # Process-local short circuit; no secrets/query text are retained.
+        # Fake transports stay independent so tests never poison each other.
+        if self.transport is None:
+            health = self.provider_health()
+            if health["state"] == "cooldown":
+                raise AIProviderError(str(health["code"]))
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(90),
             headers=self._headers(),
@@ -338,6 +367,26 @@ class OpenAIClient:
             for attempt in range(1, 4):
                 try:
                     response = await client.post(f"{OPENAI_BASE_URL}{path}", json=payload)
+                    if response.is_error:
+                        try:
+                            error = response.json().get("error") or {}
+                            code, kind = error.get("code"), error.get("type")
+                        except (ValueError, AttributeError):
+                            code, kind = None, None
+                        safe_code = None
+                        if code in {"insufficient_quota", "credit_balance_exhausted", "billing_hard_limit_reached"} or kind == "insufficient_quota":
+                            safe_code = "provider_quota_exhausted"
+                        elif response.status_code in {401, 403}:
+                            safe_code = "provider_authentication_failed"
+                        elif code in {"model_not_found", "invalid_model"}:
+                            safe_code = "provider_model_unavailable"
+                        if safe_code:
+                            LOGGER.warning("AI provider unavailable status=%s code=%s", response.status_code, safe_code)
+                            if self.transport is None and safe_code != "provider_model_unavailable":
+                                if len(_PROVIDER_COOLDOWNS) >= 128:
+                                    _PROVIDER_COOLDOWNS.clear()
+                                _PROVIDER_COOLDOWNS[self._provider_key()] = (time.monotonic() + 60, safe_code)
+                            raise AIProviderError(safe_code)
                     if response.status_code in RETRYABLE_STATUS_CODES and attempt < 3:
                         await self.sleeper(min(2 ** (attempt - 1), 4))
                         continue
@@ -345,6 +394,8 @@ class OpenAIClient:
                     result = response.json()
                     if not isinstance(result, dict):
                         raise RuntimeError("OpenAI API returned a non-object payload")
+                    if self.transport is None:
+                        _PROVIDER_COOLDOWNS.pop(self._provider_key(), None)
                     return result
                 except (httpx.TransportError, httpx.TimeoutException):
                     if attempt >= 3:

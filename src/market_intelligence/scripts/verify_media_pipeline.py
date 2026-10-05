@@ -4,6 +4,7 @@ No external provider or Telegram call is made. Refuse production databases.
 Run after `alembic upgrade head`, with PYTHONPATH=src/market_intelligence.
 """
 import asyncio
+import json
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
@@ -47,7 +48,10 @@ async def main():
         async def classify(_client, *, articles, topics, business, mission):
             assert not business, "A business-free workspace received a foreign business profile"
             assert len(topics) == 1, "Topics leaked across workspaces"
-            return {(a["id"], t["topic_key"]): (.92 if "model" in a["text"].lower() else .03, "Fixture factual evidence") for a in articles for t in topics}
+            return {(a["id"], t["topic_key"]): (.92 if "model" in a["text"].lower() else .03,
+                    json.dumps({"revision": pipeline.SCORER_REVISION, "reason": "Fixture factual evidence", "confidence": .9,
+                                "evidence": [a["title"]], "excluded": "sponsored" in a["text"].lower(),
+                                "content_hash": pipeline.article_digest(a["title"], a["text"], a.get("incomplete", False))})) for a in articles for t in topics}
 
         with patch.object(pipeline, "classify_articles", side_effect=classify):
             await pipeline.score_pending_articles(cfg, limit=10, assistant_id=ids[0])
@@ -99,6 +103,27 @@ async def main():
                 assert "current AI relevance" in str(error)
             assert send.await_count == 1, "Delivery occurred despite an invalidated score"
 
+        live = (await pipeline.list_publications(assistant_id=ids[0]))[0]
+        assert live["relevance_score"] == .92 and live["relevance_threshold"] == .95 and live["relevance_state"] == "borderline", "UI used a stale selected flag or a lexical score"
+        async with SessionLocal() as session:
+            workspace = await session.get(AssistantWorkspace, ids[0])
+            workspace.config = {**workspace.config, "runtime": {"relevance_threshold": 0}}
+            topic = (await session.scalars(select(Topic).where(Topic.assistant_id == ids[0]))).one()
+            topic.threshold = .98
+            await session.commit()
+        assert (await pipeline.list_publications(assistant_id=ids[0]))[0]["relevance_state"] == "borderline"
+        async with SessionLocal() as session:
+            topic = (await session.scalars(select(Topic).where(Topic.assistant_id == ids[0]))).one()
+            topic.threshold = .2
+            await session.commit()
+        assert (await pipeline.list_publications(assistant_id=ids[0]))[0]["publishable"], "A threshold-only change unnecessarily invalidated model evidence"
+        assessed = await pipeline.list_relevance_assessments(assistant_id=ids[0])
+        assert assessed["counts"]["rejected"] == 2 and assessed["counts"]["selected"] == 1, "Unrelated or semantically excluded news was not rejected"
+        async with SessionLocal() as session:
+            topic = (await session.scalars(select(Topic).where(Topic.assistant_id == ids[0]))).one()
+            topic.threshold = .6
+            await session.commit()
+
         # An outage leaves review-only scores, retryable next run. Failed
         # attempts are reserved and counted, not refunded into an infinite loop.
         async with SessionLocal() as session:
@@ -109,7 +134,7 @@ async def main():
             await pipeline.score_pending_articles(cfg, limit=10, rescore=True, assistant_id=ids[0])
         async with SessionLocal() as session:
             rows = (await session.scalars(select(ArticleTopic).where(ArticleTopic.assistant_id == ids[0]))).all()
-            assert all(not r.selected and r.ai_score is None for r in rows), "Provider failure fell back to automatic publication"
+            assert all(r.ai_score is not None for r in rows), "Provider failure erased validated model evidence"
         with patch.object(pipeline, "classify_articles", side_effect=classify):
             await pipeline.score_pending_articles(cfg, limit=10, assistant_id=ids[0])
         async with SessionLocal() as session:

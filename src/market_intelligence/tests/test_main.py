@@ -1096,7 +1096,7 @@ class MainTest(unittest.TestCase):
         self.assertIn('id="media-workflow-v2"', body)
         self.assertIn("mediaDraftName", body)
         self.assertIn("mediaReviewHomepage", body)
-        self.assertIn("SourceFetcher(get_settings()).fetch", Path(__file__).resolve().parents[1].joinpath("app", "admin.py").read_text())
+        self.assertIn("fetcher.fetch(SourceSpec(", Path(__file__).resolve().parents[1].joinpath("app", "admin.py").read_text())
         self.assertIn("Business name (optional)", body)
         self.assertIn("const catalogHandlers={source:'openCreateSourceModal',topic:'openCreateTopicModal'}", body)
         self.assertIn("window.__researchBeeReconcileWorkspaceActions=run", body)

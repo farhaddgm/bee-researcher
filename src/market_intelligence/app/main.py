@@ -39,6 +39,7 @@ from app.pipeline_service import (
     feedback_daily_report,
     generate_weekly_report,
     list_publications,
+    list_relevance_assessments,
     pipeline_metrics,
     publish_publication,
     approve_borderline_publication,
@@ -1982,6 +1983,16 @@ async def publications(
     await require_workspace_scope(token, assistant_id)
     rows = await list_publications(status=status, limit=limit, assistant_id=assistant_id, query=query)
     return {"count": len(rows), "publications": rows}
+
+
+@app.get("/publications/relevance-assessments")
+async def relevance_assessments(
+    assistant_id: uuid.UUID,
+    limit: int = Query(default=200, ge=1, le=200),
+    token: str | None = Cookie(default=None, alias="research_bee_admin_session"),
+) -> dict[str, object]:
+    await require_workspace_scope(token, assistant_id)
+    return await list_relevance_assessments(assistant_id=assistant_id, limit=limit)
 
 
 @app.get("/insights")
