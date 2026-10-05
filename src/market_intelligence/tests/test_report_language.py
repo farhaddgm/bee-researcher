@@ -13,7 +13,7 @@ os.environ.setdefault("MARKET_INTELLIGENCE_REDIS_PASSWORD", "test-password")
 from app.config import Settings  # noqa: E402
 from app.openai_client import OpenAIClient  # noqa: E402
 from app.pipeline_service import _render_publication_message  # noqa: E402
-from app.report_language import LANGUAGES, LIST_FIELDS, TEXT_FIELDS, ReportLanguageError, language_issues, prose_matches_language, report_copy  # noqa: E402
+from app.report_language import LANGUAGES, LIST_FIELDS, TEXT_FIELDS, ReportLanguageError, language_instructions, language_issues, prose_matches_language, report_copy  # noqa: E402
 from app.telegram_delivery import render_analysis_message  # noqa: E402
 
 
@@ -36,6 +36,13 @@ class ReportLanguageTests(unittest.TestCase):
         self.assertTrue(prose_matches_language("مدل‌های Sonnet و Opus و Haiku بررسی شدند.", "fa"))
         self.assertFalse(prose_matches_language("خبر: Google Announced A New Model", "fa"))
         self.assertFalse(prose_matches_language("مدل برای inference و reasoning آماده است", "fa"))
+
+    def test_license_and_section_titles_are_translated_not_blanket_exempted(self):
+        self.assertFalse(prose_matches_language("این خبر با Creative Commons Attribution Non-Commercial No Derivatives منتشر شده است", "fa"))
+        self.assertTrue(prose_matches_language("این خبر با مجوز کرییتیو کامنز با شرط انتساب، غیرتجاری و بدون اقتباس منتشر شده است؛ CC BY-NC-ND", "fa"))
+        self.assertIn("time_horizon", language_instructions("fa"))
+        self.assertIn("Attribution Non-Commercial No Derivatives = انتساب", language_instructions("fa"))
+        self.assertNotIn("اخبار ام‌آی‌تی", language_instructions("en"))
 
     def test_checks_facts_inferences_and_score_reasons_not_identifiers(self):
         payload = fields()
