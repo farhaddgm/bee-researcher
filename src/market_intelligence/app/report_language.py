@@ -17,6 +17,7 @@ LIST_FIELDS = ("facts", "inferences")
 _ARABIC = re.compile(r"[\u0600-\u06ff]")
 _LATIN_WORD = re.compile(r"[A-Za-z]+(?:[.'’-][A-Za-z]+)*")
 _URL = re.compile(r"https?://\S+|\b[\w.+-]+@[\w.-]+\.[A-Za-z]+", re.I)
+_IDENTIFIER = re.compile(r"\b[A-Za-z_$][A-Za-z0-9_$]*(?:[._][A-Za-z0-9_$]+)+\b|`[A-Za-z_$][A-Za-z0-9_.$/-]*`")
 _NAMES = {"openai", "google", "gemini", "gems", "meta", "muse", "instinct", "microsoft", "anthropic", "claude", "sonnet", "opus", "haiku", "chatgpt", "deepseek", "nvidia", "amd", "intel", "apple", "amazon", "aws", "azure", "techcrunch", "mit", "github", "huggingface", "llama", "qwen", "mistral", "tensorflow", "pytorch", "python", "cuda", "modal", "labs", "accel", "axios", "bloomberg", "world", "fei", "li", "tesla", "xai", "grok", "bee", "researcher"}
 _NAMED_PHRASES = re.compile(r"\b(?:Creative Commons|The New York Times|The Wall Street Journal|The Verge|The Guardian)\b", re.I)
 # Sentence vocabulary, not a count of proper names scattered throughout the
@@ -34,7 +35,7 @@ def normalize_language(value: object) -> str:
 
 
 def prose_matches_language(value: object, language: str) -> bool:
-    text = _NAMED_PHRASES.sub("", _URL.sub("", str(value or ""))).strip()
+    text = _IDENTIFIER.sub("", _NAMED_PHRASES.sub("", _URL.sub("", str(value or "")))).strip()
     if not text:
         return True
     arabic = len(_ARABIC.findall(text))

@@ -52,6 +52,12 @@ class ReportLanguageTests(unittest.TestCase):
         for value in ("خبر: Google Announced A New Model", "خبر: GOOGLE ANNOUNCED A NEW MODEL", "به گفتهٔ شرکت: THIS MODEL IS NOW AVAILABLE", "خبر با Attribution Non-Commercial No Derivatives عرضه شد"):
             self.assertFalse(prose_matches_language(value, "fa"), value)
 
+    def test_literal_code_identifiers_are_preserved_not_mistaken_for_prose(self):
+        self.assertTrue(prose_matches_language("ابزارهای get_checkout، update_checkout و complete_checkout پرداخت را مدیریت می‌کنند.", "fa"))
+        self.assertTrue(prose_matches_language("پارامتر `reasoning` و تابع api.checkout حفظ می‌شوند.", "fa"))
+        self.assertFalse(prose_matches_language("ابزارهای checkout و reasoning فعال شدند", "fa"))
+        self.assertFalse(prose_matches_language("به گفتهٔ منبع: `The model is available`", "fa"))
+
     def test_checks_facts_inferences_and_score_reasons_not_identifiers(self):
         payload = fields()
         payload.update(facts=["The model was announced"], inferences=["Possible market impact"], topic_scores=[{"topic_key": "AI-research", "score": .9, "reason": "This news is relevant"}])
