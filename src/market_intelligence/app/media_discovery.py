@@ -76,7 +76,16 @@ def publisher_identity(url: str) -> str:
         if parts and parts[0] == "s":
             parts = parts[1:]
         return "t.me/" + parts[0].casefold() if parts and parts[0] else ""
-    if host in {"medium.com", "youtube.com", "www.youtube.com"}:
+    if host == "youtube.com":
+        kind = parts[0].casefold() if parts else ""
+        if kind.startswith("@"):
+            return host + "/" + kind
+        if kind in {"channel", "c", "user"} and len(parts) > 1 and parts[1]:
+            # Channel IDs are case-sensitive. /channel/ alone is not a publisher.
+            identity = parts[1] if kind == "channel" else parts[1].casefold()
+            return host + "/" + kind + "/" + identity
+        return ""  # A watch/playlist URL is not evidence of a channel identity.
+    if host == "medium.com":
         return host + "/" + parts[0].casefold() if parts and parts[0] else ""
     return host
 

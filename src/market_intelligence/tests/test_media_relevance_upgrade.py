@@ -108,6 +108,10 @@ class DiscoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(grounded_url("https://t.me/channelA", ["https://t.me/s/channelA/20"]))
         self.assertFalse(grounded_url("https://t.me/channelA", ["https://t.me/s/channelB/20"]))
         self.assertFalse(grounded_url("https://medium.com/@alice", ["https://medium.com/@bob/story"]))
+        self.assertFalse(grounded_url("https://youtube.com/channel/UCalpha", ["https://youtube.com/channel/UCbeta/videos"]))
+        self.assertNotEqual(publisher_identity("https://youtube.com/channel/UCalpha"), publisher_identity("https://youtube.com/channel/UCAlpha"))
+        self.assertTrue(grounded_url("https://youtube.com/@news", ["https://www.youtube.com/@News/videos"]))
+        self.assertEqual("", publisher_identity("https://youtube.com/watch?v=unverified"))
 
     async def test_broken_first_feed_falls_through_to_next_verified_connector(self):
         draft = {"name": "News", "homepage_url": "https://example.org/", "fetch_url": "https://example.org/", "adapter": "html", "match_status": "match"}
