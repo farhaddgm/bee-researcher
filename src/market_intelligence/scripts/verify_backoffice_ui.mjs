@@ -17,6 +17,7 @@ try{
   await page.evaluate(language=>window.setLanguage(language),language);
   for(const width of [1440,900,390,320]){
    await page.setViewportSize({width,height:1000});
+   const searchIcon=await page.locator('.global-search').evaluate(n=>{const box=n.getBoundingClientRect(),icon=n.querySelector('.ui-icon').getBoundingClientRect();return icon.left>=box.left&&icon.right<=box.right&&icon.top>=box.top&&icon.bottom<=box.bottom;});assert(searchIcon,`${language}/${width}: search icon escaped its field`);
    for(const view of ['assistants','overview','content','quality','businesses','sources','topics','schedule','template-content','operations','support','settings']){
     await page.evaluate(view=>window.setView(view),view);await page.waitForTimeout(120);
     assert(await overflow()<=2,`${language}/${view}/${width}: page overflow ${await overflow()}`);
@@ -42,11 +43,14 @@ try{
  assert(labels.every(n=>n.text&&n.width>15),'Collapsed account menu lost its labels');
  await page.locator('#sidebarAccountTrigger').click();
  await page.locator('#mobileToggle').click();
+ await page.waitForFunction(()=>document.querySelector('#sidebarAccountAvatar img')?.naturalWidth>0);
+ assert.equal(await page.locator('#sidebarAccountAvatar').evaluate(n=>n.children.length),1,'Avatar URL was parsed as markup instead of one image');
  await page.evaluate(()=>{const img=document.createElement('img');img.src='data:image/png;base64,broken';document.getElementById('sidebarAccountAvatar').replaceChildren(img);});
  await page.waitForFunction(()=>document.querySelector('#sidebarAccountAvatar [data-avatar-initials]')?.textContent.trim());
  assert.equal(await page.locator('#sidebarAccountAvatar img').evaluate(n=>getComputedStyle(n).display),'none');
  await page.evaluate(()=>window.setView('support'));
  const widths=await page.locator('.support-v4-layout>.support-v4-card:not(.all)').evaluateAll(nodes=>nodes.map(n=>n.getBoundingClientRect().width));assert(Math.abs(widths[0]-widths[1])<2,'Support columns unequal');
+ const titleHelp=await page.locator('.support-v4-title').evaluate(n=>{const title=n.querySelector('h2').getBoundingClientRect(),help=n.querySelector('.support-v4-info').getBoundingClientRect();return Math.min(Math.abs(help.left-title.right),Math.abs(title.left-help.right));});assert(titleHelp<16,'Support help is separated from its heading by the subtitle width');
  await page.evaluate(()=>{document.documentElement.dataset.theme='dark';});
  assert.notEqual(await page.locator('#supportV4Category').evaluate(n=>getComputedStyle(n).backgroundColor),'rgb(255, 255, 255)');
  await page.evaluate(()=>{document.documentElement.dataset.theme='light';window.setView('content');window.__researchBeeState.publications=[];window.renderPublications();});

@@ -6,7 +6,7 @@
 #app .topbar{background:var(--panel)!important;color:var(--ink);max-width:100%;box-sizing:border-box}
 /* Legacy reference skins used absolute coordinates wider than a compact desktop. */
 #app .main>.topbar{display:grid!important;grid-template-columns:40px minmax(80px,140px) minmax(120px,260px) minmax(100px,1fr) auto!important;gap:12px!important;height:auto!important;min-height:72px;padding:14px 24px!important}
-#app .main>.topbar>:is(.topbar-main,.workspace-select,.global-search,.top-actions,#mobileToggle){position:static!important;inset:auto!important;width:auto!important;min-width:0!important;max-width:100%!important;margin:0!important;flex:none!important}
+#app .main>.topbar>:where(.topbar-main,.workspace-select,.global-search,.top-actions,#mobileToggle){position:static!important;inset:auto!important;width:auto!important;min-width:0!important;max-width:100%!important;margin:0!important;flex:none!important}
 #app .main>.topbar .topbar-main{height:auto!important}
 #app .main>.topbar .topbar-main h1{overflow:hidden;text-overflow:ellipsis}
 #app .main>.topbar .global-search input{width:100%;min-width:0}
@@ -71,11 +71,11 @@
 #app .field label,#app .setting-label{color:var(--muted);line-height:1.65}
 #app .support-v4-summary-card,#app .support-v4-card,#app .support-v4-ticket,#support-ticket-v4-dialog .support-v4-modal{background:var(--panel)!important;color:var(--ink)!important}
 #app #view-support.support-ticket-v4 .support-v4-layout{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
-#app #view-support.support-ticket-v4 .support-v4-title{display:inline-grid;grid-template-columns:auto 26px;align-items:center;gap:6px 10px}
+#app #view-support.support-ticket-v4 .support-v4-title{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px}
 #app #view-support.support-ticket-v4 .support-v4-title>div{display:contents}
-#app #view-support.support-ticket-v4 .support-v4-title h2{grid-row:1;grid-column:1}
-#app #view-support.support-ticket-v4 .support-v4-title p{grid-row:2;grid-column:1/-1}
-#app #view-support.support-ticket-v4 .support-v4-info{grid-row:1;grid-column:2}
+#app #view-support.support-ticket-v4 .support-v4-title h2{order:0;flex:0 1 auto}
+#app #view-support.support-ticket-v4 .support-v4-info{order:1}
+#app #view-support.support-ticket-v4 .support-v4-title p{order:2;flex-basis:100%}
 #app #view-support.support-ticket-v4 .support-v4-summary{grid-template-columns:repeat(auto-fit,minmax(min(100%,110px),1fr))}
 #app #view-support.support-ticket-v4 .support-v4-priority{min-height:40px;font-size:12px}
 #app #view-support.support-ticket-v4 .support-v4-priority.active{background:var(--soft);color:var(--primary);border-color:var(--primary)}

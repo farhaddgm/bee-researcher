@@ -47,6 +47,9 @@ try {
     assert(!checking.test(await page.locator('#kpiHealth').innerText()), `Health stayed Checking in ${locale}`);
     assert.equal(await page.locator('#kpiHealthDot').getAttribute('class'), 'up');
     await page.evaluate(() => window.setView('settings'));
+    // A language/view change can retain the old cursor coordinates. Exercise
+    // a fresh real hover, rather than assuming it emits pointerover again.
+    await page.mouse.move(0, 0);
     await page.locator('#projectRelevanceInfo').hover();
     await page.waitForFunction(() => document.getElementById('beeUiTooltip')?.hidden === false);
     const help = await page.locator('#beeUiTooltip').innerText();

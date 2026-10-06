@@ -1,8 +1,11 @@
 # Bee Researcher 3.36.0 — shared backoffice usability contract
 
 - Responsive admin header replaces overflowing absolute coordinates.
+  Search-icon containment is tested; the reset uses zero-specificity :where.
 - Collapsed sidebar hides only direct footer labels, not nested profile-menu
   labels or avatar initials; navigation stays on a non-default current page.
+  Sidebar/avatar-editor images use DOM properties, not URL interpolation into
+  HTML, preserving quoted default SVG URLs and preventing markup injection.
 - Action height/type is consistent; widths follow labels, not the widest sibling.
 - Assistant cards contain all translated actions, metadata and long titles.
 - Search/filter toolbars wrap independently from table headers.

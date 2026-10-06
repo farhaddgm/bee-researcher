@@ -27,6 +27,8 @@ class BackofficePresentationTest(unittest.TestCase):
         self.assertIn("host.classList.remove('admin-ux-skeleton-host')", ADMIN_HTML)
         self.assertIn(".assistant-card,#app .view.active .support-v4-card", ADMIN_HTML)
         self.assertNotIn(".sidebar-foot span{display:none}", ADMIN_HTML)
+        self.assertNotIn("avatar.innerHTML='<img", ADMIN_HTML)
+        self.assertNotIn("preview.innerHTML='<img", ADMIN_HTML)
 
     def test_minimal_settings_and_news_direction_contract_retained(self):
         self.assertIn('id="saveSettingsButton"', USER_HTML)
