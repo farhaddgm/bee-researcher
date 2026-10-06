@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
 from pydantic import SecretStr
-from sqlalchemy import delete
+from sqlalchemy import delete, func, select
 
 from app import pipeline_service as p
 from app.config import get_settings
@@ -31,7 +31,10 @@ async def main():
                 if index==0:config["active_business_id"]=None
                 db.add(AssistantWorkspace(id=aid,slug="product-fixture-"+str(aid),name="General AI" if index==0 else "Business B",business_name="",description="Independent project",status="active",config=config))
             await db.flush()
-            db.add(BusinessProfile(assistant_id=aids[1],business_name="Isolated business B",description="Only B context",products_services="B product",target_customers="B customers",markets="B market",revenue_model="",strategic_goals="",competitors=[],sensitivities=[],output_language="fa",output_tone="short",source_revision="fixture"))
+            # Backoffice/legacy seeds assign small profile IDs explicitly; do not
+            # trust an unadvanced SERIAL sequence in a populated test database.
+            profile_id=int(await db.scalar(select(func.max(BusinessProfile.id))) or 0)+1
+            db.add(BusinessProfile(id=profile_id,assistant_id=aids[1],business_name="Isolated business B",description="Only B context",products_services="B product",target_customers="B customers",markets="B market",revenue_model="",strategic_goals="",competitors=[],sensitivities=[],output_language="fa",output_tone="short",source_revision="fixture"))
             for index,aid in enumerate(aids):
                 sid=uuid.uuid4()
                 db.add(Source(id=sid,assistant_id=aid,source_key="product",name="Fixture source",homepage_url="https://example.org",fetch_url="https://example.org/rss",adapter="rss",language="en",output_language="fa",region="global"))

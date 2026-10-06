@@ -143,12 +143,22 @@ jobs:
           npm run admin:media:e2e
           npm run admin:models:e2e
           npm run ui:e2e
+          npm run admin:research-context:e2e
       - name: Run isolated SQL media and publication integration
         env:
           PYTHONPATH: src/market_intelligence
           MARKET_INTELLIGENCE_OPENAI_API_KEY: ""
           MARKET_INTELLIGENCE_TELEGRAM_BOT_TOKEN: ""
         run: python src/market_intelligence/scripts/verify_media_pipeline.py
+      - name: Run isolated business research context SQL integration
+        env:
+          PYTHONPATH: src/market_intelligence
+          MARKET_INTELLIGENCE_OPENAI_API_KEY: ""
+          MARKET_INTELLIGENCE_TELEGRAM_BOT_TOKEN: ""
+          MARKET_INTELLIGENCE_CONTENTER_API_URL: https://contenter-review.invalid/api
+          MARKET_INTELLIGENCE_CONTENTER_WEB_URL: https://contenter-review.invalid
+          MARKET_INTELLIGENCE_CONTENTER_TOKEN: synthetic-ci-contenter-token-0123456789
+        run: python src/market_intelligence/scripts/verify_research_context_sql.py
       - name: Stop isolated application
         if: always()
         run: |

@@ -1,4 +1,4 @@
-# Bee Researcher — 3.35.0
+# Bee Researcher — 3.37.0
 
 A private, multi-workspace news collection, evidence-based AI relevance and
 publication service. The administration portal is `/admin`; authorized readers
@@ -27,6 +27,21 @@ Changing a threshold does not require a paid re-score. Changing topic meaning,
 model, business or article content invalidates incompatible cached evidence.
 Pending articles are retained and retryable; they are not confirmed irrelevant.
 
+## Approved business research context
+
+An optional Contenter link remains read-only and never activates AI on its own.
+Project writers can select approved sections/facts, consent to AI processing,
+preview recent news and explicitly save a shadow or live policy in Business.
+Topic relevance and business relevance are separate, evidence-backed scores:
+topics-only, contextual (no business-score cutoff), or focused (both gates).
+Shadow preserves the existing live policy. Facts are private in public reports
+by default, output languages/schedules are unchanged, and access withdrawal or
+expired facts cannot silently fall back to another business. A complete preview
+is required for live activation; provider failure does not fabricate a score.
+
+Design, operator steps and boundaries: `docs/RESEARCH-CONTEXT-fa.md`.
+Measured test evidence: `docs/RESEARCH-CONTEXT-VERIFICATION-fa.md`.
+
 ## Operator diagnostics
 
 - Overview/Operations distinguish process liveness from observed AI health.
@@ -45,7 +60,7 @@ Pending articles are retained and retryable; they are not confirmed irrelevant.
 ## Runtime boundaries
 
 - Python 3.13, FastAPI, PostgreSQL schema `market_intelligence`, private Redis
-  database/namespace. Current Alembic revision: `0040_workspace_reports`.
+  database/namespace. Current Alembic revision: `0042_research_context`.
 - Never restore the shared database, restart the entire compose project, or edit
   Consultant/other services to publish Researcher. Only the Researcher service
   may be recreated. The reports migration changes one unique constraint and
@@ -77,12 +92,15 @@ python scripts/verify_product_reliability.py
 python scripts/verify_ingestion_regressions.py
 python scripts/verify_report_translations.py
 python scripts/verify_media_discovery_sql.py
+python scripts/verify_contenter_sql.py
+python scripts/verify_research_context_sql.py
 npm ci --ignore-scripts --no-audit --no-fund
 node scripts/verify_product_diagnostics.mjs
 npm run admin:media:e2e
 npm run admin:models:e2e
 npm run admin:locales
 npm run admin:support:e2e
+npm run admin:research-context:e2e
 npm run user:e2e
 ```
 

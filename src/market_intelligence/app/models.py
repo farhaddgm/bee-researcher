@@ -431,6 +431,59 @@ class ContenterBusinessSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class ProjectResearchContext(Base):
+    """Explicit, approved AI context; linking an external profile never creates this row."""
+    __tablename__ = "project_research_contexts"
+    __table_args__ = (
+        CheckConstraint("source IN ('none','local','contenter')", name="research_context_source"),
+        CheckConstraint("mode IN ('topics','contextual','focused')", name="research_context_mode"),
+        CheckConstraint("rollout IN ('shadow','live')", name="research_context_rollout"),
+        CheckConstraint("business_threshold BETWEEN 0 AND 1", name="research_context_threshold"),
+    )
+    assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"), primary_key=True)
+    generation: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    rollout: Mapped[str] = mapped_column(String(8), nullable=False)
+    local_business_id: Mapped[int | None] = mapped_column(SmallInteger)
+    external_business_id: Mapped[str | None] = mapped_column(String(128))
+    link_generation: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    snapshot_version: Mapped[int | None] = mapped_column(Integer)
+    business_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    brief: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    semantic_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    style: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    previous_live: Mapped[dict | None] = mapped_column(JSONB)
+    activated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ResearchContextPreview(Base):
+    __tablename__ = "research_context_previews"
+    __table_args__ = (Index("ix_mi_research_previews_expiry", "expires_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"), nullable=False)
+    actor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    result: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class NewsBusinessAssessment(Base):
+    __tablename__ = "news_business_assessments"
+    __table_args__ = (UniqueConstraint("assistant_id", "article_id", "context_hash", "content_hash", name="uq_mi_business_assessment"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"), nullable=False)
+    article_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.normalized_articles.id", ondelete="CASCADE"), nullable=False)
+    context_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class BusinessProfile(Base):
     __tablename__ = "business_profiles"
     # Profiles are scoped to an assistant.  The original MVP used a singleton
@@ -669,6 +722,7 @@ class ArticleAnalysis(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     estimated_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text)
+    research_provenance: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

@@ -1,4 +1,7 @@
-"""Read-only Contenter connection. Deliberately never imported by the AI pipeline."""
+"""Read-only Contenter connection. Linking/sync never activates AI usage.
+
+The separate research-context workflow explicitly approves a pinned snapshot.
+"""
 from __future__ import annotations
 
 import asyncio
@@ -56,7 +59,8 @@ def connection_status(settings: Settings) -> dict[str, Any]:
     except (ContenterError, ValueError):
         api, web, valid = None, None, False
     return {"configured": valid, "api_url": api, "web_url": web,
-            "sync_seconds": settings.contenter_sync_seconds, "ai_usage_enabled": False}
+            "sync_seconds": settings.contenter_sync_seconds, "ai_usage_enabled": False,
+            "research_context_available": True}
 
 
 class ContenterClient:

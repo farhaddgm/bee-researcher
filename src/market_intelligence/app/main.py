@@ -805,6 +805,8 @@ async def ready() -> JSONResponse:
 
 from app.contenter import router as contenter_router
 app.include_router(contenter_router)
+from app.research_context import router as research_context_router
+app.include_router(research_context_router)
 
 
 @app.get("/robots.txt", include_in_schema=False)

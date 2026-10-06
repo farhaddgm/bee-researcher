@@ -87,15 +87,13 @@ class ContenterContractTests(unittest.TestCase):
         link.state="healthy";link.last_success_at=now-timedelta(days=2)
         self.assertFalse(cache_visible(link, settings(), now=now))
 
-    def test_step_four_is_not_implemented_or_implicitly_activated(self):
+    def test_linking_never_implicitly_activates_research_context(self):
         app_dir = Path(__file__).resolve().parents[1] / "app"
-        for file in ["pipeline_service.py", "openai_client.py", "ai_relevance.py"]:
-            path = app_dir / file
-            if path.exists(): self.assertNotIn("contenter", path.read_text().lower())
         text=(app_dir/"contenter.py").read_text()
         self.assertNotIn('config["active_business_id"]', text)
         self.assertNotIn("BusinessProfile(", text)
         self.assertNotIn("OpenAIClient", text)
+        self.assertNotIn("ProjectResearchContext(", text)
 
     def test_eight_locale_catalogs_have_complete_aligned_fields(self):
         text = (Path(__file__).resolve().parents[1]/"app"/"admin_contenter.js").read_text()

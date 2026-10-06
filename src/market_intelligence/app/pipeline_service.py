@@ -16,13 +16,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
-from sqlalchemy import String, and_, case, cast, delete, distinct, exists, func, or_, select, true, update
+from sqlalchemy import String, and_, case, cast, delete, distinct, exists, false as false_condition, func, or_, select, true, update
 from sqlalchemy.engine import Row
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from app.article_extraction import ArticleDocument, ArticleFetcher
 from app.config import Settings, get_settings
 from app.ai_relevance import SCORER_REVISION, article_digest, assessment_metadata, classify_articles, relevance_context_hash, relevance_decision
+from app.business_context import CompiledBusinessProfile, assess_business, business_context_hash, full_article_hash
+from app.research_context import resolve_context, apply_context_decisions
 from app.database import SessionLocal
 from app.fetchers import FetchFailure
 from app.ingestion_service import DEFAULT_ASSISTANT_ID, run_ingestion, run_sources_independently
@@ -41,6 +43,7 @@ from app.models import (
     Topic,
     WeeklyReport,
     AssistantWorkspace,
+    NewsBusinessAssessment,
 )
 from app.openai_client import (
     OpenAIClient,
@@ -186,7 +189,8 @@ async def settings_for_assistant(settings: Settings, assistant_id: uuid.UUID | N
         return settings
     async with SessionLocal() as session:
         assistant = await session.get(AssistantWorkspace, assistant_id)
-        active_profile = None
+        research = await resolve_context(session, assistant_id, settings) if isinstance(assistant, AssistantWorkspace) else None
+        active_profile: BusinessContext | None = None
         if isinstance(assistant, AssistantWorkspace):
             selected_id = (assistant.config or {}).get("active_business_id")
             profile_query = select(BusinessProfile).where(BusinessProfile.assistant_id == assistant_id)
@@ -216,10 +220,15 @@ async def settings_for_assistant(settings: Settings, assistant_id: uuid.UUID | N
         freshness_limit = 7
     message_templates = (assistant.config or {}).get("message_templates") or {}
     updates: dict[str, object] = {}
+    if research and research.live:
+        # Do not leak a legacy/local business label into explicitly business-free projects.
+        active_profile = research.profile
     # The message renderer must use the active workspace's business name; the
     # deployment default is only a backwards-compatible fallback for the
     # legacy workspace.
-    if active_profile is not None and str(active_profile.business_name).strip():
+    if research and research.live:
+        updates["business_name"] = str(active_profile.business_name).strip() if active_profile else assistant.name
+    elif active_profile is not None and str(active_profile.business_name).strip():
         updates["business_name"] = str(active_profile.business_name).strip()
     else:
         workspace_name = getattr(assistant, "business_name", None)
@@ -300,7 +309,10 @@ def _freshness_condition(column, settings: Settings):
     return or_(column.is_(None), column >= cutoff)
 
 
-async def _profile_for_assistant(session, assistant_id: uuid.UUID | None) -> BusinessProfile | None:
+async def _profile_for_assistant(session, assistant_id: uuid.UUID | None) -> BusinessProfile | CompiledBusinessProfile | None:
+    context = await resolve_context(session, assistant_id)
+    if context and context.live:
+        return context.profile
     statement = select(BusinessProfile).order_by(BusinessProfile.id)
     if assistant_id is not None:
         statement = statement.where(BusinessProfile.assistant_id == assistant_id)
@@ -320,7 +332,7 @@ async def _profile_for_assistant(session, assistant_id: uuid.UUID | None) -> Bus
     return (await session.execute(statement)).scalars().first()
 
 
-def _relevance_hash(settings: Settings, assistant: AssistantWorkspace | None, topics: Sequence[Topic], profile: BusinessProfile | None) -> str:
+def _relevance_hash(settings: Settings, assistant: AssistantWorkspace | None, topics: Sequence[Topic], profile: BusinessContext | None) -> str:
     return relevance_context_hash({
         "revision": SCORER_REVISION, "model": settings.analysis_model,
         "assistant_id": str(getattr(assistant, "id", "")),
@@ -341,6 +353,7 @@ async def _article_decisions(session, articles: Sequence[NormalizedArticle], set
         profile = await _profile_for_assistant(session, assistant_id)
         topics = (await session.scalars(select(Topic).where(Topic.assistant_id == assistant_id, Topic.enabled.is_(True)).order_by(Topic.topic_key))).all()
         context_hash = _relevance_hash(effective, assistant, topics, profile)
+        context = await resolve_context(session, assistant_id, effective)
         by_topic = {t.id: t for t in topics}
         scores = (await session.scalars(select(ArticleTopic).where(ArticleTopic.assistant_id == assistant_id, ArticleTopic.article_id.in_([a.id for a in scoped]), ArticleTopic.topic_id.in_(by_topic)))).all()
         grouped: dict[uuid.UUID, list] = {}
@@ -354,8 +367,10 @@ async def _article_decisions(session, articles: Sequence[NormalizedArticle], set
                 topic = by_topic[score.topic_id]
                 assessed.append({**metadata, "score": score.ai_score, "topic_key": topic.topic_key,
                                  "threshold": max(topic.threshold, effective.relevance_threshold),
-                                 "valid": score.ai_score is not None and score.context_hash == context_hash and metadata.get("content_hash") == content_hash})
-            decisions[article.id] = relevance_decision(assessed, topic_count=len(topics), incomplete=article.extraction_status != "complete")
+                                 "valid": score.ai_score is not None and score.context_hash == context_hash and metadata.get("content_hash") == content_hash
+                                     and (not context or not context.live or metadata.get("full_content_hash") == full_article_hash(article.title, article.normalized_text, article.extraction_status != "complete"))})
+            decisions[article.id] = relevance_decision(assessed, topic_count=len(topics), incomplete=article.extraction_status != "complete" or any(r.get("truncated") for r in assessed))
+        await apply_context_decisions(session, list(scoped), decisions, context, effective)
     return decisions
 
 
@@ -633,7 +648,8 @@ async def _reserve_relevance_budget(settings: Settings, assistant_id: uuid.UUID,
     now = _utcnow()
     async with SessionLocal() as session:
         workspace = await session.get(AssistantWorkspace, assistant_id, with_for_update=True)
-        if workspace is None or workspace.status != "active" or workspace.deleted_at is not None:
+        allowed_statuses = {"active", "draft", "testing", "paused"} if job_type == "research_preview_model" else {"active"}
+        if workspace is None or workspace.status not in allowed_statuses or workspace.deleted_at is not None:
             return None
         # The workspace row lock serializes reservations. Recovery and the
         # scheduled pipeline must not pay to analyse the same article twice.
@@ -644,7 +660,8 @@ async def _reserve_relevance_budget(settings: Settings, assistant_id: uuid.UUID,
         ).limit(1)) is not None:
             return None
         count, chars = (await session.execute(select(func.count(JobRun.id), func.coalesce(func.sum(JobRun.result["input_chars"].as_integer()), 0)).where(
-            JobRun.assistant_id == assistant_id, JobRun.job_type == job_type,
+            JobRun.assistant_id == assistant_id,
+            JobRun.job_type == "relevance_model" if job_type == "relevance_model" else JobRun.job_type.in_(["analysis_model", "business_model", "research_preview_model"]),
             JobRun.created_at >= _local_day_start_utc(now, settings.timezone),
         ))).one()
         cap = settings.relevance_daily_request_cap if job_type == "relevance_model" else settings.model_daily_request_cap
@@ -681,6 +698,7 @@ async def score_pending_articles(
         ).scalars().all()
         assistant = await session.get(AssistantWorkspace, assistant_id)
         profile = await _profile_for_assistant(session, assistant_id)
+        context = await resolve_context(session, assistant_id, settings)
         business = _profile_payload(profile) if profile is not None else {}
         topic_context = [{"topic_key": t.topic_key, "name": t.name, "definition": t.definition, "positive_terms": list(t.positive_terms), "negative_terms": list(t.negative_terms)} for t in topics]
         mission = str(getattr(assistant, "description", "") or "")
@@ -704,7 +722,8 @@ async def score_pending_articles(
             ).correlate(NormalizedArticle).scalar_subquery() < len(topics))
         articles = (await session.execute(article_statement)).scalars().all()
     if not topics or not articles:
-        return {"articles": len(articles), "scores": 0, "semantic": "not_needed"}
+        business_result = await score_business_articles(settings, assistant_id=assistant_id, limit=limit)
+        return {"articles": len(articles), "scores": 0, "semantic": "not_needed", "business": business_result}
 
     ai_scores: dict[tuple[str, str], tuple[float, str]] = {}
     semantic_status = "disabled"
@@ -722,7 +741,7 @@ async def score_pending_articles(
                 semantic_status = "budget_deferred"
                 break
             batch = articles[offset:offset + batch_size]
-            inputs: list[dict[str, Any]] = [{"id": str(a.id), "title": a.title, "text": a.normalized_text[:6000], "incomplete": a.extraction_status != "complete"} for a in batch]
+            inputs: list[dict[str, Any]] = [{"id": str(a.id), "title": a.title, "text": a.normalized_text if context and context.live else a.normalized_text[:6000], "incomplete": a.extraction_status != "complete"} for a in batch]
             input_chars = sum(len(a["text"]) + len(a["title"]) for a in inputs) + len(str(topic_context)) + len(str(business)) + len(mission)
             job_id = await _reserve_relevance_budget(settings, assistant_id, input_chars)
             if job_id is None:
@@ -730,7 +749,8 @@ async def score_pending_articles(
                 break
             requests += 1
             try:
-                ai_scores.update(await classify_articles(client, articles=inputs, topics=topic_context, business=business, mission=mission))
+                ai_scores.update(await classify_articles(client, articles=inputs, topics=topic_context, business=business, mission=mission,
+                    **({"max_input_chars": 20000} if context and context.live else {})))
                 await _finish_job(job_id, status="succeeded", result={"input_chars": input_chars, "articles": len(batch), "model": settings.analysis_model})
                 semantic_status = "succeeded"
             except Exception as exc:
@@ -829,6 +849,7 @@ async def score_pending_articles(
             )
             invalidated = int(invalidation.rowcount or 0)
         await session.commit()
+    business_result = await score_business_articles(settings, assistant_id=assistant_id, limit=limit)
     return {
         "articles": len(articles),
         "scores": len(rows),
@@ -836,7 +857,80 @@ async def score_pending_articles(
         "semantic": semantic_status,
         "rescore": rescore,
         "previews_invalidated": invalidated,
+        "business": business_result,
     }
+
+
+async def score_business_articles(settings: Settings, *, assistant_id: uuid.UUID, limit: int, shadow: bool = False) -> dict:
+    result = await _score_business_context(settings, assistant_id=assistant_id, limit=limit, shadow=shadow)
+    if not shadow and settings.model_max_requests_per_run >= 2:
+        async with SessionLocal() as session:
+            proposed = await resolve_context(session, assistant_id, settings, shadow=True)
+        if proposed and proposed.record.rollout == "shadow" and proposed.record.previous_live:
+            result["shadow"] = await _score_business_context(settings, assistant_id=assistant_id, limit=limit, shadow=True)
+    return result
+
+
+async def _score_business_context(settings: Settings, *, assistant_id: uuid.UUID, limit: int, shadow: bool = False) -> dict:
+    """Independent bounded assessment; never substitutes B for the topic score."""
+    async with SessionLocal() as session:
+        context = await resolve_context(session, assistant_id, settings, shadow=shadow)
+        proposed = await resolve_context(session, assistant_id, settings, shadow=True)
+        has_shadow = bool(proposed and proposed.record.rollout == "shadow" and proposed.record.previous_live)
+        if shadow and not has_shadow:
+            return {"state": "not_enabled", "assessed": 0}
+        if not context or context.record.mode == "topics":
+            return {"state": "not_enabled", "assessed": 0}
+        if context.state != "ready":
+            return {"state": context.state, "assessed": 0}
+        expected = business_context_hash(context.record.brief, settings.analysis_model)
+        generation = context.record.generation
+        brief = context.record.brief
+        articles = list((await session.scalars(select(NormalizedArticle).join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
+            .join(Source, Source.id == SourceItem.source_id).where(Source.enabled.is_(True), Source.assistant_id == assistant_id,
+            NormalizedArticle.assistant_id == assistant_id, NormalizedArticle.extraction_status.in_(["complete", "partial"]),
+            _freshness_condition(NormalizedArticle.published_at, settings)).order_by(NormalizedArticle.extracted_at.desc())
+            .limit(max(1, min(limit, settings.pipeline_max_candidates_per_run))))).all())
+        decisions = await _article_decisions(session, articles, settings)
+        stored = (await session.scalars(select(NewsBusinessAssessment).where(NewsBusinessAssessment.assistant_id == assistant_id,
+            NewsBusinessAssessment.context_hash == expected, NewsBusinessAssessment.article_id.in_([a.id for a in articles])))).all()
+        current = {(r.article_id, r.content_hash) for r in stored}
+        articles = [a for a in articles if decisions[a.id].get("topic_relevance_state", decisions[a.id]["relevance_state"]) in {"selected", "borderline"}
+            and (a.id, full_article_hash(a.title, a.normalized_text, a.extraction_status != "complete")) not in current][:settings.max_items_per_run]
+    client = OpenAIClient(settings)
+    if not client.configured or client.provider_health()["state"] == "cooldown":
+        return {"state": "provider_unavailable", "assessed": 0}
+    assessed, calls = 0, 0
+    for offset in range(0, len(articles), 5):
+        if calls >= max(1, settings.model_max_requests_per_run // (2 if has_shadow else 1)):
+            return {"state": "budget_deferred", "assessed": assessed}
+        batch = articles[offset:offset + 5]
+        inputs: list[dict[str, Any]] = [{"id": str(a.id), "title": a.title, "text": a.normalized_text, "incomplete": a.extraction_status != "complete"} for a in batch]
+        chars = sum(min(len(a["text"]), 20000) + len(a["title"]) for a in inputs) + brief["input_chars"]
+        job = await _reserve_relevance_budget(settings, assistant_id, chars, job_type="business_model")
+        if not job:
+            return {"state": "budget_deferred", "assessed": assessed}
+        calls += 1
+        try:
+            results = await assess_business(client, articles=inputs, brief=brief, language=context.record.style.get("output_language", "fa"))
+            async with SessionLocal() as session:
+                live = await resolve_context(session, assistant_id, settings, shadow=shadow)
+                if not live or live.record.generation != generation or live.state != "ready":
+                    await _finish_job(job, status="cancelled", result={"input_chars": chars}, error="context_changed")
+                    return {"state": "context_changed", "assessed": assessed}
+                for article in batch:
+                    result = results[str(article.id)]
+                    statement = postgresql_insert(NewsBusinessAssessment).values(id=uuid.uuid4(), assistant_id=assistant_id,
+                        article_id=article.id, context_hash=expected, content_hash=result["content_hash"], payload=result)
+                    await session.execute(statement.on_conflict_do_nothing(index_elements=[NewsBusinessAssessment.assistant_id,
+                        NewsBusinessAssessment.article_id, NewsBusinessAssessment.context_hash, NewsBusinessAssessment.content_hash]))
+                await session.commit()
+            await _finish_job(job, status="succeeded", result={"input_chars": chars, "articles": len(batch), "model": settings.analysis_model})
+            assessed += len(batch)
+        except Exception as exc:
+            await _finish_job(job, status="failed", result={"input_chars": chars}, error=type(exc).__name__)
+            return {"state": "provider_failed", "assessed": assessed}
+    return {"state": "succeeded", "assessed": assessed, "calls": calls}
 
 
 async def rescore_existing_articles(*, limit: int = 1000) -> dict[str, object]:
@@ -940,7 +1034,9 @@ async def cluster_pending_articles(settings: Settings, *, limit: int, assistant_
     }
 
 
-def _profile_payload(profile: BusinessContext) -> dict[str, object]:
+def _profile_payload(profile: BusinessContext, *, for_report: bool = False) -> dict[str, object]:
+    if isinstance(profile, CompiledBusinessProfile):
+        return profile.report_payload(disclose_facts=profile.research_brief.get("public_business_facts") is True) if for_report else profile.semantic_payload()
     return {
         "business_name": profile.business_name,
         "description": profile.description,
@@ -1149,7 +1245,7 @@ async def _model_budget(settings: Settings, *, assistant_id: uuid.UUID | None = 
     day_start = _local_day_start_utc(_utcnow(), settings.timezone)
     async with SessionLocal() as session:
         attempts, attempt_chars = (await session.execute(select(func.count(JobRun.id), func.coalesce(func.sum(JobRun.result["input_chars"].as_integer()), 0)).where(
-            JobRun.job_type == "analysis_model", JobRun.created_at >= day_start,
+            JobRun.job_type.in_(["analysis_model", "business_model", "research_preview_model"]), JobRun.created_at >= day_start,
             JobRun.assistant_id == assistant_id if assistant_id is not None else true(),
         ))).one()
         count, chars = (
@@ -1258,6 +1354,8 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
         profile_row = await _profile_for_assistant(session, assistant_id)
         topics = (await session.scalars(select(Topic).where(Topic.enabled.is_(True), Topic.assistant_id == assistant_id).order_by(Topic.topic_key))).all()
         current_hash = _relevance_hash(settings, assistant, topics, profile_row)
+        research_context = await resolve_context(session, assistant_id, settings)
+        managed_live = bool(research_context and research_context.live)
         # Analyse both publishable scores and the narrow manual-review band.
         # The latter deliberately does not require an EventCluster: clustering
         # remains reserved for items that already passed the real threshold.
@@ -1283,7 +1381,10 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                 )
                 .where(
                     (and_(ArticleAnalysis.status == "fallback", exists(select(Publication.id).where(Publication.analysis_id == ArticleAnalysis.id, Publication.assistant_id == assistant_id, Publication.status == "preview")))
-                     if fallback_only else or_(ArticleAnalysis.id.is_(None), ArticleAnalysis.status.in_(["fallback", "failed"]))),
+                     if fallback_only else or_(ArticleAnalysis.id.is_(None), ArticleAnalysis.status.in_(["fallback", "failed"]),
+                         or_(ArticleAnalysis.research_provenance["generation"].as_string().is_distinct_from(str(research_context.record.generation)),
+                             ArticleAnalysis.research_provenance["model"].as_string().is_distinct_from(settings.analysis_model),
+                             ArticleAnalysis.research_provenance["article_db_hash"].as_string().is_distinct_from(NormalizedArticle.content_hash)) if managed_live and research_context else false_condition())),
                     NormalizedArticle.assistant_id == assistant_id if assistant_id is not None else true(),
                     Source.assistant_id == assistant_id,
                     Source.enabled.is_(True),
@@ -1297,16 +1398,23 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
         ).all()
         decisions = await _article_decisions(session, [r[0] for r in rows], settings)
         rows = [r for r in rows if decisions[r[0].id]["relevance_state"] in {"selected", "borderline"}]
+        if managed_live and research_context and research_context.state != "ready":
+            rows = []
         # A missing business profile is valid for general market monitoring.
         # Keep the profile-shaped analysis payload stable with an in-memory
         # context rather than aborting the whole run.
         profile: BusinessContext
         if profile_row is None:
             profile = _general_market_profile(assistant)
+            if managed_live and research_context:
+                profile.output_language = research_context.record.style.get("output_language", "fa")
+                profile.output_tone = research_context.record.style.get("output_tone", "")
         else:
             profile = profile_row
         assistant_config = dict(assistant.config or {}) if assistant is not None else {}
         knowledge_library = assistant_config.get("business_knowledge") if isinstance(assistant_config.get("business_knowledge"), dict) else {}
+        if managed_live:
+            knowledge_library = {}
 
     client = OpenAIClient(settings)
     model_calls = 0
@@ -1348,7 +1456,9 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                     source_name=source.name,
                     source_url=article.canonical_url,
                     published_at=(article.published_at.isoformat() if article.published_at else None),
-                    business_profile={**_profile_payload(profile), "knowledge_library": knowledge_library, "message_template_guidance": _template_guidance(settings.message_templates)},
+                    business_profile={**_profile_payload(profile, for_report=True), "knowledge_library": knowledge_library,
+                        "business_relationship": {k: (decisions[article.id].get("business_assessment") or {}).get(k) for k in ("score", "confidence", "relation", "impact", "urgency")},
+                        "message_template_guidance": _template_guidance(settings.message_templates)},
                     topics=[
                         {
                             "topic_key": topic.topic_key,
@@ -1395,6 +1505,7 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
             # Budget outages must not destroy a previously completed
             # translation by replacing it with the original English excerpt.
             continue
+        provenance = research_context.provenance(article, settings.analysis_model) if managed_live and research_context else {}
         statement = (
             postgresql_insert(ArticleAnalysis)
             .values(
@@ -1420,11 +1531,15 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                 output_tokens=_payload_int(payload["output_tokens"]),
                 estimated_cost_usd=_payload_float(payload["estimated_cost_usd"]),
                 error_message=payload["error_message"],
+                research_provenance=provenance,
             )
             .on_conflict_do_update(
                 index_elements=[ArticleAnalysis.article_id],
-                set_={key: value for key, value in payload.items() if key not in {"input_chars"}} | {"input_chars": len(article.normalized_text)},
-                where=ArticleAnalysis.status.in_(["fallback", "failed"]),
+                set_={key: value for key, value in payload.items() if key not in {"input_chars"}} | {"input_chars": len(article.normalized_text), "research_provenance": provenance},
+                where=or_(ArticleAnalysis.status.in_(["fallback", "failed"]),
+                    or_(ArticleAnalysis.research_provenance["generation"].as_string().is_distinct_from(provenance["generation"]),
+                        ArticleAnalysis.research_provenance["model"].as_string().is_distinct_from(provenance["model"]),
+                        ArticleAnalysis.research_provenance["article_db_hash"].as_string().is_distinct_from(provenance["article_db_hash"])) if provenance else false_condition()),
             )
             .returning(ArticleAnalysis.id)
         )
@@ -1832,7 +1947,12 @@ async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: b
                 raise RuntimeError("publication requires completed AI analysis")
             current_topics = (await session.scalars(select(Topic).where(Topic.assistant_id == assistant_id, Topic.enabled.is_(True)).order_by(Topic.topic_key))).all()
             current_profile = await _profile_for_assistant(session, assistant_id)
-            target_language = _source_output_language(observer_row[2], current_profile or _general_market_profile(assistant))
+            context_for_language = await resolve_context(session, assistant_id, effective)
+            language_profile: BusinessContext = current_profile or _general_market_profile(assistant)
+            if current_profile is None and context_for_language and context_for_language.live:
+                language_profile.output_language = context_for_language.record.style.get("output_language", "fa")
+                language_profile.output_tone = context_for_language.record.style.get("output_tone", "")
+            target_language = _source_output_language(observer_row[2], language_profile)
             if language_issues(analysis_text(observer_row[0]), target_language):
                 raise RuntimeError("publication requires a complete translation in the configured output language")
             stored_language = analysis_language(observer_row[0], observer_row[2])
@@ -1840,6 +1960,12 @@ async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: b
             if stored_language != target_language or recorded != target_language:
                 raise RuntimeError("publication translation must match the current output language")
             decision = (await _article_decisions(session, [observer_row[1]], effective))[observer_row[1].id]
+            research_context = await resolve_context(session, assistant_id, effective)
+            if research_context and research_context.live:
+                if research_context.state != "ready" or not decision.get("business_ready", True) or not decision.get("business_gate_passed", True):
+                    raise RuntimeError("publication requires a current approved business assessment")
+                if observer_row[0].research_provenance != research_context.provenance(observer_row[1], effective.analysis_model):
+                    raise RuntimeError("publication analysis must match the approved research context and complete news text")
             approval = (publication.audit or {}).get("relevance_approval") or {}
             manually_approved = bool(decision["can_approve"] and approval.get("context_hash") == _relevance_hash(effective, assistant, current_topics, current_profile)
                                      and approval.get("threshold") == decision["relevance_threshold"]
