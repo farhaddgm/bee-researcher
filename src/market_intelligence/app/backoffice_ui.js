@@ -13,9 +13,9 @@
     node.replaceChildren(copy,close);node.onkeydown=event=>{if(event.key==='Escape'){event.stopPropagation();dismiss();}};
     if(!error)node._timer=setTimeout(dismiss,duration);
   };
-  let tooltip=null,anchor=null,pinned=false,leaveTimer;
+  let tooltip=null,anchor=null,pinned=false,leaveTimer,describedBy=null;
   const trigger=node=>node instanceof Element?node.closest('.info-tip,.info-button,.support-v4-info'):null;
-  function hideTip(){clearTimeout(leaveTimer);if(tooltip)tooltip.hidden=true;if(anchor)anchor.setAttribute('aria-expanded','false');anchor=null;pinned=false;}
+  function hideTip(){clearTimeout(leaveTimer);if(tooltip)tooltip.hidden=true;if(anchor){anchor.setAttribute('aria-expanded','false');if(describedBy===null)anchor.removeAttribute('aria-describedby');else anchor.setAttribute('aria-describedby',describedBy);}anchor=null;pinned=false;describedBy=null;}
   function positionTip(){
     if(!tooltip||tooltip.hidden||!anchor)return;
     const box=anchor.getBoundingClientRect(),tip=tooltip.getBoundingClientRect();
@@ -30,8 +30,9 @@
     if(!tooltip){tooltip=document.createElement('div');tooltip.id='beeUiTooltip';tooltip.setAttribute('role','tooltip');tooltip.hidden=true;document.body.appendChild(tooltip);
       tooltip.addEventListener('pointerenter',()=>clearTimeout(leaveTimer));tooltip.addEventListener('pointerleave',()=>{if(!pinned)hideTip();});}
     if(anchor&&anchor!==button)hideTip();
+    if(anchor!==button)describedBy=button.getAttribute('aria-describedby');
     anchor=button;pinned=pin;tooltip.textContent=source.trim();tooltip.dir=document.documentElement.dir;tooltip.hidden=false;
-    const ids=new Set((button.getAttribute('aria-describedby')||'').split(/\s+/).filter(Boolean));ids.add(tooltip.id);button.setAttribute('aria-describedby',[...ids].join(' '));button.setAttribute('aria-expanded','true');positionTip();
+    button.setAttribute('aria-describedby',tooltip.id);button.setAttribute('aria-expanded','true');positionTip();
   }
   document.addEventListener('pointerover',event=>{const button=trigger(event.target);if(button&&!button.contains(event.relatedTarget))showTip(button);});
   document.addEventListener('pointerout',event=>{const button=trigger(event.target);if(button&&button===anchor&&!button.contains(event.relatedTarget)&&!pinned)leaveTimer=setTimeout(()=>{if(document.activeElement!==anchor)hideTip();},160);});

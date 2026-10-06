@@ -55,6 +55,7 @@ try{
  const help=page.locator('#view-settings .info-tip').first();await help.focus();await page.locator('#beeUiTooltip:not([hidden])').waitFor();
  const box=await page.locator('#beeUiTooltip').boundingBox();assert(box.x>=0&&box.x+box.width<=320);
  await page.keyboard.press('Escape');assert(await page.locator('#beeUiTooltip').evaluate(n=>n.hidden));
+ assert.notEqual(await help.getAttribute('aria-describedby'),'beeUiTooltip','Dismissed help retains another field’s shared description');
  await page.evaluate(()=>window.toast('Safe test error',true));assert.equal(await page.locator('#toast').getAttribute('role'),'alert');await page.waitForTimeout(4600);assert(await page.locator('#toast').isVisible());await page.locator('#toast button').click();assert(await page.locator('#toast').evaluate(n=>n.classList.contains('hidden')));
  await page.setViewportSize({width:1440,height:1000});await page.goto(user+'/settings',{waitUntil:'domcontentloaded'});
  await page.waitForFunction(()=>!document.getElementById('login').classList.contains('hidden')||!document.getElementById('app').classList.contains('hidden'));
