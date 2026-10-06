@@ -21,7 +21,7 @@ await page.route(/\/publications\/relevance-assessments(?:\?.*)?$/,route=>{
   return json(route,{articles:filtered.slice(offset,offset+25),total:filtered.length,counts:{pending:1,selected:26,rejected:26,borderline:0},window_capped:false,no_external_request:true});
 });
 try{
-  await page.goto(base,{waitUntil:'domcontentloaded'});
+  await page.goto(new URL("/admin/login-up",base).href,{waitUntil:'domcontentloaded'});
   await page.locator('#loginUser').fill(username);await page.locator('#loginPass').fill(password);await page.locator('#loginSubmit').click();
   await page.waitForFunction(()=>window.__researchBeeState?.currentUser?.username);
   await page.evaluate(()=>window.setView('overview'));

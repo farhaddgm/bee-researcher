@@ -91,6 +91,8 @@ class AdminUser(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(128), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(160))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Normalized Gmail address (see app.google_auth.normalize_gmail). Only the
     # owner can attach an address; the owner is the account whose address
     # equals Settings.owner_email.
@@ -133,11 +135,15 @@ class AssistantMember(Base):
 
 class AdminSession(Base):
     __tablename__ = "admin_sessions"
-    __table_args__ = (Index("ix_mi_admin_sessions_expires", "expires_at"),)
+    __table_args__ = (
+        Index("ix_mi_admin_sessions_expires", "expires_at"),
+        CheckConstraint("portal IN ('admin', 'user')", name="admin_sessions_portal"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.admin_users.id", ondelete="CASCADE"), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    portal: Mapped[str] = mapped_column(String(16), nullable=False, default="admin", server_default="admin")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Password authentication creates an unverified session when MFA is
     # enforced for the account.  Existing sessions remain trusted through the

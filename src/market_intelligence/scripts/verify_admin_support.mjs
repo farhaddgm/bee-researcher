@@ -18,7 +18,7 @@ page.on('response', response => {
 });
 
 try {
-  await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+  await page.goto(new URL("/admin/login-up",baseUrl).href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   await page.locator('#loginUser').fill(username);
   await page.locator('#loginPass').fill(password);
   await page.locator('#loginForm button[type="submit"], #loginSubmit').click();

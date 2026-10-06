@@ -13,7 +13,7 @@ async function api(target,path,method='GET',body){return target.evaluate(async({
   const response=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(csrf||'')},...(body?{body:JSON.stringify(body)}:{})});
   return {status:response.status,data:await response.json()};
 },{path,method,body});}
-async function login(target,user,pass){await target.goto(base,{waitUntil:'domcontentloaded'});await target.locator('#loginUser').fill(user);await target.locator('#loginPass').fill(pass);await target.locator('#loginSubmit').click();await target.locator('#app:not(.hidden)').waitFor();await target.waitForFunction(()=>window.__researchBeeState?.currentUser&&window.__researchBeeState.assistantId);}
+async function login(target,user,pass){await target.goto(new URL("/admin/login-up",base).href,{waitUntil:'domcontentloaded'});await target.locator('#loginUser').fill(user);await target.locator('#loginPass').fill(pass);await target.locator('#loginSubmit').click();await target.locator('#app:not(.hidden)').waitFor();await target.waitForFunction(()=>window.__researchBeeState?.currentUser&&window.__researchBeeState.assistantId);}
 async function select(id){await page.locator('#workspaceSelect').selectOption(id);await page.waitForFunction(id=>window.__researchBeeState.assistantId===id,id);await page.locator('.nav-btn[data-view="businesses"]').click();await page.waitForFunction(id=>document.getElementById('researchContextCard')?.dataset.loadedAssistant===id,id);}
 try{
   await login(page,username,password);

@@ -1,0 +1,54 @@
+/* Auth is determined by the server before first paint, not by provider fetch. */
+body[data-login-mode="google"] #loginForm{display:none!important}
+#login.login-shell{width:100%;min-width:0;box-sizing:border-box;padding:24px}
+#login .login-card{width:min(460px,100%)!important;max-width:100%;min-width:0;box-sizing:border-box;padding:clamp(20px,4vw,40px);overflow-wrap:anywhere}
+#googleLoginBtn{display:flex!important;align-items:center;justify-content:center;gap:10px;text-decoration:none;min-height:44px}
+#login #googleLoginBtn{width:100%!important;height:auto!important;box-sizing:border-box;white-space:normal;padding:12px 14px;line-height:1.6}
+#googleLoginBtn span{min-width:0;white-space:normal}
+#googleLoginBtn svg{width:22px;height:22px;flex:none}
+.auth-title{margin:16px 0 8px;text-align:center;font-size:22px;line-height:1.5}
+.auth-description,.auth-provider-note{font-size:13px;line-height:1.8;color:var(--muted,#64748b);text-align:center;overflow-wrap:anywhere}
+.auth-provider-note{padding:10px;border-radius:10px;background:var(--soft,#eef3fc)}
+#loginForm .auth-field-label{display:block;font-size:13px;font-weight:600;margin:12px 0 6px}
+#loginForm input{width:100%;box-sizing:border-box}
+.accounts-legacy{display:none!important}
+.accounts-session-grid{grid-template-columns:minmax(0,1fr)!important}
+#accountsPanel{min-width:0;margin-top:16px}
+#accountsPanel .accounts-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#accountsPanel h3{margin:0;font-size:18px}
+#accountsPanel .accounts-description{color:var(--muted);line-height:1.8;font-size:13px}
+#accountsPanel .accounts-tools{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin:16px 0}
+#accountsPanel .accounts-search{flex:1;min-width:180px;max-width:460px}
+#accountsPanel .accounts-scroll{overflow:auto;width:100%;border:1px solid var(--line,#dde5f2);border-radius:12px}
+#accountsPanel table{width:100%;min-width:650px;border-collapse:collapse;table-layout:auto}
+#accountsPanel th,#accountsPanel td{padding:13px 12px;text-align:start;vertical-align:middle;overflow-wrap:anywhere}
+#accountsPanel th{background:var(--soft,#f3f6fc);font-size:12px;color:var(--muted)}
+#accountsPanel td{border-top:1px solid var(--line,#dde5f2);font-size:13px}
+#accountsPanel .accounts-identity{display:grid;gap:5px;min-width:140px}
+#accountsPanel .accounts-email{font-size:12px;color:var(--muted);direction:ltr;text-align:start}
+#accountsPanel .accounts-actions,.accounts-dialog-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px}
+#accountsPanel button,.accounts-dialog button{height:40px!important;min-height:40px!important;width:auto!important;min-width:0!important;flex:0 0 auto!important;font:inherit;font-size:13px!important;font-weight:600;border-radius:10px;padding:0 14px!important;white-space:nowrap}
+#accountsPanel .accounts-pagination{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:16px}
+.accounts-status{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;background:var(--soft,#eef3fc);color:var(--ink,#253650);font-size:12px}
+.accounts-status.is-active{background:#e1f5ef;color:#087968}
+.accounts-status.is-owner{background:#eef2ff;color:#3453a4}
+.accounts-dialog{color:var(--ink,#17273e);background:var(--panel,#fff);border:1px solid var(--line,#dde5f2);border-radius:18px;box-shadow:0 20px 80px #10254438;width:min(700px,calc(100vw - 32px));max-height:calc(100dvh - 32px);box-sizing:border-box;overflow:auto;padding:24px}
+.accounts-dialog::backdrop{background:#0b1b3a80}
+.accounts-dialog h3{margin:0 0 18px;font-size:20px}
+.accounts-form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.accounts-form .accounts-field{display:grid;gap:8px;min-width:0}
+.accounts-form [hidden]{display:none!important}
+.accounts-form .accounts-field label{font-size:13px;font-weight:600;line-height:1.6}
+.accounts-form input:not([type="checkbox"]),.accounts-form select,#accountsPanel .accounts-search{width:100%;box-sizing:border-box;border:1px solid var(--line,#cfd9eb);border-radius:10px;min-height:42px;padding:10px 12px;color:var(--ink,#17273e);background:var(--panel,#fff);font:inherit;font-size:14px}
+.accounts-form :focus-visible,#accountsPanel :focus-visible{outline:3px solid #91acf7;outline-offset:2px}
+.accounts-form .accounts-full{grid-column:1/-1}
+.accounts-form fieldset{margin:0;border:1px solid var(--line,#dde5f2);border-radius:12px;padding:14px;min-width:0}
+.accounts-form legend{font-size:13px;font-weight:600;padding:0 6px}
+.accounts-check{display:flex;gap:10px;align-items:center;min-height:36px;font-size:13px;line-height:1.7}
+.accounts-check input{width:18px;height:18px;flex:none;accent-color:var(--primary,#2455da)}
+.accounts-help{font-size:12px;line-height:1.8;color:var(--muted,#64748b);margin:0}
+.accounts-form .accounts-error{grid-column:1/-1;color:#bc2844;background:#fff1f3;padding:10px;border-radius:10px;font-size:13px;line-height:1.8}
+.accounts-form .accounts-error:empty{display:none}
+.accounts-dialog-actions{grid-column:1/-1;border-top:1px solid var(--line,#dde5f2);padding-top:18px;margin-top:6px}
+.accounts-form [hidden]{display:none!important}
+@media(max-width:600px){.accounts-form{grid-template-columns:minmax(0,1fr)}.accounts-dialog{padding:18px}#accountsPanel .accounts-search{max-width:none}}

@@ -34,7 +34,7 @@ await page.route(/\/source-suggestions\/candidate-[^/]+\/(approve|reject)$/, rou
   return json(route, { status: 'completed' });
 });
 try {
-  await page.goto(base, { waitUntil: 'domcontentloaded' });
+  await page.goto(new URL("/admin/login-up",base).href, { waitUntil: 'domcontentloaded' });
   await page.locator('#loginUser').fill(username);
   await page.locator('#loginPass').fill(password);
   await page.locator('#loginForm button[type="submit"], #loginSubmit').click();

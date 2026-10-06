@@ -1,0 +1,13 @@
+# Use ONLY with the existing production compose.yml, never the candidate DB stack.
+# No literal credential or shared Contenter setting is stored in this file.
+services:
+  market-intelligence:
+    image: ${MARKET_INTELLIGENCE_IMAGE_REF:?verified immutable Researcher image is required}
+    environment:
+      MARKET_INTELLIGENCE_VERSION: "3.38.0"
+      MARKET_INTELLIGENCE_BUILD_REVISION: ${MARKET_INTELLIGENCE_BUILD_REVISION:?verified source commit is required}
+      MARKET_INTELLIGENCE_IMAGE_DIGEST: ${MARKET_INTELLIGENCE_IMAGE_DIGEST:?verified image digest is required}
+      MARKET_INTELLIGENCE_GOOGLE_CLIENT_ID: ${MARKET_INTELLIGENCE_GOOGLE_CLIENT_ID:?Researcher Google client ID is required}
+      MARKET_INTELLIGENCE_GOOGLE_CLIENT_SECRET: ${MARKET_INTELLIGENCE_GOOGLE_CLIENT_SECRET:?Researcher Google client secret is required}
+      MARKET_INTELLIGENCE_GOOGLE_REDIRECT_URI: ${MARKET_INTELLIGENCE_GOOGLE_REDIRECT_URI:?Researcher Google callback URL is required}
+      MARKET_INTELLIGENCE_ACCOUNT_SESSION_TTL_DAYS: ${MARKET_INTELLIGENCE_ACCOUNT_SESSION_TTL_DAYS:-30}

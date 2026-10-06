@@ -316,3 +316,6 @@ USER_HTML = r'''<!doctype html>
     + Path(__file__).with_name("backoffice_ui.js").read_text(encoding="utf-8")
     + '</script></body>', 1,
 )
+
+from app.auth_ui import decorate_auth_html
+USER_HTML = decorate_auth_html(USER_HTML, admin=False)

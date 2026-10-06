@@ -16,7 +16,7 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 
 class Settings(BaseSettings):
     app_name: str = "Bee Researcher"
-    version: str = "3.37.0"
+    version: str = "3.38.0"
     build_revision: str = "unknown"
     image_digest: str | None = None
     environment: str = "production"
@@ -124,13 +124,15 @@ class Settings(BaseSettings):
     # account table is empty (first installation).
     admin_bootstrap_password: SecretStr | None = None
     # Google sign-in (OpenID Connect, authorization code + PKCE). The button is
-    # shown only when all three values are configured.
+    # enabled when all three values are configured.
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
     google_redirect_uri: str | None = None
-    # Admin sessions use a sliding idle timeout. The security ceiling is
-    # deliberately hard-capped at six hours; activity renews the deadline.
+    # Legacy setting retained for old deployment configuration only.
     admin_session_ttl_hours: int = Field(default=6, ge=1, le=6)
+    # Approved Contenter-style rolling lifetime; hours above is legacy metadata.
+    # Reader sessions are additionally bounded by the next local 02:00.
+    account_session_ttl_days: int = Field(default=30, ge=1, le=30)
     admin_cookie_secure: bool = True
     # Prefer a service-only signing key for CSRF tokens. The security module
     # retains a derived fallback so existing deployments keep their contract

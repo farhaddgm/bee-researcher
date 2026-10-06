@@ -9,7 +9,7 @@ const errors=[];page.on('pageerror',error=>errors.push(error.message));
 page.setDefaultTimeout(15000);
 const overflow=()=>page.evaluate(()=>Math.max(0,document.documentElement.scrollWidth-innerWidth));
 try{
- await page.goto(admin,{waitUntil:'domcontentloaded'});
+ await page.goto(new URL("/admin/login-up",admin).href,{waitUntil:'domcontentloaded'});
  await page.locator('#loginUser').fill(username);await page.locator('#loginPass').fill(password);await page.locator('#loginSubmit').click();
  await page.waitForFunction(()=>window.__researchBeeState?.currentUser);
  await page.locator('#app:not(.hidden)').waitFor();await page.waitForFunction(()=>window.__researchBeeState?.projectListReady);
@@ -33,7 +33,9 @@ try{
  const cards=await page.locator('#assistantGrid .assistant-card').evaluateAll(nodes=>nodes.map(n=>({card:n.getBoundingClientRect().bottom,last:Math.max(...[...n.querySelectorAll('.card-actions .btn')].map(b=>b.getBoundingClientRect().bottom))})));
  assert(cards.every(x=>x.last<=x.card),'Card action protrudes');
  await page.evaluate(()=>window.__researchBeeAdminUxV325.markLoading(true));
- assert(await page.locator('#assistantGrid .admin-ux-skeleton').count()>=3,'Skeleton covers only two assistant cards');
+ const loadingCards=await page.locator('#assistantGrid .admin-ux-skeleton').count();
+ const existingCards=await page.locator('#assistantGrid .assistant-card').count();
+ assert(loadingCards>=Math.max(1,existingCards),'Skeleton does not cover the available assistant cards');
  await page.evaluate(()=>window.__researchBeeAdminUxV325.markLoading(false));
  assert.equal(await page.locator('.admin-ux-skeleton-host').count(),0,'Loading left overflow-hidden hosts behind');
  await page.evaluate(()=>window.setView('sources'));
@@ -66,9 +68,10 @@ try{
  await page.keyboard.press('Escape');assert(await page.locator('#beeUiTooltip').evaluate(n=>n.hidden));
  assert.notEqual(await help.getAttribute('aria-describedby'),'beeUiTooltip','Dismissed help retains another field’s shared description');
  await page.evaluate(()=>window.toast('Safe test error',true));assert.equal(await page.locator('#toast').getAttribute('role'),'alert');await page.waitForTimeout(4600);assert(await page.locator('#toast').isVisible());await page.locator('#toast button').click();assert(await page.locator('#toast').evaluate(n=>n.classList.contains('hidden')));
- await page.setViewportSize({width:1440,height:1000});await page.goto(user+'/settings',{waitUntil:'domcontentloaded'});
+ await page.setViewportSize({width:1440,height:1000});await page.goto(new URL('/user/login-up',user).href,{waitUntil:'domcontentloaded'});
  await Promise.race([page.locator('#login:not(.hidden)').waitFor({state:'visible'}),page.locator('#app:not(.hidden)').waitFor({state:'visible'})]);
  if(await page.locator('#login:not(.hidden)').isVisible()){await page.locator('#username').fill(username);await page.locator('#password').fill(password);await page.locator('#loginButton').click();}
+ await page.locator('#app:not(.hidden)').waitFor();await page.goto(user+'/settings',{waitUntil:'domcontentloaded'});
  await page.locator('#settingsPanel:not(.hidden)').waitFor();
  for(const width of [1440,900,390,320]){
   await page.setViewportSize({width,height:1000});await page.waitForTimeout(250);assert(await overflow()<=2,`Reader settings overflow at ${width}`);

@@ -12,3 +12,5 @@ pydantic==2.11.7
 pydantic-settings==2.10.1
 alembic==1.19.1
 tzdata==2026.3
+PyJWT==2.15.1
+cryptography==50.0.2

@@ -416,13 +416,21 @@ class GoogleSignInTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("not_configured", ctx.exception.code)
 
     async def test_token_exchange_checks_state_and_claims(self):
+        import jwt
+        from cryptography.hazmat.primitives.asymmetric import rsa
         cfg = self.configured()
         _url, cookie = google_auth.start_flow(cfg, "admin")
         flow = google_auth.read_flow(cfg, cookie)
-        claims = {"iss": "https://accounts.google.com", "aud": cfg.google_client_id, "exp": int(time.time()) + 300, "nonce": flow["nonce"], "sub": "123", "email": "Person@gmail.com", "email_verified": True}
-        id_token = ".".join([_b64(b'{"alg":"RS256"}'), _b64(json.dumps(claims).encode()), "sig"])
+        claims = {"iss": "https://accounts.google.com", "aud": cfg.google_client_id, "iat": int(time.time()), "exp": int(time.time()) + 300, "nonce": flow["nonce"], "sub": "123", "email": "Person@gmail.com", "email_verified": True}
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        public = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(key.public_key()))
+        public["kid"] = "security-fixes-fixture"
+        id_token = jwt.encode(claims, key, algorithm="RS256", headers={"kid": public["kid"]})
+        google_auth._JWKS_CACHE.update(keys=[], until=0.0)
 
         def handler(request: httpx.Request) -> httpx.Response:
+            if str(request.url) == google_auth.JWKS_URL:
+                return httpx.Response(200, json={"keys": [public]})
             self.assertIn(b"code_verifier=", request.content)
             return httpx.Response(200, json={"id_token": id_token})
 

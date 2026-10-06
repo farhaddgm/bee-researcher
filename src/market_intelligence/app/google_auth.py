@@ -1,11 +1,9 @@
 """Google sign-in (OpenID Connect authorization code flow with PKCE).
 
 The flow state (state, PKCE verifier, nonce, target portal) lives in a short
-signed cookie, so no server storage is needed.  The ID token is received
-directly from Google's token endpoint over TLS, authenticated with the client
-secret; per OpenID Connect Core 1.0 §3.1.3.7 (6) that TLS channel validates
-the issuer in place of the token signature.  Issuer, audience, expiry, nonce
-and ``email_verified`` are still checked.
+signed cookie, so no server storage is needed. The ID token's RS256 signature
+is independently verified against Google's fixed JWKS endpoint. Issuer,
+audience, expiry, nonce and verified email are checked before the allowlist.
 """
 
 from __future__ import annotations
@@ -18,9 +16,11 @@ import re
 import secrets
 import time
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
+import jwt
 
 from app.config import Settings
 from app.security_controls import service_signing_key
@@ -28,6 +28,8 @@ from app.security_controls import service_signing_key
 
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+_JWKS_CACHE: dict[str, Any] = {"keys": [], "until": 0.0}
 ISSUERS = frozenset({"https://accounts.google.com", "accounts.google.com"})
 FLOW_COOKIE = "research_bee_google_flow"
 FLOW_COOKIE_PATH = "/auth/google"
@@ -83,7 +85,15 @@ def _sign(settings: Settings, payload: bytes) -> str:
     return _b64(hmac.new(service_signing_key(settings, "google-oauth-flow:v1"), payload, hashlib.sha256).digest())
 
 
-def start_flow(settings: Settings, portal: str) -> tuple[str, str]:
+def safe_redirect(portal: str, value: object) -> str:
+    base = "/user" if portal == "user" else "/admin"
+    if not isinstance(value, str) or len(value) > 1024 or re.search(r"[\\\x00-\x20]", value):
+        return base
+    path = value.split("?", 1)[0].split("#", 1)[0]
+    return value if path in ({"/user", "/user/settings"} if portal == "user" else {"/admin"}) else base
+
+
+def start_flow(settings: Settings, portal: str, redirect_to: str | None = None) -> tuple[str, str]:
     """Return Google's consent URL and the signed flow cookie value."""
     if not settings.google_login_ready:
         raise GoogleAuthError("not_configured")
@@ -94,6 +104,7 @@ def start_flow(settings: Settings, portal: str) -> tuple[str, str]:
         "verifier": verifier,
         "nonce": _b64(secrets.token_bytes(24)),
         "portal": portal,
+        "redirect_to": safe_redirect(portal, redirect_to),
         "exp": int(time.time()) + FLOW_TTL_SECONDS,
     }
     params = {
@@ -114,14 +125,16 @@ def start_flow(settings: Settings, portal: str) -> tuple[str, str]:
 def read_flow(settings: Settings, cookie: str | None) -> dict[str, object]:
     """Verify the flow cookie; raise ``expired`` when it is missing or stale."""
     try:
-        encoded, signature = str(cookie or "").split(".", 1)
+        if not cookie or len(cookie) > 4096:
+            raise ValueError("invalid length")
+        encoded, signature = cookie.split(".", 1)
         payload = _unb64(encoded)
         if not hmac.compare_digest(signature, _sign(settings, payload)):
             raise ValueError("signature")
         flow = json.loads(payload)
         if not isinstance(flow, dict) or int(flow.get("exp", 0)) < int(time.time()):
             raise ValueError("expired")
-    except (ValueError, TypeError, json.JSONDecodeError):
+    except (ValueError, TypeError, UnicodeError, json.JSONDecodeError):
         raise GoogleAuthError("expired", "missing or expired Google sign-in flow") from None
     return flow
 
@@ -131,36 +144,23 @@ def flow_portal(flow: dict[str, object] | None) -> str:
     return portal if portal in PORTALS else "admin"
 
 
-def _claims(id_token: str) -> dict[str, object]:
-    parts = id_token.split(".")
-    if len(parts) != 3:
-        raise GoogleAuthError("failed", "malformed id_token")
-    try:
-        claims = json.loads(_unb64(parts[1]))
-    except (ValueError, json.JSONDecodeError):
-        raise GoogleAuthError("failed", "malformed id_token") from None
-    if not isinstance(claims, dict):
-        raise GoogleAuthError("failed", "malformed id_token")
-    return claims
-
-
 def identity_from_claims(settings: Settings, claims: dict[str, object], nonce: str) -> GoogleIdentity:
     now = int(time.time())
     exp = claims.get("exp")
     if (
         str(claims.get("iss")) not in ISSUERS
         or claims.get("aud") != settings.google_client_id
-        or not isinstance(exp, (int, float))
+        or isinstance(exp, bool) or not isinstance(exp, (int, float))
         or exp < now - CLOCK_SKEW_SECONDS
-        or not hmac.compare_digest(str(claims.get("nonce") or ""), nonce)
-        or not isinstance(claims.get("sub"), str)
+        or not hmac.compare_digest(str(claims.get("nonce") or "").encode(), nonce.encode())
+        or not isinstance(claims.get("sub"), str) or not 1 <= len(str(claims.get("sub"))) <= 255
         or not isinstance(claims.get("email"), str)
     ):
         raise GoogleAuthError("failed", "invalid id_token claims")
-    verified = claims.get("email_verified") in (True, "true")
+    verified = claims.get("email_verified") is True or claims.get("email_verified") == "true"
     name = claims.get("name")
     return GoogleIdentity(
-        sub=str(claims["sub"])[:255],
+        sub=str(claims["sub"]),
         email=str(claims["email"]).strip().lower(),
         email_verified=verified,
         name=name if isinstance(name, str) else None,
@@ -210,4 +210,38 @@ async def finish_flow(
     id_token = body.get("id_token") if isinstance(body, dict) else None
     if response.status_code != 200 or not isinstance(id_token, str):
         raise GoogleAuthError("failed", f"token exchange failed: HTTP {response.status_code}")
-    return identity_from_claims(settings, _claims(id_token), str(flow.get("nonce") or ""))
+    claims = await verify_id_token(settings, id_token, transport=transport)
+    return identity_from_claims(settings, claims, str(flow.get("nonce") or ""))
+
+
+async def verify_id_token(settings: Settings, id_token: str, *, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, object]:
+    """No token-controlled URL or algorithm is trusted; fail closed on key outages."""
+    try:
+        if len(id_token) > 16384:
+            raise ValueError("oversized token")
+        header = jwt.get_unverified_header(id_token)
+        kid = header.get("kid")
+        if header.get("alg") != "RS256" or not isinstance(kid, str) or not 1 <= len(kid) <= 128:
+            raise ValueError("unsupported signature")
+        keys = _JWKS_CACHE["keys"]
+        if not isinstance(keys, list):
+            keys = []
+        key = next((k for k in keys if isinstance(k, dict) and k.get("kid") == kid), None)
+        if key is None or float(_JWKS_CACHE["until"]) <= time.monotonic():
+            async with httpx.AsyncClient(timeout=10, transport=transport, follow_redirects=False) as client:
+                response = await client.get(JWKS_URL)
+            if response.status_code != 200 or len(response.content) > 65536:
+                raise ValueError("keys unavailable")
+            keys = response.json().get("keys")
+            if not isinstance(keys, list) or len(keys) > 20:
+                raise ValueError("invalid keys")
+            _JWKS_CACHE.update(keys=keys, until=time.monotonic() + 3600)
+            key = next((k for k in keys if isinstance(k, dict) and k.get("kid") == kid), None)
+        if not key or key.get("kty") != "RSA":
+            raise ValueError("unknown key")
+        public_key = jwt.PyJWK.from_dict(key, algorithm="RS256").key
+        return jwt.decode(id_token, public_key, algorithms=["RS256"], audience=settings.google_client_id,
+                          issuer=list(ISSUERS), leeway=CLOCK_SKEW_SECONDS,
+                          options={"require": ["exp", "iat", "iss", "aud", "sub"]})
+    except (jwt.PyJWTError, httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError):
+        raise GoogleAuthError("failed", "Google identity verification failed") from None

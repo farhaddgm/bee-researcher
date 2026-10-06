@@ -18,7 +18,7 @@ from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Cookie, HTTPException, Response
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from sqlalchemy import case, delete, func, or_, select, text, true, update
 from sqlalchemy.exc import IntegrityError
 
@@ -315,7 +315,9 @@ def can_view_admin_user(viewer: AdminUser, target: AdminUser) -> bool:
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=128)
+    # E-mail is the public identifier. Legacy usernames remain accepted on
+    # the unlinked password route so existing installations are not locked out.
+    username: str = Field(min_length=1, max_length=320, validation_alias=AliasChoices("username", "email"))
     password: str = Field(min_length=8, max_length=256)
 
 
@@ -1108,6 +1110,11 @@ def _admin_session_idle_hours() -> int:
         return 6
 
 
+def _account_session_lifetime() -> timedelta:
+    """Rolling Contenter-style session, with authoritative server-side revocation."""
+    return timedelta(days=min(max(int(getattr(get_settings(), "account_session_ttl_days", 30)), 1), 30))
+
+
 def _reader_nightly_expiry(created_at: datetime) -> datetime:
     """Return the first 02:00 cutoff after a reader session is created.
 
@@ -1147,7 +1154,9 @@ async def authenticate(
     settings = get_settings()
     username = request.username.strip().lower()
     async with SessionLocal() as session:
-        user = (await session.execute(select(AdminUser).where(AdminUser.username == username))).scalar_one_or_none()
+        identifier = normalize_email(username) if "@" in username else None
+        condition = AdminUser.email == identifier if identifier else AdminUser.username == username
+        user = (await session.execute(select(AdminUser).where(condition))).scalar_one_or_none()
         if (
             user is None
             and settings.admin_bootstrap_password
@@ -1175,6 +1184,7 @@ async def authenticate(
             # Return a stable machine-readable code. The backoffice translates
             # it into the selected language without exposing account details.
             raise HTTPException(status_code=403, detail="account_disabled")
+        user.last_login_at = datetime.now(timezone.utc)
         raw = _add_session(session, user, nightly_reader_expiry=nightly_reader_expiry, mfa_required=require_mfa and _mfa_enabled(user))
         await session.commit()
     await _audit(user.id, "admin.login", details={"method": "password"})
@@ -1185,13 +1195,14 @@ def _add_session(session, user: AdminUser, *, nightly_reader_expiry: bool = Fals
     """Stage a new server-side session row and return its raw token."""
     raw = secrets.token_urlsafe(40)
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(hours=_admin_session_idle_hours())
+    expires_at = now + _account_session_lifetime()
     if nightly_reader_expiry:
         expires_at = min(expires_at, _reader_nightly_expiry(now))
     session.add(
         AdminSession(
             user_id=user.id,
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            portal="user" if nightly_reader_expiry else "admin",
             expires_at=expires_at,
             mfa_verified=not mfa_required,
         )
@@ -1204,18 +1215,20 @@ def _cookie_secure() -> bool:
 
 
 def set_admin_session_cookies(response: Response, raw: str) -> None:
-    # Server-side idle expiry is authoritative. A persistent cookie would
-    # turn this into an absolute timeout, so use a browser-session cookie and
-    # let current_admin enforce the six-hour inactivity boundary.
-    response.set_cookie(COOKIE, raw, httponly=True, secure=_cookie_secure(), samesite="strict", path="/")
+    # Both the persistent browser cookie and server-side idle deadline renew
+    # during foreground activity. Revocation in the database is authoritative.
+    lifetime = int(_account_session_lifetime().total_seconds())
+    response.set_cookie(COOKIE, raw, max_age=lifetime, httponly=True, secure=_cookie_secure(), samesite="strict", path="/")
     # The session token stays HttpOnly. The separate, non-sensitive token is
     # readable by the browser only so the UI can send it in a custom header;
     # cross-site pages cannot read it and therefore cannot forge mutations.
-    response.set_cookie(CSRF_COOKIE, new_csrf_token(raw, get_settings()), httponly=False, secure=_cookie_secure(), samesite="strict", path="/")
+    response.set_cookie(CSRF_COOKIE, new_csrf_token(raw, get_settings()), max_age=lifetime, httponly=False, secure=_cookie_secure(), samesite="strict", path="/")
 
 
 def set_reader_session_cookie(response: Response, raw: str) -> None:
-    response.set_cookie(USER_SESSION_COOKIE, raw, httponly=True, secure=_cookie_secure(), samesite="strict", path="/user")
+    now = datetime.now(timezone.utc)
+    deadline = min(now + _account_session_lifetime(), _reader_nightly_expiry(now))
+    response.set_cookie(USER_SESSION_COOKIE, raw, expires=deadline, httponly=True, secure=_cookie_secure(), samesite="strict", path="/user")
 
 
 async def _unique_username(session, base: str) -> str:
@@ -1246,6 +1259,7 @@ async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[s
         if user is None and owner:
             user = AdminUser(
                 username=await _unique_username(session, email.split("@", 1)[0]),
+                display_name=(identity.name or "Owner")[:160],
                 email=email,
                 login_method="google",
                 password_hash=None,
@@ -1261,6 +1275,7 @@ async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[s
         if owner:
             # The owner can never be locked out by another administrator.
             user.active = True
+            user.role = "admin"
             if user.login_method == "password":
                 user.login_method = "both"
         if not user.active:
@@ -1268,8 +1283,13 @@ async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[s
         if portal == "user" and not user_portal_access_allowed(user):
             raise GoogleAuthError("not_allowed", "user portal access denied")
         user.google_sub = identity.sub
+        user.last_login_at = datetime.now(timezone.utc)
         raw = _add_session(session, user, nightly_reader_expiry=portal == "user")
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise GoogleAuthError("not_allowed", "identity binding conflict") from exc
     await _audit(user.id, "admin.login", details={"method": "google", "portal": portal})
     return raw, user
 
@@ -1289,6 +1309,8 @@ async def current_admin(token: str | None) -> AdminUser:
         if row is None:
             raise HTTPException(status_code=401, detail="session expired")
         session_row, user = row
+        if getattr(session_row, "portal", "admin") != "admin":
+            raise HTTPException(status_code=401, detail="session expired")
         if not user.active:
             # Deactivation immediately invalidates any race-winning request.
             await session.delete(session_row)
@@ -1298,9 +1320,8 @@ async def current_admin(token: str | None) -> AdminUser:
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=401, detail="session expired")
-        # Sliding idle timeout: every authenticated request gets at most six
-        # more hours, so six hours without a request always closes the session.
-        session_row.expires_at = now + timedelta(hours=_admin_session_idle_hours())
+        # Approved rolling lifetime; never a JWT grace period after revocation.
+        session_row.expires_at = now + _account_session_lifetime()
         await session.commit()
     return user
 
@@ -1353,6 +1374,8 @@ async def current_reader(token: str | None, *, touch: bool = True) -> AdminUser:
         if row is None:
             raise HTTPException(status_code=401, detail="session expired")
         session_row, user = row
+        if getattr(session_row, "portal", "user") != "user":
+            raise HTTPException(status_code=401, detail="session expired")
         if not user.active:
             await session.delete(session_row)
             await session.commit()
@@ -1367,7 +1390,7 @@ async def current_reader(token: str | None, *, touch: bool = True) -> AdminUser:
             raise HTTPException(status_code=401, detail="session expired")
         if touch:
             session_row.expires_at = min(
-                now + timedelta(hours=_admin_session_idle_hours()),
+                now + _account_session_lifetime(),
                 _reader_nightly_expiry(session_row.created_at),
             )
             await session.commit()
@@ -2105,6 +2128,8 @@ async def logout(response: Response, token: str | None) -> dict[str, str]:
 
 
 async def change_password(user: AdminUser, payload: ChangePasswordRequest) -> dict[str, str]:
+    if not password_login_allowed(user):
+        raise HTTPException(status_code=422, detail="Google-only accounts have no internal password")
     if not _check_password(payload.current_password, user.password_hash):
         raise HTTPException(status_code=401, detail="current password is incorrect")
     if payload.current_password == payload.new_password:
@@ -2138,6 +2163,8 @@ async def change_user_password(user_id: uuid.UUID, payload: AdminUserPasswordUpd
         if is_owner(item) and not is_owner(user):
             raise HTTPException(status_code=403, detail="the owner password can only be changed by the owner")
         ensure_can_manage_account(user, item)
+        if not password_login_allowed(item):
+            raise HTTPException(status_code=422, detail="Google-only accounts have no internal password")
         item.password_hash = _hash_password(payload.new_password)
         await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         await session.commit()
@@ -5324,6 +5351,7 @@ async def update_user_portal_access(
             "updated_by": str(user.username),
         }
         item.preferences = preferences
+        await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         await session.commit()
     await _audit(user.id, "admin_user.user_portal_access", details={"user_id": str(user_id), "enabled": payload.enabled, "feedback_enabled": payload.feedback_enabled})
     return {"id": str(item.id), "username": item.username, **user_portal_access_payload(item)}
@@ -5426,6 +5454,8 @@ async def update_admin_user(user_id: uuid.UUID, payload: AdminUserUpdate, user: 
             raise HTTPException(status_code=422, detail="the owner account cannot be deactivated")
         for key, value in changes.items():
             setattr(item, key, value)
+        if any(key in changes for key in ("active", "role")) or portal_enabled is not None or feedback_enabled is not None:
+            await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         try:
             await session.commit()
         except Exception as exc:
@@ -5460,6 +5490,8 @@ async def manage_admin_user(user_id: uuid.UUID, payload: AdminUserManageUpdate, 
         if not is_owner(user) and payload.role is not None and _ROLE_RANK.get(payload.role, 0) >= role_rank(user):
             raise HTTPException(status_code=403, detail="cannot grant a role equal to or higher than your own")
         if payload.new_password is not None:
+            if not password_login_allowed(item):
+                raise HTTPException(status_code=422, detail="Google-only accounts have no internal password")
             if user_id == user.id:
                 if not payload.current_password or not _check_password(payload.current_password, item.password_hash):
                     raise HTTPException(status_code=401, detail="current password is incorrect")
@@ -5513,7 +5545,7 @@ async def manage_admin_user(user_id: uuid.UUID, payload: AdminUserManageUpdate, 
                 existing = {member.assistant_id for member in memberships}
                 for assistant_id in selected - existing:
                     session.add(AssistantMember(assistant_id=assistant_id, user_id=user_id, role=member_role))
-        if payload.active is False:
+        if any(value is not None for value in (payload.active, payload.role, payload.assistant_ids, payload.user_portal_access, payload.user_feedback_access)):
             await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         try:
             await session.commit()
@@ -5577,6 +5609,7 @@ async def list_active_sessions(user: AdminUser, current_token: str | None) -> di
         "sessions": [{
             "id": str(item.id),
             "username": account.username,
+            "portal": getattr(item, "portal", "admin"),
             "created_at": item.created_at.isoformat(),
             "expires_at": item.expires_at.isoformat(),
             "current": bool(current_hash and hmac.compare_digest(item.token_hash, current_hash)),
@@ -5628,6 +5661,7 @@ class GoogleAccessGrant(BaseModel):
     """Owner-managed Gmail allowlist entry."""
 
     email: str = Field(min_length=6, max_length=320)
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
     # Attach the address to an existing account instead of creating one.
     user_id: uuid.UUID | None = None
     username: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_.-]{3,128}$")
@@ -5665,7 +5699,7 @@ def _google_access_payload(item: AdminUser) -> dict[str, object]:
 
 def _validated_gmail(value: str) -> str:
     email = normalize_email(value)
-    if not is_gmail(email):
+    if not is_gmail(email) or not re.fullmatch(r"[a-z0-9_%-]+@gmail\.com", email):
         raise HTTPException(status_code=422, detail="only @gmail.com addresses can use Google sign-in")
     return email
 
@@ -5688,12 +5722,17 @@ async def grant_google_access(payload: GoogleAccessGrant, user: AdminUser) -> di
     if email == owner_email():
         raise HTTPException(status_code=422, detail="the owner address is reserved for the owner account")
     async with SessionLocal() as session:
-        if await session.scalar(select(AdminUser.id).where(AdminUser.email == email)) is not None:
-            raise HTTPException(status_code=409, detail="this Gmail address already has access")
-        if payload.user_id is not None:
-            item = await session.get(AdminUser, payload.user_id, with_for_update=True)
-            if item is None:
+        existing_user = (await session.execute(select(AdminUser).where(AdminUser.email == email).with_for_update())).scalar_one_or_none()
+        item: AdminUser
+        if existing_user is not None:
+            if payload.user_id is not None and payload.user_id != existing_user.id:
+                raise HTTPException(status_code=409, detail="this Gmail address belongs to another account")
+            item = existing_user
+        elif payload.user_id is not None:
+            attached = await session.get(AdminUser, payload.user_id, with_for_update=True)
+            if attached is None:
                 raise HTTPException(status_code=404, detail="admin user not found")
+            item = attached
             if is_owner(item):
                 raise HTTPException(status_code=422, detail="the owner account is managed automatically")
             if item.email:
@@ -5702,6 +5741,10 @@ async def grant_google_access(payload: GoogleAccessGrant, user: AdminUser) -> di
             username = (payload.username or "").strip().lower() or await _unique_username(session, email.split("@", 1)[0])
             item = AdminUser(username=username, role=payload.role, active=True, password_hash=None)
             session.add(item)
+        if payload.display_name:
+            item.display_name = payload.display_name.strip()
+        item.role = payload.role
+        item.active = True
         if payload.login_method == "both" and not (item.password_hash or payload.password):
             raise HTTPException(status_code=422, detail="a password is required for Gmail + password sign-in")
         if payload.login_method == "google":
@@ -5709,17 +5752,21 @@ async def grant_google_access(payload: GoogleAccessGrant, user: AdminUser) -> di
         elif payload.password:
             item.password_hash = _hash_password(payload.password)
         item.email = email
-        item.google_sub = None
+        # Existing Google identity bindings are retained across re-grants.
         item.login_method = payload.login_method
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise HTTPException(status_code=409, detail="username or Gmail address already exists") from exc
         if payload.assistant_ids:
             selected = set(payload.assistant_ids)
             found = (await session.execute(select(AssistantWorkspace.id).where(AssistantWorkspace.id.in_(selected)))).scalars().all()
             if len(found) != len(selected):
                 raise HTTPException(status_code=404, detail="one or more selected projects do not exist")
-            existing = set((await session.execute(select(AssistantMember.assistant_id).where(AssistantMember.user_id == item.id))).scalars().all())
+            existing_memberships = set((await session.execute(select(AssistantMember.assistant_id).where(AssistantMember.user_id == item.id))).scalars().all())
             member_role = "admin" if item.role in {"admin", "assistant_admin"} else "editor" if item.role == "editor" else "viewer"
-            for assistant_id in selected - existing:
+            for assistant_id in selected - existing_memberships:
                 session.add(AssistantMember(assistant_id=assistant_id, user_id=item.id, role=member_role))
         # The sign-in contract changed: close every existing session.
         await session.execute(delete(AdminSession).where(AdminSession.user_id == item.id))
@@ -5743,7 +5790,7 @@ async def update_google_access(user_id: uuid.UUID, payload: GoogleAccessUpdate, 
         method = payload.login_method or item.login_method
         if method == "both" and not (item.password_hash or payload.password):
             raise HTTPException(status_code=422, detail="a password is required for Gmail + password sign-in")
-        revoke_sessions = False
+        revoke_sessions = bool(payload.login_method is not None or payload.role is not None)
         if payload.login_method == "google" and item.password_hash:
             item.password_hash = None
             revoke_sessions = True
@@ -5772,7 +5819,7 @@ async def revoke_google_access(user_id: uuid.UUID, user: AdminUser) -> dict[str,
             raise HTTPException(status_code=404, detail="Gmail access not found")
         if is_owner(item):
             raise HTTPException(status_code=422, detail="the owner Gmail access cannot be removed")
-        item.email = None
+        # Preserve the email identifier when reverting to password-only.
         item.google_sub = None
         item.login_method = "password"
         if not item.password_hash:

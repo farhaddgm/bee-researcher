@@ -23,7 +23,7 @@ async function api(target, path, method='GET', body) {
   }, {path,method,body});
 }
 async function login(target,user,pass) {
-  await target.goto(base,{waitUntil:'domcontentloaded'});
+  await target.goto(new URL("/admin/login-up",base).href,{waitUntil:'domcontentloaded'});
   await target.locator('#loginUser').fill(user);
   await target.locator('#loginPass').fill(pass);
   await target.locator('#loginSubmit').click();

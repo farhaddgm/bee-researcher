@@ -4331,3 +4331,7 @@ ADMIN_HTML = r'''<!doctype html>
     + Path(__file__).with_name("admin_research_context.js").read_text(encoding="utf-8")
     + '</script></body>', 1,
 )
+
+# One shared login/identity controller replaces the legacy delayed layers.
+from app.auth_ui import decorate_auth_html
+ADMIN_HTML = decorate_auth_html(ADMIN_HTML, admin=True)

@@ -74,7 +74,7 @@ async function openWithPhysicalClick(view, buttonId, fieldId, viewport) {
   return { viewport: viewport.width, view, buttonId, topHit: diagnostic.topHit };
 }
 
-await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+await page.goto(new URL("/admin/login-up",baseUrl).href, { waitUntil: 'domcontentloaded', timeout: 30000 });
 await page.locator('#loginUser').fill(username);
 await page.locator('#loginPass').fill(password);
 await page.locator('#loginSubmit').click();

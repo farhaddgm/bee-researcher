@@ -79,7 +79,7 @@ async function openSelector(view, selector, label, n, expectedSelector = '#modal
   return true;
 }
 
-await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+await page.goto(new URL("/admin/login-up",baseUrl).href, { waitUntil: 'domcontentloaded', timeout: 30000 });
 await waitUi();
 await page.locator('#loginUser').fill(username);
 await page.locator('#loginPass').fill(password);
