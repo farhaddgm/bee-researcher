@@ -19,6 +19,8 @@ class BackofficePresentationTest(unittest.TestCase):
             self.assertNotIn(prohibited, source)
         self.assertIn("copy.textContent=message", source)
         self.assertIn("if(!error)node._timer", source)
+        self.assertIn("document.activeElement===anchor||pinned", source)
+        self.assertIn("innerHeight-tip.height-12", source)
 
     def test_loading_hosts_are_actually_cleaned_up(self):
         self.assertNotIn("layer.remove();layer.parentElement?", ADMIN_HTML)

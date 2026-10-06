@@ -55,6 +55,12 @@
 #app :is(.form-grid,.grid,.schedule-layout,.schedule-matrix-card){min-width:0}
 #app .detail-list,#app .detail-item{min-width:0;max-width:100%}
 #app .detail-item :is(span,b){min-width:0;overflow-wrap:anywhere}
+#app .timeline-row{grid-template-columns:10px minmax(0,1fr) minmax(0,auto)}
+#app .timeline-row>:not(.timeline-dot){min-width:0;overflow-wrap:anywhere}
+#app :is(.product-health,.product-triage){background:var(--panel)!important;color:var(--ink)!important}
+#app .product-health dl div{min-width:0;flex-wrap:wrap}
+#app .product-health :is(dt,dd){min-width:0;max-width:100%;overflow-wrap:anywhere}
+#app .product-triage-tools :is(input,select){background:var(--panel)!important;color:var(--ink)!important}
 #app .grid.three-col{grid-template-columns:repeat(3,minmax(0,1fr))}
 #app .schedule-layout{grid-template-columns:minmax(0,1fr)}
 /* Reader previously had no select primitive; support used hard-coded light fields. */
@@ -115,6 +121,8 @@ html[dir="rtl"] #app .setting-notification .switch input:checked+.switch-track::
 @media(max-width:1050px){#app #view-support.support-ticket-v4 .support-v4-layout{grid-template-columns:minmax(0,1fr)}}
 @media(max-width:850px){#app .settings-panel .settings-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:780px){
+ #app .timeline-row{grid-template-columns:10px minmax(0,1fr)}
+ #app .timeline-row>strong{grid-column:2}
  #app .main>.topbar{grid-template-columns:40px minmax(0,1fr)!important}
  #app .main>.topbar .topbar-main{display:none!important}
  #app .main>.topbar .top-actions{grid-column:2;grid-row:1}

@@ -20,7 +20,8 @@
     if(!tooltip||tooltip.hidden||!anchor)return;
     const box=anchor.getBoundingClientRect(),tip=tooltip.getBoundingClientRect();
     const left=Math.max(12,Math.min(document.documentElement.dir==='rtl'?box.right-tip.width:box.left,innerWidth-tip.width-12));
-    const below=box.bottom+8,top=below+tip.height<=innerHeight-12?below:Math.max(12,box.top-tip.height-8);
+    const below=box.bottom+8,candidate=below+tip.height<=innerHeight-12?below:box.top-tip.height-8;
+    const top=Math.max(12,Math.min(candidate,innerHeight-tip.height-12));
     tooltip.style.left=`${left}px`;tooltip.style.top=`${top}px`;
   }
   function showTip(button,pin=false){
@@ -43,7 +44,7 @@
     else if(!tooltip?.contains(event.target))hideTip();
   },true);
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&anchor){event.preventDefault();event.stopImmediatePropagation();hideTip();}},true);
-  window.addEventListener('resize',hideTip);document.addEventListener('scroll',event=>{if(!tooltip?.contains(event.target))hideTip();},true);
+  window.addEventListener('resize',hideTip);document.addEventListener('scroll',event=>{if(tooltip?.contains(event.target))return;if(anchor&&(document.activeElement===anchor||pinned))positionTip();else hideTip();},true);
   function avatarFallback(image){
     const avatar=image.closest('#sidebarUserAvatar,.sidebar-user-avatar,.sidebar-account-avatar');
     if(!avatar||image.naturalWidth||!image.complete)return;

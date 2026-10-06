@@ -12,6 +12,10 @@
   and conversation surfaces preserve existing threaded ticket permissions.
 - Shared modern form primitives cover Reader settings and dark Support fields.
 - Viewport-positioned translated information tips support hover, focus and tap.
+  Focus-triggered scrolling repositions rather than dismisses the description;
+  dismissing a tip restores its trigger's original ARIA description.
+- Long translated overview timeline rows reflow within compact cards; health
+  and review surfaces follow the selected theme.
 - Error toasts persist until dismissal, with a close action and alert semantics;
   successes retain timed status announcements. Message text is never HTML.
 - Reader settings use a real 3/2/1-column layout and a larger notification switch.
@@ -19,6 +23,7 @@
 - Both portals share a separate presentation controller without network requests,
   polling or additional MutationObservers. Login and news-only text direction
   remain unchanged. Added static contract and browser regression tests.
+  The UI regression suite is also a required browser workflow step.
 
 No database migration or production account/model/schedule/source/topic change.
 Benchmarks, root causes and boundaries: docs/ui-usability-3.36.0-fa.md.

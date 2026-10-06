@@ -58,7 +58,7 @@ try{
  }
  await page.evaluate(()=>{window.setView('settings');});await page.setViewportSize({width:320,height:900});
  const help=page.locator('#view-settings .info-tip').first();await help.focus();await page.locator('#beeUiTooltip:not([hidden])').waitFor();
- const box=await page.locator('#beeUiTooltip').boundingBox();assert(box.x>=0&&box.x+box.width<=320);
+ const box=await page.locator('#beeUiTooltip').boundingBox();assert(box.x>=0&&box.x+box.width<=320&&box.y>=0&&box.y+box.height<=900);
  await page.keyboard.press('Escape');assert(await page.locator('#beeUiTooltip').evaluate(n=>n.hidden));
  assert.notEqual(await help.getAttribute('aria-describedby'),'beeUiTooltip','Dismissed help retains another field’s shared description');
  await page.evaluate(()=>window.toast('Safe test error',true));assert.equal(await page.locator('#toast').getAttribute('role'),'alert');await page.waitForTimeout(4600);assert(await page.locator('#toast').isVisible());await page.locator('#toast button').click();assert(await page.locator('#toast').evaluate(n=>n.classList.contains('hidden')));
@@ -71,7 +71,8 @@ try{
   const controls=await page.locator('#settingsPanel select').evaluateAll(nodes=>nodes.map(n=>({height:n.getBoundingClientRect().height,radius:getComputedStyle(n).borderRadius})));
   assert(controls.every(x=>x.height>=44&&x.radius==='10px'));
  }
- await page.locator('#settingsPanel .info-button').last().focus();await page.locator('#beeUiTooltip:not([hidden])').waitFor();await page.keyboard.press('Escape');
+ await page.locator('#settingsPanel .info-button').last().focus();await page.locator('#beeUiTooltip:not([hidden])').waitFor();
+ const readerHelp=await page.locator('#beeUiTooltip').boundingBox();assert(readerHelp.x>=0&&readerHelp.x+readerHelp.width<=320&&readerHelp.y>=0&&readerHelp.y+readerHelp.height<=1000);await page.keyboard.press('Escape');
  assert.equal(await page.locator('#settingsPanel .setting').count(),9);
  await page.locator('#mobileMenuButton').click();await page.locator('#sidebar.open').waitFor();await page.locator('#sidebarOverlay').click({position:{x:310,y:700}});assert.equal(await page.locator('#sidebar.open').count(),0);
  await page.goto(user,{waitUntil:'domcontentloaded'});await page.locator('#app:not(.hidden)').waitFor();await page.waitForTimeout(250);assert(await overflow()<=2);
