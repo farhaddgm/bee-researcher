@@ -49,6 +49,9 @@
 #app .table-wrap td.empty[colspan]{display:table-cell!important;padding:28px 16px!important}
 #app .table-wrap td[colspan] .empty{padding:28px 16px;max-width:none!important;min-width:0!important;text-align:center}
 #app :is(.form-grid,.grid,.schedule-layout,.schedule-matrix-card){min-width:0}
+#app .detail-list,#app .detail-item{min-width:0;max-width:100%}
+#app .detail-item :is(span,b){min-width:0;overflow-wrap:anywhere}
+#app .grid.three-col{grid-template-columns:repeat(3,minmax(0,1fr))}
 #app .schedule-layout{grid-template-columns:minmax(0,1fr)}
 /* Reader previously had no select primitive; support used hard-coded light fields. */
 #app :is(.field,.filter-bar,.reader-controls,.settings-panel) :is(input:not([type="checkbox"]):not([type="radio"]),select,textarea),#app .support-v4-field :is(input,select,textarea),#app .support-v4-toolbar :is(input,select),#support-ticket-v4-dialog :is(select,textarea){width:100%;max-width:100%;min-width:0;border:1px solid var(--line)!important;border-radius:10px!important;background:var(--panel)!important;color:var(--ink)!important;font:inherit;font-size:13px;padding:10px 12px;box-sizing:border-box}
@@ -116,7 +119,7 @@ html[dir="rtl"] #app .setting-notification .switch input:checked+.switch-track::
  #app .main #view-assistants .page-head>.actions{width:auto!important;display:flex!important}
  #app .content,#app .layout{padding:20px 16px!important}
  #app .page-head .actions{justify-content:flex-start!important;margin-inline-start:0!important}
- #app :is(.form-grid,.grid.two-col){grid-template-columns:minmax(0,1fr)!important}
+ #app :is(.form-grid,.grid.two-col,.grid.three-col){grid-template-columns:minmax(0,1fr)!important}
  #app .filter-bar>input{flex-basis:100%!important}
  #app .support-v4-card{padding:18px!important}
  #support-ticket-v4-dialog .support-v4-modal-close{min-width:40px;min-height:40px}
