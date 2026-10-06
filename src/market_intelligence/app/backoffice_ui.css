@@ -17,6 +17,10 @@
 #app .main>.topbar #mobileToggle{display:inline-grid!important;place-items:center;width:40px!important;height:40px!important}
 #app .page-head{gap:16px;flex-wrap:wrap;align-items:center}
 #app .page-head>div{min-width:0;max-width:100%}
+#app .main .section-title{flex-wrap:wrap;min-width:0}
+#app .main .section-title>div{min-width:0;max-width:100%;overflow-wrap:anywhere}
+#app .main .section-title>.actions{display:flex!important;flex-wrap:wrap!important;gap:8px!important;width:auto!important;min-width:0!important;max-width:100%!important}
+#app .main .section-title>.actions>.btn{width:auto!important;min-width:0!important;max-width:100%!important;flex:0 1 auto!important;white-space:normal!important;height:auto!important;min-height:40px!important;font-size:13px!important}
 #app .page-head .actions,#app .main #view-assistants .page-head>.actions{display:flex!important;flex-wrap:wrap!important;gap:8px!important;align-items:center!important;justify-content:flex-end!important;width:auto!important;max-width:100%;margin-inline-start:auto!important}
 /* Equal control height, not equal text width. Primary remains the last action. */
 #app .btn,.modal .btn,.dialog .btn{font-family:var(--ui-font,"Vazirmatn",sans-serif);font-size:13px;line-height:1.4;min-height:var(--ui-control-height);border-radius:10px}
