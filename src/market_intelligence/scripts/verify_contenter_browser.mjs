@@ -44,6 +44,10 @@ try {
     await new Promise(resolve=>setTimeout(resolve,250));
   }
   await login(page,username,password);
+  const metadata=await api(page,'/meta');
+  assert.equal(metadata.status,200,'Cannot verify the server test environment');
+  assert.equal(metadata.data.environment,'test','Refusing to create fixtures outside a server-confirmed test environment');
+  assert.equal(metadata.data.pipeline.scheduler_enabled,false,'The isolated news scheduler must be disabled');
   for (let n=0;n<2;n++) {
     const result=await api(page,'/admin/api/assistants','POST',{name:`Contenter browser fixture ${n}`,slug:`contenter-e2e-${Date.now()}-${n}`,business_name:'',description:'Isolated synthetic fixture',config:{active_business_id:null}});
     assert.equal(result.status,200);assistants.push(result.data.id);
