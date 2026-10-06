@@ -15,7 +15,7 @@
   and conversation surfaces preserve existing threaded ticket permissions.
 - Shared modern form primitives cover Reader settings and dark Support fields.
 - Viewport-positioned translated information tips support hover, focus and tap.
-  Focus-triggered scrolling repositions rather than dismisses the description;
+  Focus/hover-triggered scrolling repositions rather than dismisses the description;
   dismissing a tip restores its trigger's original ARIA description.
 - Long translated overview timeline rows reflow within compact cards; health
   and review surfaces follow the selected theme.

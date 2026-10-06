@@ -51,7 +51,10 @@ try {
     // a fresh real hover, rather than assuming it emits pointerover again.
     await page.mouse.move(0, 0);
     await page.locator('#projectRelevanceInfo').hover();
-    await page.waitForFunction(() => document.getElementById('beeUiTooltip')?.hidden === false);
+    try {await page.waitForFunction(() => document.getElementById('beeUiTooltip')?.hidden === false);} catch(error) {
+      const state=await page.locator('#projectRelevanceInfo').evaluate(n=>({classes:n.className,hovered:n.matches(':hover'),focused:document.activeElement===n,tooltipHidden:document.getElementById('beeUiTooltip')?.hidden,activeView:document.querySelector('.view.active')?.id}));
+      throw Error(`Threshold help failed in ${locale}: ${JSON.stringify(state)}; ${error.message}`);
+    }
     const help = await page.locator('#beeUiTooltip').innerText();
     assert(help.length > 30, `Missing threshold explanation in ${locale}`);
     if (!['fa', 'ar'].includes(locale)) assert(!/[پچژگک]/.test(help), `Persian leaked into ${locale}`);

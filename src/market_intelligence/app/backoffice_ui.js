@@ -44,7 +44,7 @@
     else if(!tooltip?.contains(event.target))hideTip();
   },true);
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&anchor){event.preventDefault();event.stopImmediatePropagation();hideTip();}},true);
-  window.addEventListener('resize',hideTip);document.addEventListener('scroll',event=>{if(tooltip?.contains(event.target))return;if(anchor&&(document.activeElement===anchor||pinned))positionTip();else hideTip();},true);
+  window.addEventListener('resize',hideTip);document.addEventListener('scroll',event=>{if(tooltip?.contains(event.target))return;if(anchor&&(document.activeElement===anchor||pinned||anchor.matches(':hover')))positionTip();else hideTip();},true);
   function avatarFallback(image){
     const avatar=image.closest('#sidebarUserAvatar,.sidebar-user-avatar,.sidebar-account-avatar');
     if(!avatar||image.naturalWidth||!image.complete)return;
