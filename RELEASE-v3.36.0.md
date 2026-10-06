@@ -1,6 +1,8 @@
 # Bee Researcher 3.36.0 — shared backoffice usability contract
 
 - Responsive admin header replaces overflowing absolute coordinates.
+- Collapsed sidebar hides only direct footer labels, not nested profile-menu
+  labels or avatar initials; navigation stays on a non-default current page.
 - Action height/type is consistent; widths follow labels, not the widest sibling.
 - Assistant cards contain all translated actions, metadata and long titles.
 - Search/filter toolbars wrap independently from table headers.

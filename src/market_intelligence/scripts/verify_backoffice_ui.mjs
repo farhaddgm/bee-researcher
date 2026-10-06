@@ -35,7 +35,12 @@ try{
  assert(await page.locator('#assistantGrid .admin-ux-skeleton').count()>=3,'Skeleton covers only two assistant cards');
  await page.evaluate(()=>window.__researchBeeAdminUxV325.markLoading(false));
  assert.equal(await page.locator('.admin-ux-skeleton-host').count(),0,'Loading left overflow-hidden hosts behind');
- await page.locator('#mobileToggle').click();assert.equal(await page.locator('.view.active').getAttribute('id'),'view-assistants');assert(await overflow()<=2);
+ await page.evaluate(()=>window.setView('sources'));
+ await page.locator('#mobileToggle').click();assert.equal(await page.locator('.view.active').getAttribute('id'),'view-sources');assert(await overflow()<=2);
+ await page.locator('#sidebarAccountTrigger').click();await page.locator('#sidebarAccountMenu:not([hidden])').waitFor();
+ const labels=await page.locator('#sidebarAccountMenu [data-account-label]').evaluateAll(nodes=>nodes.map(n=>({text:n.textContent.trim(),width:n.getBoundingClientRect().width})));
+ assert(labels.every(n=>n.text&&n.width>15),'Collapsed account menu lost its labels');
+ await page.locator('#sidebarAccountTrigger').click();
  await page.locator('#mobileToggle').click();
  await page.evaluate(()=>{const img=document.createElement('img');img.src='data:image/png;base64,broken';document.getElementById('sidebarAccountAvatar').replaceChildren(img);});
  await page.waitForFunction(()=>document.querySelector('#sidebarAccountAvatar [data-avatar-initials]')?.textContent.trim());
@@ -58,7 +63,7 @@ try{
  assert.notEqual(await help.getAttribute('aria-describedby'),'beeUiTooltip','Dismissed help retains another field’s shared description');
  await page.evaluate(()=>window.toast('Safe test error',true));assert.equal(await page.locator('#toast').getAttribute('role'),'alert');await page.waitForTimeout(4600);assert(await page.locator('#toast').isVisible());await page.locator('#toast button').click();assert(await page.locator('#toast').evaluate(n=>n.classList.contains('hidden')));
  await page.setViewportSize({width:1440,height:1000});await page.goto(user+'/settings',{waitUntil:'domcontentloaded'});
- await page.waitForFunction(()=>!document.getElementById('login').classList.contains('hidden')||!document.getElementById('app').classList.contains('hidden'));
+ await Promise.race([page.locator('#login:not(.hidden)').waitFor({state:'visible'}),page.locator('#app:not(.hidden)').waitFor({state:'visible'})]);
  if(await page.locator('#login:not(.hidden)').isVisible()){await page.locator('#username').fill(username);await page.locator('#password').fill(password);await page.locator('#loginButton').click();}
  await page.locator('#settingsPanel:not(.hidden)').waitFor();
  for(const width of [1440,900,390,320]){
