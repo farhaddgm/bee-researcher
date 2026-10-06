@@ -187,6 +187,11 @@ async def run():
                 await request(member_client, "PATCH", "/admin/api/accounts/" + manager["id"], {"assistant_ids": [str(project_ids[1])]}, status=403)
                 listing = (await request(member_client, "GET", "/admin/api/accounts")).json()
                 assert not listing["can_manage_google"]
+                shared = await create(owner_client, login_method="password", role="editor", assistant_ids=[str(aid) for aid in project_ids])
+                await request(member_client, "PATCH", "/admin/api/accounts/" + shared["id"], {"password": password}, status=403)
+                await request(member_client, "DELETE", "/admin/api/accounts/" + shared["id"], status=403)
+                visible = (await request(member_client, "GET", "/admin/api/accounts?q=" + shared["email"])).json()["accounts"][0]
+                assert not visible["can_manage"] and visible["assistant_ids"] == [str(project_ids[0])]
                 google_only = await create(owner_client, login_method="google", password=None)
                 await request(owner_client, "DELETE", "/admin/api/owner/google-access/" + google_only["id"])
                 await password_login(member_client, google_only["email"], status=401)

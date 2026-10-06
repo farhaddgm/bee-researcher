@@ -103,6 +103,7 @@ async def list_accounts(actor: AdminUser, *, q: str = "", page: int = 1, page_si
     visible_users = cast(list[dict[str, Any]], visible["users"])
     ids = [uuid.UUID(item["id"]) for item in visible_users]
     async with SessionLocal() as s:
+        manage_scope = await admin._project_admin_scope_ids(s, actor)
         rows = (await s.execute(select(AdminUser).where(AdminUser.id.in_(ids)).order_by(AdminUser.created_at.desc()))).scalars().all()
         needle = q.strip().casefold()
         rows = [r for r in rows if not needle or any(needle in str(v or "").casefold() for v in (r.username, r.email, r.display_name))]
@@ -113,6 +114,9 @@ async def list_accounts(actor: AdminUser, *, q: str = "", page: int = 1, page_si
     accounts = []
     for row in selected:
         account = public_account(row, actor)
+        all_projects = {m.assistant_id for m in members if m.user_id == row.id}
+        if manage_scope is not None and (not all_projects or not all_projects.issubset(manage_scope)):
+            account["can_manage"] = False
         account["assistant_ids"] = [str(m.assistant_id) for m in members if m.user_id == row.id
             and any(str(m.assistant_id) == p["assistant_id"] for p in visible_members.get(str(row.id), []))]
         accounts.append(account)

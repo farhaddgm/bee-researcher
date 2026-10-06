@@ -2500,7 +2500,11 @@ async def _visible_project_scope_ids(session, user: AdminUser) -> set[uuid.UUID]
 
 
 async def _ensure_user_manage_scope(session, target_user_id: uuid.UUID, user: AdminUser) -> set[uuid.UUID] | None:
-    """Ensure a project admin only manages users sharing an assigned project."""
+    """Account-wide changes cannot affect an identity in unassigned projects.
+
+    Project membership screens remain the way to manage a single project's
+    grants; resetting a shared account's credentials is an owner action.
+    """
     scope = await _project_admin_scope_ids(session, user)
     if scope is None:
         return None
@@ -2511,10 +2515,9 @@ async def _ensure_user_manage_scope(session, target_user_id: uuid.UUID, user: Ad
     target_projects = set((await session.execute(
         select(AssistantMember.assistant_id).where(
             AssistantMember.user_id == target_user_id,
-            AssistantMember.assistant_id.in_(scope),
         )
     )).scalars().all())
-    if not target_projects:
+    if not target_projects or not target_projects.issubset(scope):
         raise HTTPException(status_code=403, detail="user is outside your project scope")
     return scope
 
@@ -5336,7 +5339,7 @@ async def update_user_portal_access(
         ensure_can_manage_account(user, item)
         scope = await _ensure_user_manage_scope(session, user_id, user)
         if scope is not None and user_id != user.id:
-            # _ensure_user_manage_scope already checked shared project access;
+            # _ensure_user_manage_scope already checked account-wide scope;
             # retain the local variable to make that boundary explicit.
             _ = scope
         if payload.feedback_enabled and not payload.enabled:
