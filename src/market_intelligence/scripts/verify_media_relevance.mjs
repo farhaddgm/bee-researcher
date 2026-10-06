@@ -48,12 +48,12 @@ try {
     assert.equal(await page.locator('#kpiHealthDot').getAttribute('class'), 'up');
     await page.evaluate(() => window.setView('settings'));
     await page.locator('#projectRelevanceInfo').hover();
-    await page.waitForFunction(() => getComputedStyle(document.getElementById('projectRelevanceHelp')).opacity === '1');
-    const help = await page.locator('#projectRelevanceHelp').innerText();
+    await page.waitForFunction(() => document.getElementById('beeUiTooltip')?.hidden === false);
+    const help = await page.locator('#beeUiTooltip').innerText();
     assert(help.length > 30, `Missing threshold explanation in ${locale}`);
     if (!['fa', 'ar'].includes(locale)) assert(!/[پچژگک]/.test(help), `Persian leaked into ${locale}`);
     await page.locator('#projectRelevanceInfo').focus();
-    assert.equal(await page.locator('#projectRelevanceHelp').evaluate(node => getComputedStyle(node).opacity), '1');
+    assert.equal(await page.locator('#beeUiTooltip').evaluate(node => node.hidden), false);
   }
   await page.evaluate(() => { window.setLanguage('en'); window.setView('sources'); });
   await page.locator('#sourceSuggestionBtn').click();

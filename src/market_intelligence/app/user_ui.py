@@ -7,6 +7,8 @@ scheduling and publishing remain outside this surface.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 
 USER_HTML = r'''<!doctype html>
 <html lang="en" dir="ltr" data-theme="honey" class="session-checking">
@@ -142,7 +144,7 @@ USER_HTML = r'''<!doctype html>
     function setLoginLocale(locale,{persist=true}={}){const safe=loginCopy[locale]?locale:'en',copy=loginCopy[safe];if(persist)try{localStorage.setItem('bee_reader_login_language',safe)}catch(_){};const login=$('login');if(login){login.lang=safe;login.dir=loginLocaleDirection(safe)}const select=$('loginLanguageSelect');if(select)select.value=safe;if($('username'))$('username').placeholder=copy.username;if($('password'))$('password').placeholder=copy.password;if($('loginButton')&&!$('loginButton').disabled)$('loginButton').textContent=copy.submit;return copy}
     function clearLoginFieldError(id){const input=$(id),message=$(id+'Error');if(input)input.classList.remove('input-error');if(message)message.textContent=''}
     function setLoginFieldError(id,message){const input=$(id),error=$(id+'Error');if(input)input.classList.add('input-error');if(error)error.textContent=message}
-    function toast(message,error=false){const node=$('toast');node.textContent=message;node.classList.toggle('error',error);node.classList.remove('hidden');clearTimeout(node._timer);node._timer=setTimeout(()=>node.classList.add('hidden'),3600)}
+    function toast(message,error=false){const node=$('toast');if(window.__beeShowToast){window.__beeShowToast(node,message,error,3600);return}node.textContent=message;node.classList.toggle('error',error);node.classList.remove('hidden');clearTimeout(node._timer);node._timer=setTimeout(()=>node.classList.add('hidden'),3600)}
     async function request(path,options={}){const response=await fetch(path,{credentials:'same-origin',headers:{'Content-Type':'application/json',...(options.headers||{})},...options});let data={};try{data=await response.json()}catch(_){ }if(!response.ok)throw new Error(data.detail||'request failed');return data}
     function persistLocal(){try{localStorage.setItem('bee_reader_saved',JSON.stringify([...state.saved].slice(-500)));localStorage.setItem('bee_reader_read',JSON.stringify([...state.read].slice(-2000)));localStorage.setItem('bee_reader_page_size',String(state.pageSize))}catch(_){}}
     function preferenceSnapshot(){return {...state.preferences,density:getLocal('bee_reader_density')||'comfortable',fontSize:getLocal('bee_reader_font_size')||'medium',lineHeight:getLocal('bee_reader_line_height')||'normal',pageSize:state.pageSize,pollMs:state.pollMs}}
@@ -170,7 +172,7 @@ USER_HTML = r'''<!doctype html>
     function showApp(user){window.__beeReaderCanFeedback=Boolean(user?.user_feedback_access);$('login').classList.add('hidden');$('app').classList.remove('hidden');const username=String(user?.username||'').trim();$('sidebarUserName').textContent=username||'—';$('sidebarUserAvatar').textContent=username?username.slice(0,2).toUpperCase():'?';restoreSidebar();document.documentElement.classList.toggle('settings-route',isSettingsPage);$('settingsPanel').classList.toggle('hidden',!isSettingsPage);$('feedPage').classList.toggle('hidden',isSettingsPage);$('feedNavButton').classList.toggle('active',!isSettingsPage);$('feedNavButton').setAttribute('aria-current',isSettingsPage?'false':'page');$('sidebarSettingsButton').classList.toggle('active',isSettingsPage);$('sidebarSettingsButton').setAttribute('aria-current',isSettingsPage?'page':'false');$('skipLink').setAttribute('href',isSettingsPage?'#settingsPanel':'#newsGrid');document.querySelector('.topbar-title').textContent=isSettingsPage?'Reader settings':'News reader';document.title=isSettingsPage?'Bee Researcher | Reader settings':'Bee Researcher | News reader';document.documentElement.classList.remove('session-checking')}
     function showLogin(){state.assistants=[];state.assistantId='';state.items=[];state.rawItems=[];if(state.poll)clearInterval(state.poll);const menu=$('sidebarAccountMenu'),trigger=$('sidebarAccountTrigger');if(menu)menu.hidden=true;if(trigger)trigger.setAttribute('aria-expanded','false');$('app').classList.add('hidden');$('login').classList.remove('hidden');$('loginError').textContent='';clearLoginFieldError('username');clearLoginFieldError('password');setLoginLocale(loginLocale(),{persist:false});document.documentElement.classList.remove('session-checking')}
     function formatDate(value){const date=new Date(value||'');if(Number.isNaN(date.getTime()))return String(value||'');return new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(date)}
-    function setLoading(loading){$('newsGrid').setAttribute('aria-busy',String(loading));if(loading){const count=Math.min(12,Math.max(6,Number(state.pageSize)||12));$('newsGrid').innerHTML=Array.from({length:count},()=>'<div class="skeleton" aria-hidden="true"></div>').join('')}}
+    function setLoading(loading){$('newsGrid').setAttribute('aria-busy',String(loading));if(loading){const count=Math.min(12,Math.max(6,Number(state.pageSize)||12));$('newsGrid').innerHTML=Array.from({length:count},()=>'<div class="skeleton" aria-hidden="true"><i></i><i></i><i></i></div>').join('')}}
     function renderPagination(){const totalPages=Math.max(1,Math.ceil(state.items.length/state.pageSize));state.page=Math.min(state.page,totalPages);$('pagination').classList.toggle('hidden',state.items.length<=state.pageSize);$('previousPage').disabled=state.page<=1;$('nextPage').disabled=state.page>=totalPages;const labels=[];if(totalPages<=7){for(let i=1;i<=totalPages;i++)labels.push(i)}else{labels.push(1);if(state.page>4)labels.push('…');for(let i=Math.max(2,state.page-1);i<=Math.min(totalPages-1,state.page+1);i++)labels.push(i);if(state.page<totalPages-3)labels.push('…');labels.push(totalPages)}$('pageNumbers').innerHTML=labels.map(value=>value==='…'?'<span class="page-ellipsis" aria-hidden="true">…</span>':`<button class="btn page-number" type="button" data-page="${value}" aria-label="Go to page ${value}" ${value===state.page?'aria-current="page"':''}>${value}</button>`).join('')}
     function priorityScore(item){const rawRelevance=item.relevance_score,relevance=rawRelevance===null||rawRelevance===undefined||rawRelevance===''?NaN:Number(rawRelevance),normalizedRelevance=Number.isFinite(relevance)?Math.max(0,Math.min(1,relevance)):.5;const stamp=new Date(item.article_published_at||item.published_at||item.created_at||'').getTime(),ageHours=stamp?Math.max(0,(Date.now()-stamp)/3600000):168,freshness=Math.max(0,Math.min(1,1-(ageHours/(7*24))));const id=String(item.id),unread=state.read.has(id)?0:.08,saved=(state.saved.has(id)||Boolean(state.annotations[id]?.read_later))?0.05:0;return normalizedRelevance*.58+freshness*.29+unread+saved}
     function priorityReason(item){const reasons=[];const rawRelevance=item.relevance_score,relevance=rawRelevance===null||rawRelevance===undefined||rawRelevance===''?NaN:Number(rawRelevance);if(Number.isFinite(relevance)&&relevance>=.7)reasons.push('strong match');const stamp=new Date(item.article_published_at||item.published_at||item.created_at||'').getTime();if(stamp&&Date.now()-stamp<48*3600000)reasons.push('recent');if(state.saved.has(String(item.id))||state.annotations[String(item.id)]?.read_later)reasons.push('saved');return reasons.length?reasons.join(' · '):'best available match'}
@@ -305,4 +307,12 @@ USER_HTML = r'''<!doctype html>
 })();
 </script>
 </body>
-</html>'''
+</html>'''.replace(
+    '</head>', '<style id="backoffice-ui-contract">'
+    + Path(__file__).with_name("backoffice_ui.css").read_text(encoding="utf-8")
+    + '</style></head>', 1,
+).replace(
+    '</body>', '<script id="backoffice-ui-controller">'
+    + Path(__file__).with_name("backoffice_ui.js").read_text(encoding="utf-8")
+    + '</script></body>', 1,
+)

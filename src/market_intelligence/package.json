@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "ui:e2e": "node scripts/verify_backoffice_ui.mjs",
     "admin:inventory": "node scripts/capture_admin_screenshots.mjs",
     "admin:interactions": "node scripts/capture_admin_interactions.mjs",
     "admin:locales": "node scripts/verify_admin_locales.mjs",
