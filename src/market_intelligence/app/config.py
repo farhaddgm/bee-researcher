@@ -24,6 +24,12 @@ class Settings(BaseSettings):
     # the reverse proxy. They are not credentials and may be omitted locally.
     domain: str | None = None
     legacy_domain: str | None = None
+    # Read-only profile display/sync only. Intentionally not a pipeline input.
+    contenter_api_url: str | None = None
+    contenter_web_url: str | None = None
+    contenter_token: SecretStr | None = None
+    contenter_sync_seconds: int = Field(default=900, ge=60, le=86400)
+    contenter_cache_max_age_seconds: int = Field(default=86400, ge=60, le=604800)
 
     postgres_db: str
     postgres_user: str

@@ -1,0 +1,4 @@
+https://contenter-review.test {
+  tls /certs/cert.pem /certs/key.pem
+  reverse_proxy bee-contenter-api-20261006:4000
+}

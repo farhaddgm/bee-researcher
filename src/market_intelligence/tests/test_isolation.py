@@ -38,6 +38,8 @@ class IsolationTest(unittest.TestCase):
                 "market_intelligence.source_items",
                 "market_intelligence.source_fetch_runs",
                 "market_intelligence.business_profiles",
+                "market_intelligence.contenter_business_links",
+                "market_intelligence.contenter_business_snapshots",
                 "market_intelligence.topics",
                 "market_intelligence.normalized_articles",
                 "market_intelligence.article_topics",

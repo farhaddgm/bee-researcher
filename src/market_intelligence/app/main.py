@@ -358,6 +358,9 @@ async def _read_bounded_request_body(request: Request, limit: int) -> bytes | No
 async def lifespan(_: FastAPI):
     stop = asyncio.Event()
     tasks: list[asyncio.Task] = []
+    from app.contenter import connection_status, sync_loop
+    if connection_status(settings)["configured"]:
+        tasks.append(asyncio.create_task(sync_loop(settings, stop)))
     if settings.scheduler_enabled:
         tasks.append(asyncio.create_task(scheduler_loop(settings, stop)))
     if settings.telegram_ready and settings.telegram_polling_enabled:
@@ -798,6 +801,10 @@ async def ready() -> JSONResponse:
             "runtime": runtime,
         },
     )
+
+
+from app.contenter import router as contenter_router
+app.include_router(contenter_router)
 
 
 @app.get("/robots.txt", include_in_schema=False)

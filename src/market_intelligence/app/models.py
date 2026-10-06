@@ -400,6 +400,37 @@ class SourceFetchRun(Base):
     details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
 
 
+class ContenterBusinessLink(Base):
+    """External display-only context; never substitute the active local AI profile."""
+    __tablename__ = "contenter_business_links"
+    assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"), primary_key=True)
+    external_business_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    business_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    generation: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="healthy")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(48))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ContenterBusinessSnapshot(Base):
+    __tablename__ = "contenter_business_snapshots"
+    __table_args__ = (
+        UniqueConstraint("assistant_id", "version", name="uq_mi_contenter_snapshot_version"),
+        Index("ix_mi_contenter_snapshots_assistant", "assistant_id", "external_business_id"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"), nullable=False)
+    external_business_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class BusinessProfile(Base):
     __tablename__ = "business_profiles"
     # Profiles are scoped to an assistant.  The original MVP used a singleton

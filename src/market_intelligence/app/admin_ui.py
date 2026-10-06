@@ -4318,4 +4318,14 @@ ADMIN_HTML = r'''<!doctype html>
     '<script id="backoffice-ui-controller">'
     + Path(__file__).with_name("backoffice_ui.js").read_text(encoding="utf-8")
     + '</script></body>', 1,
+).replace(
+    '</head>',
+    '<style id="contenter-business-styles">'
+    + Path(__file__).with_name("admin_contenter.css").read_text(encoding="utf-8")
+    + '</style></head>', 1,
+).replace(
+    '</body>',
+    '<script id="contenter-business-controller">'
+    + Path(__file__).with_name("admin_contenter.js").read_text(encoding="utf-8")
+    + '</script></body>', 1,
 )
