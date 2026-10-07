@@ -26,6 +26,20 @@ from app.telegram_identity import telegram_actor
 
 
 class HardeningTest(unittest.IsolatedAsyncioTestCase):
+    async def test_sensitive_changes_emit_warning_events_with_actor_and_scope(self):
+        actor, assistant = uuid.uuid4(), uuid.uuid4()
+        session, context = AsyncMock(), AsyncMock()
+        context.__aenter__.return_value = session
+        with patch('app.admin.SessionLocal', return_value=context), patch('app.security_events.record_security_event', new=AsyncMock()) as record:
+            for action in ('admin_user.manage', 'google_access.update', 'assistant.member.assign',
+                           'assistant.telegram.update', 'privacy.data.export', 'admin.session.revoke'):
+                await admin._audit(actor, action, assistant_id=assistant, details={'fields':['role']})
+                self.assertEqual('warning',record.await_args.kwargs['severity'])
+                self.assertEqual(actor,record.await_args.kwargs['actor_id'])
+                self.assertEqual(assistant,record.await_args.kwargs['assistant_id'])
+            await admin._audit(actor,'admin.account_preferences.update')
+            self.assertEqual('info',record.await_args.kwargs['severity'])
+
     async def test_pinned_connection_preserves_tls_sni_and_http_host(self):
         class Stream(httpcore.AsyncNetworkStream):
             def __init__(self): self.written = b''; self.sni = None

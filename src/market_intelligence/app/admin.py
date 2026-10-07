@@ -1128,9 +1128,9 @@ async def _audit(user_id: uuid.UUID | None, action: str, *, assistant_id: uuid.U
     async with SessionLocal() as session:
         session.add(AdminAuditLog(user_id=user_id, assistant_id=assistant_id, action=action, details=details or {}))
         await session.commit()
-    from app.security_events import record_security_event
+    from app.security_events import record_security_event, security_event_severity
     await record_security_event(action, actor_id=user_id, assistant_id=assistant_id, details=details,
-        severity="warning" if any(part in action for part in ("account.", "password", "user.create", "user.update", "session.revoke")) else "info")
+        severity=security_event_severity(action))
 
 
 async def canonical_login_identity(value: str) -> str:
@@ -1227,8 +1227,8 @@ def set_admin_session_cookies(response: Response, raw: str) -> None:
 def set_reader_session_cookie(response: Response, raw: str) -> None:
     now = datetime.now(timezone.utc)
     deadline = min(now + _account_session_lifetime(), _reader_nightly_expiry(now))
-    response.set_cookie(USER_SESSION_COOKIE, raw, expires=_reader_nightly_expiry(now), httponly=True, secure=_cookie_secure(), samesite="strict", path="/user")
-    response.set_cookie(USER_CSRF_COOKIE, new_csrf_token(raw, get_settings()), expires=_reader_nightly_expiry(now), httponly=False, secure=_cookie_secure(), samesite="strict", path="/user")
+    response.set_cookie(USER_SESSION_COOKIE, raw, expires=deadline, httponly=True, secure=_cookie_secure(), samesite="strict", path="/user")
+    response.set_cookie(USER_CSRF_COOKIE, new_csrf_token(raw, get_settings()), expires=deadline, httponly=False, secure=_cookie_secure(), samesite="strict", path="/user")
 
 
 async def _unique_username(session, base: str) -> str:

@@ -10,7 +10,14 @@ from app.database import SessionLocal
 from app.models import SecurityEvent
 
 LOGGER = logging.getLogger("bee.security")
-_DETAILS = {"user_id", "method", "portal", "state", "publication_id", "target_id", "reason", "client_hash", "role", "active", "target_user_id"}
+_DETAILS = {"user_id", "method", "portal", "state", "publication_id", "target_id", "reason", "client_hash", "role", "active", "target_user_id", "fields", "count", "counts", "memberships_updated", "password_changed"}
+
+
+def security_event_severity(action: str) -> str:
+    if action.startswith(("admin_user.", "google_access.", "assistant.member.",
+        "admin.password.", "admin.session.revoke", "assistant.telegram.", "privacy.data.", "admin.mfa.")):
+        return "warning"
+    return "info"
 
 
 def client_hash(value: str) -> str:
