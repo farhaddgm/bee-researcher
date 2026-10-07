@@ -72,6 +72,10 @@ def image():
     return json.loads((ART / 'image.json').read_text())['image_id']
 
 
+def rollback_image():
+    return json.loads((ART / 'rollback-image.json').read_text())['image_id']
+
+
 def sql(program, *, container='ai-postgres', username=None, database=None):
     old = baseline()['env']
     username = username or old['MARKET_INTELLIGENCE_POSTGRES_USER']
@@ -170,7 +174,7 @@ def prepare():
     write(PRIVATE / 'baseline.json', {'container': current, 'env': old}, private=True)
     write(ART / 'other-containers-before.json', {item['Names']: item['ID'] for item in
         [json.loads(line) for line in run(['docker', 'ps', '--no-trunc', '--format', '{{json .}}']).splitlines()]
-        if item['Names'] != APP})
+        if item['Names'] != APP and not item['Names'].startswith('bee-researcher-security-')})
     values = {name: secrets.token_urlsafe(48) for name in ('runtime_password', 'migration_password', 'redis_password', 'signing_secret', 'encryption_secret', 'redis_operator_password')}
     write(PRIVATE / 'credentials.json', values, private=True)
     # Verify the old allowlisted identity without sending a Telegram message.
@@ -355,12 +359,12 @@ def guard_other_containers():
 
 def production_override(*, rollback=False):
     values=baseline()['env'] if rollback else prepared_env()
-    ident=OLD_IMAGE if rollback else image()
+    ident=rollback_image() if rollback else image()
     service={'image':ident,'pull_policy':'never','environment':{k:'${'+k+'}' for k in values if k.startswith('MARKET_INTELLIGENCE_')}}
     if rollback:
         # The additive journal migration is retained. The older Alembic tree
         # cannot resolve its revision, so rollback runs its web entry point directly.
-        service['command']=['sh','-c','python -m app.auth_deployment && exec uvicorn app.main:app --host 0.0.0.0 --port 8010 --no-access-log']
+        service['command']=['python','security-rollback.py']
     else:
         service['networks']=['backend','egress','researcher-private']
     config={'services':{'market-intelligence':service}}
@@ -387,7 +391,7 @@ def ready():
 
 def deploy():
     release=json.loads((ART/'image.json').read_text())
-    if release.get('candidate') or not (ART/'release-verified.json').exists() or not (ART/'rehearsal-passed.json').exists():
+    if release.get('candidate') or not all((ART/name).exists() for name in ('release-verified.json','rehearsal-passed.json','rollback-tested.json','browser-passed.json','account-access-passed.json')):
         raise RuntimeError('the clean source, final image, complete tests and rehearsal gates must pass first')
     if inspect(APP)['Image'] != OLD_IMAGE:
         raise RuntimeError('live image changed before cutover')
@@ -462,9 +466,9 @@ def rollback():
     path,environment=production_override(rollback=True)
     run(compose_args(path)+['up','-d','--no-deps','--no-build','market-intelligence'],env=environment,timeout=180)
     ready()
-    assert inspect(APP)['Image']==OLD_IMAGE
-    write(ART/'rollback-receipt.json',{'previous_image_restored':True,'redis_state_returned':True,'journal_retained':True})
-    print('Previous Researcher image restored; all database data and the immutable journal retained.')
+    assert inspect(APP)['Image']==rollback_image()
+    write(ART/'rollback-receipt.json',{'previous_application_restored':True,'password_format_compatible':True,'redis_state_returned':True,'journal_retained':True})
+    print('Previous Researcher application restored with compatible password verification; all data and the immutable journal retained.')
 
 
 def main():

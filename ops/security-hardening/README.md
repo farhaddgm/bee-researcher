@@ -27,6 +27,13 @@ remaining TTLs after stopping its poller/scheduler. Rollback repeats this copy
 in reverse before restarting the previous image, preserving Telegram offsets
 and idempotency state. Never restart both publishers together.
 
+The rollback image keeps the exact previous application and dependency base,
+with a small password verification bridge copied from this release. This
+allows both legacy and upgraded hashes to work after rollback. Its startup
+skips the old Alembic tree because revision 0044 must remain in place. The
+image ID is signed in the release manifest and both portal logins are tested
+against the migrated isolated database before production deployment.
+
 Database, Redis, signing and MFA encryption secrets are independent random
 values stored in a private directory (0700, files 0600), outside Git and public
 release artifacts. No migration password is passed to the web container.

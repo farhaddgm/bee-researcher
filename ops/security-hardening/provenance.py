@@ -39,6 +39,12 @@ def main():
     assert built['Config']['Labels']['org.opencontainers.image.version']=='3.39.0'
     ident=built['Id']
     r.write(r.ART/'image.json',{'image_id':ident,'revision':revision,'candidate':False,'base_image_id':r.OLD_IMAGE})
+    result=r.run(['docker','build','--network','none','--pull=false','-f','src/market_intelligence/Dockerfile.rollback',
+        '--build-arg','SOURCE_REVISION='+revision,'-t','bee-researcher-direct:3.38.2-security-rollback','src/market_intelligence'],env=environment,timeout=600)
+    r.write(r.ART/'rollback-build.log',result)
+    fallback=r.inspect('bee-researcher-direct:3.38.2-security-rollback')
+    r.write(r.ART/'rollback-image.json',{'image_id':fallback['Id'],'source_revision':revision,
+        'previous_base_image_id':r.OLD_IMAGE,'password_format_compatible':True,'journal_downgrade':False})
     runtime=r.prepared_env();runtime.update({'MARKET_INTELLIGENCE_BUILD_REVISION':revision,'MARKET_INTELLIGENCE_IMAGE_DIGEST':ident})
     r.write(r.PRIVATE/'runtime.json',runtime,private=True);r.env_file(r.PRIVATE/'runtime.env',runtime)
     # Verify every copied source file by reading the image itself. No secrets/config are copied.
@@ -81,7 +87,7 @@ def main():
     assert not secret_findings, 'secret scan gate requires local review'
     r.write(r.ART/'security-passed.json',{'high_or_critical':0,'secret_findings':0,'offline':True,
         'inventory_uploaded':False,'advisory_database':json.loads((cache/'db/metadata.json').read_text())})
-    files=['image.json','source-files.json','unit-tests.log','static-checks.log','migration.sql',
+    files=['image.json','rollback-image.json','source-files.json','unit-tests.log','static-checks.log','migration.sql',
         'source.tar','source.bundle','image.tar','trivy-report.json','sbom.cdx.json','security-passed.json']
     hashes={name:hashlib.sha256((r.ART/name).read_bytes()).hexdigest() for name in files}
     manifest={'source_revision':revision,'version':'3.39.0','image_id':ident,'base_image_id':r.OLD_IMAGE,
