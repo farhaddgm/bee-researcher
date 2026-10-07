@@ -26,6 +26,24 @@ from app.telegram_identity import telegram_actor
 
 
 class HardeningTest(unittest.IsolatedAsyncioTestCase):
+    async def test_password_backlog_is_bounded_without_blocking_the_event_loop(self):
+        import threading
+        from app import password_security
+        release = threading.Event()
+        def slow_check(*args):
+            release.wait(timeout=5)
+            return True
+        with patch.object(password_security,'check_password',slow_check):
+            tasks=[asyncio.create_task(password_security.check_password_async('fixture',None)) for _ in range(4)]
+            try:
+                await asyncio.sleep(0.05)
+                with self.assertRaises(HTTPException) as exc:
+                    await password_security.check_password_async('overflow',None)
+                self.assertEqual(503,exc.exception.status_code)
+            finally:
+                release.set()
+                self.assertTrue(all(await asyncio.gather(*tasks)))
+
     async def test_sensitive_changes_emit_warning_events_with_actor_and_scope(self):
         actor, assistant = uuid.uuid4(), uuid.uuid4()
         session, context = AsyncMock(), AsyncMock()

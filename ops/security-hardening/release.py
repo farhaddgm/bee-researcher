@@ -297,7 +297,7 @@ def rehearsal():
     write(ART / 'rehearsal-counts.json', {'before': before, 'after': after})
     result = app_command((SOURCE / 'ops/security-hardening/verify_sql.py').read_text(), test=True)
     write(ART / 'integration-tests.log', result)
-    write(ART / 'rehearsal-passed.json', {'backup_restored': True, 'counts_preserved': True, 'external_network': False, 'integration_passed': True})
+    write(ART / 'rehearsal-passed.json', {'image_id': image(), 'backup_restored': True, 'counts_preserved': True, 'external_network': False, 'integration_passed': True})
     print('Isolated backup restore, migration, least privileges and integration tests passed.')
 
 
@@ -403,6 +403,9 @@ def deploy():
         raise RuntimeError('the clean source, final image, complete tests and rehearsal gates must pass first')
     manifest=json.loads((ART/'manifest.json').read_text())
     if manifest['image_id']!=image(): raise RuntimeError('image provenance mismatch')
+    for name in ('release-verified.json','rehearsal-passed.json','rollback-tested.json','browser-passed.json','account-access-passed.json'):
+        if json.loads((ART/name).read_text()).get('image_id')!=image():
+            raise RuntimeError('acceptance evidence belongs to another image: '+name)
     for name,digest in manifest['files'].items():
         if hashlib.sha256((ART/name).read_bytes()).hexdigest()!=digest: raise RuntimeError('release artifact changed: '+name)
     run(['openssl','dgst','-sha256','-verify',str(WORK/'ops/bee-researcher-direct/artifacts/signing/release-public.pem'),
@@ -439,6 +442,7 @@ def deploy():
         copy_redis()
         # Rotate service signing credentials and revoke all old browser sessions.
         revoked=sql('WITH removed AS (DELETE FROM market_intelligence.admin_sessions RETURNING 1) SELECT count(*) FROM removed;').strip()
+        app_command("import asyncio\nfrom app.security_events import record_security_event\nasyncio.run(record_security_event('deployment.credentials_rotated',severity='warning',details={'count':"+revoked+",'reason':'security_release_3.39.0'}))")
         path,environment=production_override()
         run(compose_args(path)+['up','-d','--no-deps','--no-build','market-intelligence'],env=environment,timeout=180)
         ready()

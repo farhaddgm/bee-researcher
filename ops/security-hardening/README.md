@@ -55,6 +55,9 @@ with 10,001 entries, a pinned source revision/hash and its license. All password
 comparisons remain local. Hashing uses scrypt
 N=131072/r=8/p=1 in a bounded two-thread pool, with legacy verification and
 timing padding. Administrative cookies remain HttpOnly/Secure/SameSite.
+At most four password operations are admitted (two running, two pending).
+Further requests receive 503 with Retry-After rather than holding an unbounded
+backlog or starving the application's database pool.
 
 Both portals use a 30-minute server idle deadline and a fixed 12-hour maximum;
 the User portal also retains its 02:00 cutoff in the configured service

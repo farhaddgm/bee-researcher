@@ -8,9 +8,14 @@ import secrets
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import BoundedSemaphore
+from fastapi import HTTPException
 
 N, R, P = 2**17, 8, 1
 _workers = ThreadPoolExecutor(max_workers=2, thread_name_prefix="password")
+# Bound pending work as well as active threads, so a login burst cannot keep
+# database connections waiting behind an unbounded password queue.
+_admission = BoundedSemaphore(4)
 _COMMON = frozenset({
     "password", "password123", "password123456789", "123456789012345",
     "1234567890123456", "qwertyuiopasdfgh", "letmein", "admin", "welcome",
@@ -81,9 +86,22 @@ def check_password(password: str, encoded: str | None) -> bool:
         return False
 
 
+async def _password_work(function, *args):
+    if not _admission.acquire(blocking=False):
+        raise HTTPException(503, "authentication temporarily unavailable", headers={"Retry-After": "1"})
+    try:
+        future = _workers.submit(function, *args)
+    except Exception:
+        _admission.release()
+        raise
+    # Release when the actual worker finishes, even if its caller disconnects.
+    future.add_done_callback(lambda _: _admission.release())
+    return await asyncio.wrap_future(future)
+
+
 async def hash_password_async(password: str) -> str:
-    return await asyncio.get_running_loop().run_in_executor(_workers, hash_password, password)
+    return await _password_work(hash_password, password)
 
 
 async def check_password_async(password: str, encoded: str | None) -> bool:
-    return await asyncio.get_running_loop().run_in_executor(_workers, check_password, password, encoded)
+    return await _password_work(check_password, password, encoded)

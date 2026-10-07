@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 const {chromium}=await import(process.env.BEE_PLAYWRIGHT_MODULE||'playwright');
 
 const base=process.env.BEE_HARDENING_URL||'http://127.0.0.1:18039';
-const browser=await chromium.launch({headless:true});
+const browser=await chromium.launch({headless:true,executablePath:process.env.BEE_CHROMIUM_EXECUTABLE});
 const page=await browser.newPage({viewport:{width:1280,height:900}});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 async function signIn(portal){
@@ -13,7 +13,7 @@ async function signIn(portal){
   await page.waitForFunction(()=>!document.getElementById('app')?.classList.contains('hidden'));
 }
 try{
-  assert.equal(new URL(base).origin,'http://127.0.0.1:18039','Browser checks only permit the isolated loopback port');
+  assert(['http://127.0.0.1:18039','http://bee-researcher-security-test-web:8010'].includes(new URL(base).origin),'Browser checks only permit the isolated fixture');
   assert.equal((await page.request.get(base+'/meta')).status(),401);
   await page.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
   await signIn('admin');

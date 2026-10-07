@@ -3,6 +3,7 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import shutil
 import sys
 import time
 import urllib.request
@@ -150,22 +151,30 @@ def browser():
     values=r.prepared_env(test=True);values['MARKET_INTELLIGENCE_ADMIN_COOKIE_SECURE']='false'
     path=r.PRIVATE/'browser.env';r.env_file(path,values)
     r.run(['docker','run','-d','--name',name,'--network',r.TEST_NET,'--env-file',str(path),
-        '-p','127.0.0.1:18039:8010','--read-only','--memory','768m','--tmpfs','/tmp:size=64m,mode=1777',
+        '--read-only','--memory','768m','--tmpfs','/tmp:size=64m,mode=1777',
         '--cap-drop','ALL','--security-opt','no-new-privileges:true',r.image()])
+    target=r.inspect(name)['NetworkSettings']['Networks'][r.TEST_NET]['IPAddress']
     try:
         for i in range(60):
             try:
-                with urllib.request.urlopen('http://127.0.0.1:18039/health',timeout=2) as response:
+                with urllib.request.urlopen('http://'+target+':8010/health',timeout=2) as response:
                     if response.status==200:break
             except Exception:time.sleep(0.5)
         else:raise RuntimeError('isolated browser fixture unavailable')
-        import os
-        env=dict(os.environ);env['BEE_PLAYWRIGHT_MODULE']='/tmp/bee-context-browser-deps-vjtSRcka/playwright/index.mjs'
-        result=r.run(['/home/farhaad/.nvm/versions/node/v22.23.2/bin/node',str(SOURCE/'ops/security-hardening/browser.mjs')],env=env,timeout=180)
+        dependencies=r.ART/'browser-deps'
+        shutil.copytree('/tmp/bee-context-browser-deps-vjtSRcka/playwright-core',dependencies/'playwright-core',dirs_exist_ok=True)
+        runner=r.inspect('mcr.microsoft.com/playwright:v1.55.1-noble')['Id']
+        result=r.run(['docker','run','--rm','--network',r.TEST_NET,'--memory','1g','--cpus','2',
+            '--read-only','--tmpfs','/tmp:size=256m,mode=1777','--cap-drop','ALL','--security-opt','no-new-privileges:true',
+            '-v',str(dependencies)+':/browser-deps:ro',
+            '-v',str(SOURCE/'ops/security-hardening/browser.mjs')+':/checks/browser.mjs:ro',
+            '-e','BEE_PLAYWRIGHT_MODULE=/browser-deps/playwright-core/index.mjs',
+            '-e','BEE_HARDENING_URL=http://'+name+':8010',runner,'node','/checks/browser.mjs'],timeout=180)
         r.write(r.ART/'browser-tests.log',result)
-        r.write(r.ART/'browser-passed.json',{'image_id':r.image(),'both_portals':True,'csrf_real_mutations':True,'desktop_mobile':True,'external_requests_blocked':True})
+        r.write(r.ART/'browser-passed.json',{'image_id':r.image(),'both_portals':True,'csrf_real_mutations':True,'desktop_mobile':True,'external_requests_blocked':True,'runner_image_id':runner,'external_network':False})
         print(result.strip(),flush=True)
-    finally:r.run(['docker','rm','-f',name])
+    finally:
+        r.run(['docker','rm','-f',name])
 
 if __name__=='__main__':
     try:globals()[sys.argv[1]]()
