@@ -469,6 +469,30 @@ async def _finish_job(
         await session.commit()
 
 
+async def expire_abandoned_job_runs(*, now: datetime | None = None) -> int:
+    """Reconcile orphaned history, never retry work or reset its budget ledger.
+
+    A process can die without reaching _finish_job. Slot-specific keys mean
+    those rows are never reclaimed and otherwise remain 'running' forever.
+    A conservative 24-hour boundary does not confuse normal model/collection
+    latency with an abandoned execution. Delivery claims and publications are
+    intentionally untouched: an uncertain external send must not be replayed.
+    """
+    timestamp = now or _utcnow()
+    async with SessionLocal() as session:
+        result = await session.execute(
+            update(JobRun)
+            .where(
+                JobRun.status == "running",
+                JobRun.finished_at.is_(None),
+                func.coalesce(JobRun.started_at, JobRun.created_at) < timestamp - timedelta(days=1),
+            )
+            .values(status="failed", finished_at=timestamp, error_message="abandoned_execution_expired")
+        )
+        await session.commit()
+    return int(result.rowcount or 0)
+
+
 async def extract_pending_articles(
     settings: Settings,
     *,

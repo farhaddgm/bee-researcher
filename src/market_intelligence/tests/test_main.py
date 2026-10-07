@@ -425,10 +425,10 @@ class MainTest(unittest.TestCase):
         operational_missing = client.post("/pipeline/run", json={"force_ingestion": False})
         self.assertEqual(403, operational_missing.status_code)
         self.assertEqual("csrf validation failed", operational_missing.json()["detail"])
+        client.cookies.set("research_bee_admin_csrf", "server-value")
         mismatched = client.post(
             "/admin/api/logout",
             headers={"X-CSRF-Token": "attacker-value"},
-            cookies={"research_bee_admin_csrf": "server-value"},
         )
         self.assertEqual(403, mismatched.status_code)
         self.assertEqual("csrf validation failed", mismatched.json()["detail"])

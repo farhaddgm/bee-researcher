@@ -16,6 +16,7 @@ from app.pipeline_service import (
     _claim_job,
     _finish_job,
     apply_retention,
+    expire_abandoned_job_runs,
     generate_weekly_report,
     publish_ready_previews,
     record_feedback,
@@ -662,9 +663,16 @@ async def scheduler_tick(settings: Settings, *, now: datetime | None = None) -> 
 
 async def scheduler_loop(settings: Settings, stop: asyncio.Event) -> None:
     STATUS.scheduler_running = True
+    reconciled_at: datetime | None = None
     try:
         while not stop.is_set():
             try:
+                now = datetime.now(timezone.utc)
+                if reconciled_at is None or now - reconciled_at >= timedelta(hours=1):
+                    expired = await expire_abandoned_job_runs(now=now)
+                    reconciled_at = now
+                    if expired:
+                        _log_runtime_event("abandoned_jobs_reconciled", count=expired)
                 result = await scheduler_tick(settings)
                 STATUS.last_scheduler_tick = datetime.now(timezone.utc).isoformat()
                 STATUS.last_scheduler_error = None

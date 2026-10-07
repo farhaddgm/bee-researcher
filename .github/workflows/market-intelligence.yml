@@ -164,7 +164,9 @@ jobs:
           PYTHONPATH: src/market_intelligence
           MARKET_INTELLIGENCE_OPENAI_API_KEY: ""
           MARKET_INTELLIGENCE_TELEGRAM_BOT_TOKEN: ""
-        run: python src/market_intelligence/scripts/verify_media_pipeline.py
+        run: |
+          python src/market_intelligence/scripts/verify_media_pipeline.py
+          python src/market_intelligence/scripts/verify_job_recovery.py
       - name: Run isolated business research context SQL integration
         env:
           PYTHONPATH: src/market_intelligence
