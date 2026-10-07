@@ -39,6 +39,12 @@ class BackofficePresentationTest(unittest.TestCase):
         self.assertIn("label.htmlFor=control.id", ADMIN_HTML)
         self.assertIn("text('وضعیت انتشار')", ADMIN_HTML)
 
+    def test_deleted_projects_are_not_nested_in_the_active_grid(self):
+        self.assertIn("state.assistants.filter(x=>!x.deleted_at).map", ADMIN_HTML)
+        self.assertIn("insertAdjacentElement('afterend',section)", ADMIN_HTML)
+        self.assertNotIn("$('assistantGrid').appendChild(section)", ADMIN_HTML)
+        self.assertIn("querySelector(':scope > .deleted-assistants-section')?.remove()", ADMIN_HTML)
+
     def test_minimal_settings_and_news_direction_contract_retained(self):
         self.assertIn('id="saveSettingsButton"', USER_HTML)
         self.assertEqual(USER_HTML.count('class="setting"'), 8)

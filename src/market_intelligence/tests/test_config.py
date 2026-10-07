@@ -13,6 +13,11 @@ from app.config import Settings  # noqa: E402
 
 
 class ConfigTest(unittest.TestCase):
+    def test_default_version_comes_from_the_shipped_release_file(self):
+        from pathlib import Path
+        expected = Path(__file__).parents[1].joinpath("VERSION").read_text().strip()
+        self.assertEqual(Settings.model_fields['version'].default, expected)
+
     def settings(self, **overrides) -> Settings:
         values = {
             "postgres_db": "assistant_test",

@@ -13,6 +13,21 @@ try{
  await page.locator('#loginUser').fill(username);await page.locator('#loginPass').fill(password);await page.locator('#loginSubmit').click();
  await page.waitForFunction(()=>window.__researchBeeState?.currentUser);
  await page.locator('#app:not(.hidden)').waitFor();await page.waitForFunction(()=>window.__researchBeeState?.projectListReady);
+ // Long recovery lists must never stretch active cards or duplicate deleted
+ // projects into the active grid. Fixture is client-side and never persisted.
+ await page.evaluate(()=>{
+  const s=window.__researchBeeState;window.__uiRecoveryOriginal=s.assistants;
+  const sample=s.assistants.find(x=>!x.deleted_at);if(!sample)throw Error('Missing isolated workspace');
+  s.assistants=[sample,...Array.from({length:20},(_,i)=>({...sample,id:`recovery-fixture-${i}`,name:`Synthetic deleted project ${i}`,status:'archived',deleted_at:new Date().toISOString()}))];
+  window.renderAssistants();window.renderAssistants();
+ });
+ assert.equal(await page.locator('#assistantGrid>.assistant-card').count(),1,'Deleted projects duplicated into active cards');
+ assert.equal(await page.locator('#assistantGrid .deleted-assistants-section').count(),0,'Recovery section nested in active grid');
+ assert.equal(await page.locator('#view-assistants>.deleted-assistants-section').count(),1,'Recovery section missing or duplicated');
+ assert((await page.locator('#assistantGrid>.assistant-card').boundingBox()).height<600,'Recovery list stretches active cards');
+ await page.evaluate(()=>{const s=window.__researchBeeState;const owner=s.currentUser;s.currentUser={...owner,is_owner:false,role:'viewer'};window.renderAssistants();s.currentUser=owner;});
+ assert.equal(await page.locator('.deleted-assistants-section').count(),0,'Recovery section retained after role change');
+ await page.evaluate(()=>{window.__researchBeeState.assistants=window.__uiRecoveryOriginal;delete window.__uiRecoveryOriginal;window.renderAssistants();});
  for(const language of ['en','fa','tr','ar','es','it','de','fr']){
   await page.evaluate(language=>window.setLanguage(language),language);
   for(const width of [1440,900,390,320]){

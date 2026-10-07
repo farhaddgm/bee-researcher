@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -16,7 +17,7 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 
 class Settings(BaseSettings):
     app_name: str = "Bee Researcher"
-    version: str = "3.38.0"
+    version: str = Path(__file__).resolve().parents[1].joinpath("VERSION").read_text(encoding="utf-8").strip()
     build_revision: str = "unknown"
     image_digest: str | None = None
     environment: str = "production"
