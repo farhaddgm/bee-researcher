@@ -7,8 +7,8 @@ const page=await browser.newPage({viewport:{width:1280,height:900}});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
 async function signIn(portal){
   await page.goto(base+'/'+portal+'/login-up');
-  await page.locator('#loginUser').fill('security-fixture-owner');
-  await page.locator('#loginPass').fill('violet herons cross mountain lakes');
+  await page.locator(portal==='admin'?'#loginUser':'#username').fill('security-fixture-owner');
+  await page.locator(portal==='admin'?'#loginPass':'#password').fill('violet herons cross mountain lakes');
   await page.locator(portal==='admin'?'#loginSubmit':'#loginButton').click();
   await page.waitForFunction(()=>!document.getElementById('app')?.classList.contains('hidden'));
 }

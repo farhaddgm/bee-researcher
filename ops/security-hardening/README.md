@@ -11,6 +11,15 @@ image ID, tests, SBOM, offline scanner report and rollback instructions. A
 local signature proves integrity under the existing release key; it is not a
 claim of third-party verification.
 
+The offline scanner retains its complete raw report. Eight reviewed Debian
+stable CVEs have no stable fix: privileged mount/ACL paths, unused infocmp,
+absent systemd-homed and absent Perl Archive::Tar. They are recorded individually
+in `vulnerability-triage.json`, with Debian tracker links and a 7-day review
+deadline; none is claimed fixed. The gate rejects any new or fixable high or
+critical issue, expired review, secret finding or changed mitigation context.
+Both image tests and production verification check nonroot execution,
+capability removal, no-new-privileges and a read-only root filesystem.
+
 The HTTP process uses `bee_researcher_runtime`. Only the separate migration job
 receives `bee_researcher_migrator`; the latter owns the Researcher schema and
 has no cluster administration privileges. The runtime cannot create objects,

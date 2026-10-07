@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+from datetime import datetime, timezone
 
 HERE = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location('release', HERE/'release.py')
@@ -82,13 +83,23 @@ def main():
     vulnerabilities=[v for result in scan.get('Results',[]) for v in result.get('Vulnerabilities',[])]
     critical=[v for v in vulnerabilities if v['Severity'] in {'HIGH','CRITICAL'}]
     secret_findings=[v for result in scan.get('Results',[]) for v in result.get('Secrets',[])]
-    # Any finding needs explicit local triage before this gate can pass.
-    assert not critical, 'high/critical vulnerability gate failed'
+    triage=json.loads((HERE/'vulnerability-triage.json').read_text())
+    assert triage['base_image_id']==r.OLD_IMAGE
+    assert datetime.now(timezone.utc)<datetime.fromisoformat(triage['expires_at'].replace('Z','+00:00')), 'triage expired'
+    # Preserve all findings: only exact locally reviewed, unfixed stable issues
+    # are accepted. New IDs, critical severity and any available fix fail closed.
+    assert all(not v.get('FixedVersion') and v['Severity']=='HIGH' and
+               v['VulnerabilityID'] in triage['findings'] for v in critical), 'unreviewed or fixable high/critical vulnerability'
+    context=json.loads(image_run(['python','-c',"import os,pathlib,json; s=pathlib.Path('/proc/self/status').read_text();print(json.dumps({'nonroot':os.geteuid()!=0,'capabilities_empty':'CapEff:\\t0000000000000000' in s,'no_new_privileges':'NoNewPrivs:\\t1' in s,'systemd_homed_absent':not pathlib.Path('/usr/lib/systemd/systemd-homed').exists(),'archive_tar_absent':not list(pathlib.Path('/usr/share/perl').glob('*/Archive/Tar.pm')),'no_fstab_mounts':not any(l.strip() and not l.lstrip().startswith('#') for l in pathlib.Path('/etc/fstab').read_text().splitlines())}))"]))
+    assert all(context.values()), 'vulnerability mitigation context changed'
     assert not secret_findings, 'secret scan gate requires local review'
-    r.write(r.ART/'security-passed.json',{'high_or_critical':0,'secret_findings':0,'offline':True,
+    r.write(r.ART/'vulnerability-triage.json',triage)
+    r.write(r.ART/'security-passed.json',{'unreviewed_or_fixable_high_critical':0,
+        'remaining_reviewed_high_findings':len(critical),'remaining_reviewed_cves':sorted({v['VulnerabilityID'] for v in critical}),
+        'mitigation_context':context,'secret_findings':0,'offline':True,
         'inventory_uploaded':False,'advisory_database':json.loads((cache/'db/metadata.json').read_text())})
     files=['image.json','rollback-image.json','source-files.json','unit-tests.log','static-checks.log','migration.sql',
-        'source.tar','source.bundle','image.tar','trivy-report.json','sbom.cdx.json','security-passed.json']
+        'source.tar','source.bundle','image.tar','trivy-report.json','sbom.cdx.json','security-passed.json','vulnerability-triage.json']
     hashes={name:hashlib.sha256((r.ART/name).read_bytes()).hexdigest() for name in files}
     manifest={'source_revision':revision,'version':'3.39.0','image_id':ident,'base_image_id':r.OLD_IMAGE,
         'clean_source':True,'unit_tests':count,'source_file_count':len(expected),'files':hashes,

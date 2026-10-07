@@ -393,6 +393,12 @@ def deploy():
     release=json.loads((ART/'image.json').read_text())
     if release.get('candidate') or not all((ART/name).exists() for name in ('release-verified.json','rehearsal-passed.json','rollback-tested.json','browser-passed.json','account-access-passed.json')):
         raise RuntimeError('the clean source, final image, complete tests and rehearsal gates must pass first')
+    manifest=json.loads((ART/'manifest.json').read_text())
+    if manifest['image_id']!=image(): raise RuntimeError('image provenance mismatch')
+    for name,digest in manifest['files'].items():
+        if hashlib.sha256((ART/name).read_bytes()).hexdigest()!=digest: raise RuntimeError('release artifact changed: '+name)
+    run(['openssl','dgst','-sha256','-verify',str(WORK/'ops/bee-researcher-direct/artifacts/signing/release-public.pem'),
+         '-signature',str(ART/'manifest.sig'),str(ART/'manifest.json')])
     if inspect(APP)['Image'] != OLD_IMAGE:
         raise RuntimeError('live image changed before cutover')
     guard_other_containers()
@@ -440,6 +446,9 @@ def deploy():
 def verify():
     current=inspect(APP)
     assert current['Image']==image()
+    assert current['Config']['User'] in {'market-intelligence','10002','10002:10002'}
+    assert current['HostConfig']['ReadonlyRootfs'] and current['HostConfig']['CapDrop']==['ALL']
+    assert 'no-new-privileges:true' in current['HostConfig']['SecurityOpt']
     actual=env_of(current)
     expected=prepared_env()
     assert all(actual.get(k)==v for k,v in expected.items())
