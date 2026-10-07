@@ -358,8 +358,16 @@ def guard_other_containers():
 
 
 def production_override(*, rollback=False):
-    values=baseline()['env'] if rollback else prepared_env()
+    values=dict(baseline()['env']) if rollback else prepared_env()
     ident=rollback_image() if rollback else image()
+    if rollback:
+        # Keep schema-isolated database access and independent crypto keys.
+        # In particular, newly enrolled TOTP data must remain decryptable.
+        hardened=prepared_env()
+        for key in ('POSTGRES_USER','POSTGRES_PASSWORD','CSRF_SIGNING_SECRET','MFA_ENCRYPTION_SECRET','ADMIN_BOOTSTRAP_PASSWORD'):
+            values['MARKET_INTELLIGENCE_'+key]=hardened['MARKET_INTELLIGENCE_'+key]
+        values['MARKET_INTELLIGENCE_IMAGE_DIGEST']=ident
+        values['MARKET_INTELLIGENCE_BUILD_REVISION']=json.loads((ART/'rollback-image.json').read_text())['source_revision']
     service={'image':ident,'pull_policy':'never','environment':{k:'${'+k+'}' for k in values if k.startswith('MARKET_INTELLIGENCE_')}}
     if rollback:
         # The additive journal migration is retained. The older Alembic tree

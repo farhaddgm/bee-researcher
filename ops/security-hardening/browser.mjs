@@ -13,11 +13,13 @@ async function signIn(portal){
   await page.waitForFunction(()=>!document.getElementById('app')?.classList.contains('hidden'));
 }
 try{
-  const initial=await (await page.request.get(base+'/meta')).json();
-  assert.equal(initial.environment,'test','Browser hardening checks require an isolated fixture');
+  assert.equal(new URL(base).origin,'http://127.0.0.1:18039','Browser checks only permit the isolated loopback port');
+  assert.equal((await page.request.get(base+'/meta')).status(),401);
+  await page.route('**/*',route=>new URL(route.request().url()).origin===base?route.continue():route.abort());
   await signIn('admin');
   const admin=await page.evaluate(async()=>{
     const meta=await (await fetch('/meta')).json();
+    if(meta.environment!=='test')throw new Error('Browser checks require isolated test metadata');
     const changed=await fetch('/admin/api/account/preferences',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({theme:'dark'})});
     return {environment:meta.environment,status:changed.status,idle:meta.session_idle_minutes,absolute:meta.session_absolute_hours};
   });
