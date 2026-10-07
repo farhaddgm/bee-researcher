@@ -748,9 +748,9 @@ async def telegram_feedback_loop(settings: Settings, stop: asyncio.Event) -> Non
                         chat_id = str(chat.get("id") or "") if isinstance(chat, dict) else ""
                         private_chat = isinstance(chat, dict) and str(chat.get("type") or "") == "private"
                         command = WHY_CHANGED_COMMAND.fullmatch(text)
-                        if not command or not private_chat or username not in settings.allowed_telegram_username_values or not chat_id:
+                        if not command or not private_chat or not isinstance(sender, dict) or str(sender.get("id")) not in settings.telegram_identity_bindings or chat_id != str(sender.get("id")):
                             continue
-                        rate_key = queue_key(f"bee_cfo_why_{username}", settings=settings)
+                        rate_key = queue_key(f"bee_cfo_why_{sender.get('id')}", settings=settings)
                         if not await redis.set(rate_key, "1", ex=60, nx=True):
                             await telegram.send_analysis(
                                 "لطفاً یک دقیقه دیگر دوباره تلاش کنید.",
@@ -763,7 +763,7 @@ async def telegram_feedback_loop(settings: Settings, stop: asyncio.Event) -> Non
                             continue
                         try:
                             result = await why_changed_for_report(
-                                __import__("uuid").UUID(command.group(1)), requestor=username
+                                __import__("uuid").UUID(command.group(1)), telegram_sender=sender
                             )
                             await telegram.send_analysis(
                                 str(result["message"]),
@@ -797,9 +797,10 @@ async def telegram_feedback_loop(settings: Settings, stop: asyncio.Event) -> Non
                         analysis_id = __import__("uuid").UUID(parts[2])
                         feedback_result = await record_feedback(
                             analysis_id,
-                            actor_key=username,
+                            actor_key="",
                             value=parts[1],
                             source="telegram_callback",
+                            telegram_sender=user,
                         )
                         if callback_id:
                             await telegram.answer_callback(

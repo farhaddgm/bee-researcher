@@ -2826,12 +2826,16 @@ async def why_changed(
     }
 
 
-async def why_changed_for_report(report_id: uuid.UUID, *, requestor: str) -> dict[str, object]:
+async def why_changed_for_report(report_id: uuid.UUID, *, requestor: str = "", telegram_sender: dict | None = None) -> dict[str, object]:
     """Resolve the Bee CFO workspace internally for a typed Telegram command."""
     async with SessionLocal() as session:
         report = await session.get(BeeCFOReport, report_id)
     if report is None:
         raise KeyError("report not found")
+    if telegram_sender is not None:
+        from app.telegram_identity import telegram_actor
+        actor = await telegram_actor(telegram_sender, report.assistant_id)
+        requestor = f"telegram-account:{actor.id}"
     return await why_changed(report.assistant_id, report_id=report_id, requestor=requestor)
 
 

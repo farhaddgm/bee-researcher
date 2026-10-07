@@ -53,6 +53,7 @@ from app.openai_client import (
 from app.queue_names import pipeline_lock_key
 from app.report_language import LANGUAGES, LANGUAGE_REVISION, LIST_FIELDS, TEXT_FIELDS, ReportLanguageError, analysis_language, analysis_text, language_issues, prose_matches_language, report_copy
 from app.security_controls import redact_sensitive_text
+from app.source_review import requires_source_review, source_review_approved
 from app.retention import effective_retention_days
 from app.relevance import (
     cluster_key,
@@ -1705,6 +1706,7 @@ async def create_publication_previews(settings: Settings, *, limit: int, assista
                     "review_only": decisions[article.id]["review_only"],
                     "relevance_state": decisions[article.id]["relevance_state"],
                     "source_content_safety": source_safety.as_dict(),
+                    **({"approval": {"state": "review", "reason": "untrusted_source_instructions"}} if source_safety.detected else {}),
                 },
             )
             .on_conflict_do_nothing(index_elements=[Publication.idempotency_key])
@@ -1714,6 +1716,10 @@ async def create_publication_previews(settings: Settings, *, limit: int, assista
             inserted = (await session.execute(statement)).scalar_one_or_none()
             await session.commit()
             created += int(inserted is not None)
+        if inserted is not None and source_safety.detected:
+            from app.security_events import record_security_event
+            await record_security_event("source.review_required", assistant_id=analysis.assistant_id, severity="warning",
+                details={"publication_id": str(inserted), "reason": "untrusted_source_instructions"})
     return {"candidates": len(rows), "created": created}
 
 
@@ -1957,6 +1963,11 @@ async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: b
         ).one_or_none()
         if observer_row is None:
             raise RuntimeError("publication requires its original article and source")
+        if requires_source_review(publication, observer_row[1]) and not source_review_approved(publication, observer_row[1]):
+            from app.security_events import record_security_event
+            await record_security_event("source.publication_blocked", assistant_id=assistant_id, severity="warning",
+                details={"publication_id": str(publication_id), "reason": "untrusted_source_instructions"})
+            raise RuntimeError("suspicious source requires a project administrator's content-bound approval")
         if observer_row is not None:
             observer_message_context = (observer_row[0], observer_row[1], observer_row[2])
             if any(row.assistant_id != assistant_id for row in observer_row):
@@ -2247,6 +2258,7 @@ async def publish_ready_previews(
             publication.id
             for publication, article in candidates
             if decisions[article.id]["publishable"]
+            and (not requires_source_review(publication, article) or source_review_approved(publication, article))
             and (((publication.audit or {}).get("approval") or {}).get("state") in {None, "", "unmanaged", "approved"})
         ][:limit]
     results: list[dict[str, object]] = []
@@ -2275,11 +2287,12 @@ async def record_feedback(
     value: str,
     note: str | None = None,
     source: str = "api",
+    telegram_sender: dict | None = None,
 ) -> dict[str, object]:
     if value not in {"up", "down"}:
         raise ValueError("feedback value must be up or down")
     actor_key = actor_key.strip().lower().lstrip("@")[:128]
-    if not actor_key:
+    if not actor_key and source != "telegram_callback":
         raise ValueError("feedback actor is required")
     async with SessionLocal() as session:
         analysis_owner = await session.execute(
@@ -2298,7 +2311,11 @@ async def record_feedback(
         for value in (configured_users if isinstance(configured_users, list) else get_settings().allowed_telegram_username_values)
         if str(value).strip()
     }
-    if actor_key not in allowed_users:
+    if source == "telegram_callback":
+        from app.telegram_identity import telegram_actor
+        actor = await telegram_actor(telegram_sender, assistant_id, feedback=True)
+        actor_key = f"telegram-account:{actor.id}"
+    elif actor_key not in allowed_users:
         raise ValueError("feedback actor is not authorized")
     statement = (
         postgresql_insert(Feedback)

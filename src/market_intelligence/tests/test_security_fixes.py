@@ -196,7 +196,7 @@ class RouteTest(unittest.TestCase):
         self.assertEqual(401, TestClient(app).delete("/admin/api/sessions/others").status_code)
 
     def test_reader_login_shares_the_brute_force_budget(self):
-        with patch("app.main.login_attempts_exceeded", new=AsyncMock(return_value=True)), patch("app.main.reader_login", new=AsyncMock()) as login:
+        with patch("app.main.canonical_login_identity", new=AsyncMock(return_value="account:fixture")), patch("app.main.record_security_event", new=AsyncMock()), patch("app.main.login_attempts_exceeded", new=AsyncMock(return_value=True)), patch("app.main.reader_login", new=AsyncMock()) as login:
             response = TestClient(app).post("/user/api/login", json={"username": "someone", "password": "long-enough-password"})
         self.assertEqual(429, response.status_code)
         login.assert_not_awaited()

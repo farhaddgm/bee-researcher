@@ -29,7 +29,7 @@
     const role=select(['viewer','analyst','editor','assistant_admin',...(owner?['admin']:[])].map(r=>[r,roleText(r)]),item?.stored_role||'viewer');role.disabled=Boolean(own);field(form,'role',role);
     const method=select([['google',t('googleOnly')],['both',t('both')],['password',t('passwordOnly')]],item?.login_method||(owner?'google':'password'));
     method.disabled=!owner||own;const methodWrap=field(form,'method',method);methodWrap.append(node('p',t('methodHint'),'accounts-help'));
-    const password=input('password');password.autocomplete='new-password';password.minLength=8;password.maxLength=128;const passwordWrap=field(form,'password',password);passwordWrap.append(node('p',t('passwordHint'),'accounts-help'));
+    const password=input('password');password.autocomplete='new-password';password.minLength=15;password.maxLength=128;const passwordWrap=field(form,'password',password);passwordWrap.append(node('p',t('passwordHint'),'accounts-help'));
     let current=null;if(own){current=input('password');current.autocomplete='current-password';field(form,'currentPassword',current)}
     const status=select([['true',t('active')],['false',t('disabled')]],String(item?.active!==false));status.disabled=Boolean(own);field(form,'status',status);
     const projects=node('fieldset',undefined,'accounts-full');projects.append(node('legend',t('projects')));form.append(projects);

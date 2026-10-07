@@ -35,14 +35,14 @@ async def run():
     password = "synthetic-fixture-password"
     local = cfg.model_copy(update={"owner_email": owner_email, "admin_cookie_secure": False,
         "google_client_id": "synthetic.apps.googleusercontent.com", "google_client_secret": SecretStr("synthetic-only"),
-        "google_redirect_uri": "http://auth-app/auth/google/callback", "domain": None, "legacy_domain": None})
+        "google_redirect_uri": "http://auth-app/auth/google/callback", "domain": None, "legacy_domain": None, "login_ip_max_attempts": 200})
     transport = httpx.ASGITransport(app=main.app)
     def client():
         return httpx.AsyncClient(transport=transport, base_url="http://auth-app", follow_redirects=False)
     async def request(c, method, path, body=None, *, status=200, csrf=True):
         headers = {"Origin": "http://auth-app"}
         if csrf:
-            headers["X-CSRF-Token"] = c.cookies.get(admin.CSRF_COOKIE) or ""
+            headers["X-CSRF-Token"] = c.cookies.get("research_bee_user_csrf" if path.startswith("/user/api/") else admin.CSRF_COOKIE) or ""
         r = await c.request(method, path, json=body, headers=headers)
         assert r.status_code == status, (method, path, r.status_code, status, r.text[:400])
         return r
@@ -104,7 +104,7 @@ async def run():
                 await password_login(owner_client, owner_email)
                 me = (await request(owner_client, "GET", "/admin/api/me")).json()
                 assert me["is_owner"] and me["role"] == "owner"
-                assert "Max-Age=2592000" in (await request(owner_client, "GET", "/admin/api/me")).headers["set-cookie"]
+                assert "Max-Age=43200" in (await request(owner_client, "GET", "/admin/api/me")).headers["set-cookie"]
                 await request(owner_client, "POST", "/admin/api/accounts", {"email": "blocked@gmail.com", "display_name": "Blocked"}, status=403, csrf=False)
                 await request(owner_client, "PATCH", f"/admin/api/accounts/{owner.id}", {"active": False}, status=403)
                 await request(owner_client, "DELETE", f"/admin/api/accounts/{owner.id}", status=403)
@@ -137,7 +137,7 @@ async def run():
                     assert {x.portal for x in sessions} == {"admin", "user"}
                     for row in sessions:
                         if row.portal == "admin":
-                            assert (row.expires_at - datetime.now(timezone.utc)).days >= 29
+                            assert 0 < (row.expires_at - datetime.now(timezone.utc)).total_seconds() <= 1800
                         else:
                             assert row.expires_at <= admin._reader_nightly_expiry(row.created_at)
                 await request(owner_client, "PATCH", path, {"user_feedback_access": True})
@@ -161,9 +161,10 @@ async def run():
                 await request(owner_client, "PATCH", path, {"active": False})
                 await request(member_client, "GET", "/admin/api/me", status=401)
                 await google_login(member_client, item["email"], "synthetic-member", error="inactive")
-                await request(owner_client, "PATCH", path, {"active": True, "login_method": "both", "password": "password"})
-                await password_login(member_client, item["email"], value="password")
-                await password_login(member_client, item["email"], value="password", reader=True)
+                await request(owner_client, "PATCH", path, {"active": True, "login_method": "both", "password": "password"}, status=422)
+                await request(owner_client, "PATCH", path, {"active": True, "login_method": "both", "password": password})
+                await password_login(member_client, item["email"], value=password)
+                await password_login(member_client, item["email"], value=password, reader=True)
                 # Admin logout must not close the independent User session.
                 await request(member_client, "POST", "/admin/api/logout")
                 await request(member_client, "GET", "/user/api/me")
@@ -195,7 +196,7 @@ async def run():
                 google_only = await create(owner_client, login_method="google", password=None)
                 await request(owner_client, "DELETE", "/admin/api/owner/google-access/" + google_only["id"])
                 await password_login(member_client, google_only["email"], status=401)
-        print("Account integration passed: real SQL/API, signed Google OIDC+PKCE/state, merged allowlist, method rules, self-service, roles/project ACL, User/feedback grants, immediate dual-portal revocation, independent logout, 30-day Admin and fixed 02:00 User expiry.")
+        print("Account integration passed: real SQL/API, signed Google OIDC+PKCE/state, merged allowlist, method rules, self-service, roles/project ACL, User/feedback grants, immediate dual-portal revocation, independent logout, 30-minute idle, fixed 12-hour Admin and 02:00 User expiry.")
     finally:
         async with SessionLocal() as s:
             await s.execute(delete(AdminSession).where(AdminSession.user_id.in_(ids)))

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
+from app.password_security import validate_new_password
 from app import admin
 from app.database import SessionLocal
 from app.google_auth import is_gmail, normalize_email
@@ -41,6 +42,7 @@ class AccountCreate(BaseModel):
     user_portal_access: bool = False
     user_feedback_access: bool = False
 
+    _password_policy = field_validator("password")(validate_new_password)
     _email = field_validator("email")(valid_email)
 
     @model_validator(mode="after")
@@ -64,6 +66,8 @@ class AccountUpdate(BaseModel):
     active: bool | None = None
     login_method: Method | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
+    _password_policy = field_validator("password")(validate_new_password)
+
     current_password: str | None = Field(default=None, min_length=8, max_length=256)
     assistant_ids: list[uuid.UUID] | None = Field(default=None, max_length=100)
     user_portal_access: bool | None = None
@@ -178,7 +182,7 @@ async def create_account(payload: AccountCreate, actor: AdminUser) -> dict:
             raise HTTPException(409, "email already belongs to an account")
         item = AdminUser(id=uuid.uuid4(), username=(payload.username or await admin._unique_username(s, payload.email.split("@", 1)[0])).lower(),
             email=payload.email, display_name=payload.display_name.strip(), role=payload.role, login_method=payload.login_method,
-            password_hash=admin._hash_password(payload.password) if payload.password else None, active=True, preferences={})
+            password_hash=await admin.hash_password_async(payload.password) if payload.password else None, active=True, preferences={})
         s.add(item)
         try:
             await s.flush()
@@ -224,9 +228,9 @@ async def update_account(uid: uuid.UUID, payload: AccountUpdate, actor: AdminUse
         if payload.password:
             if method == "google":
                 raise HTTPException(422, "Google-only accounts have no internal password")
-            if own and not admin._check_password(payload.current_password or "", item.password_hash):
+            if own and not await admin.check_password_async(payload.current_password or "", item.password_hash):
                 raise HTTPException(401, "current password is incorrect")
-            item.password_hash = admin._hash_password(payload.password)
+            item.password_hash = await admin.hash_password_async(payload.password)
         if method == "google":
             item.password_hash = None
         elif not item.password_hash:

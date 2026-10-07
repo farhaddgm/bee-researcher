@@ -152,6 +152,18 @@ class AdminSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
+class SecurityEvent(Base):
+    __tablename__ = "security_events"
+    __table_args__ = (Index("ix_mi_security_events_created", "created_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    assistant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="info")
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
 class AdminAuditLog(Base):
     __tablename__ = "admin_audit_logs"
     __table_args__ = (Index("ix_mi_admin_audit_logs_created", "created_at"),)

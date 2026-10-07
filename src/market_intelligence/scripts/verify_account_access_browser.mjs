@@ -33,7 +33,7 @@ try{
  }
  await page.setViewportSize({width:1440,height:1000});await login();
  const meta=await api('/meta');assert.equal(meta.data.environment,'test');assert.equal(meta.data.pipeline.scheduler_enabled,false);
- assert.equal(meta.data.account_session_ttl_days,30);
+ assert.equal(meta.data.session_idle_minutes,30);assert.equal(meta.data.session_absolute_hours,12);
  const created=await api('/admin/api/assistants','POST',{name:'Synthetic account UI',slug:'account-ui-'+Date.now(),business_name:''});assert.equal(created.status,200);projects.push(created.data.id);
  await page.evaluate(()=>window.loadAll());await page.evaluate(()=>{window.setLanguage('en');window.setView('account')});await page.locator('#accountsPanel').waitFor();
  assert.equal(await page.locator('#accountsPanel h3').innerText(),'Accounts and access');
@@ -63,7 +63,7 @@ try{
  await dialog.locator('button[type=submit]').click();const response=await saving;assert.equal(response.status(),200);const item=await response.json();userIds.push(item.id);await dialog.waitFor({state:'detached'});
  const row=page.locator('#accountsPanel tbody tr').filter({hasText:email});await row.waitFor();assert.equal(await row.locator('b').count(),0);
  await row.getByRole('button',{name:'Edit',exact:true}).click();
- await page.locator('#account-method').selectOption('both');await page.locator('#account-password').fill('password');
+ await page.locator('#account-method').selectOption('both');await page.locator('#account-password').fill('violet herons cross mountain lakes');
  const updating=page.waitForResponse(r=>r.url().endsWith('/admin/api/accounts/'+item.id)&&r.request().method()==='PATCH');
  await page.locator('dialog button[type=submit]').click();assert.equal((await updating).status(),200);await page.locator('dialog').waitFor({state:'detached'});
  const saved=(await api('/admin/api/accounts?q='+email)).data.accounts[0];assert(saved.user_portal_access&&saved.user_feedback_access&&saved.has_password&&saved.assistant_ids.includes(projects[0]));

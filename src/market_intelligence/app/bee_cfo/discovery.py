@@ -7,6 +7,7 @@ from typing import Awaitable, Callable
 from urllib.parse import urljoin, urlparse
 
 import httpx
+from app.public_network import PublicHTTPTransport
 
 from app.config import Settings
 from app.fetchers import FetchFailure, SourceFetcher, resolve_public_destination, validate_public_url_syntax
@@ -93,7 +94,7 @@ async def discover_from_homepages(
     async with httpx.AsyncClient(
         timeout=httpx.Timeout(settings.fetch_timeout_seconds),
         follow_redirects=False,
-        transport=transport,
+        transport=transport or PublicHTTPTransport(), trust_env=False,
         headers={"User-Agent": settings.fetch_user_agent},
     ) as client:
         for homepage in homepages[:10]:

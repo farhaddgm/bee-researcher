@@ -8,6 +8,7 @@ import logging
 import hashlib
 import time
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -36,6 +37,7 @@ class AIProviderError(RuntimeError):
 # positive only redacts one suspicious line, while missing a prompt-injection
 # marker would allow untrusted text to influence the model's instruction layer.
 _SOURCE_INJECTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("role_delimiter", re.compile(r"(?:<\|(?:im_start|system|assistant|developer)\|>|\[/?INST\]|</?(?:system|developer|assistant)>)", re.I)),
     ("ignore_previous_instructions", re.compile(r"\bignore\s+(?:all\s+)?(?:previous|prior|earlier)\s+instructions?\b", re.I)),
     ("system_prompt", re.compile(r"\b(?:system|developer)\s+(?:prompt|message|instruction)s?\b", re.I)),
     ("reveal_hidden_prompt", re.compile(r"\b(?:reveal|show|print|disclose)\b[^.\n]{0,80}\b(?:prompt|instructions?|secrets?)\b", re.I)),
@@ -78,7 +80,7 @@ def _sanitize_untrusted_field(value: str, *, max_chars: int) -> tuple[str, tuple
     redacted_lines = 0
     for line in value.splitlines() or [value]:
         line_flags = {
-            name for name, pattern in _SOURCE_INJECTION_PATTERNS if pattern.search(line)
+            name for name, pattern in _SOURCE_INJECTION_PATTERNS if pattern.search("".join(c for c in unicodedata.normalize("NFKC", line) if unicodedata.category(c) != "Cf"))
         }
         if line_flags:
             flags.update(line_flags)

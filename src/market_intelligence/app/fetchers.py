@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
 import httpx
+from app.public_network import PublicHTTPTransport
 from defusedxml import ElementTree as SafeET
 from defusedxml.common import DefusedXmlException
 
@@ -778,7 +779,7 @@ class SourceFetcher:
         """Corroborate an official homepage linked by a real search result."""
         url = validate_public_url_syntax(reference_url)
         source = SourceSpec(source_key="REFERENCE", name="Publisher reference", homepage_url=url, fetch_url=url, adapter="html", max_retries=0)
-        async with httpx.AsyncClient(timeout=5, follow_redirects=False, headers={"User-Agent": self.settings.fetch_user_agent}, transport=self.transport) as client:
+        async with httpx.AsyncClient(timeout=5, follow_redirects=False, headers={"User-Agent": self.settings.fetch_user_agent}, transport=self.transport or PublicHTTPTransport(), trust_env=False) as client:
             allowed, _ = await self._robots_allowed(client, source)
             if not allowed:
                 return []
@@ -792,7 +793,7 @@ class SourceFetcher:
     async def discover_feeds(self, homepage: str) -> list[tuple[str, str]]:
         homepage = validate_public_url_syntax(homepage)
         source = SourceSpec(source_key="DISCOVER", name="Feed discovery", homepage_url=homepage, fetch_url=homepage, adapter="html", max_retries=0)
-        async with httpx.AsyncClient(timeout=10, follow_redirects=False, headers={"User-Agent": self.settings.fetch_user_agent}, transport=self.transport) as client:
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False, headers={"User-Agent": self.settings.fetch_user_agent}, transport=self.transport or PublicHTTPTransport(), trust_env=False) as client:
             allowed, _ = await self._robots_allowed(client, source)
             if not allowed:
                 return []
@@ -814,7 +815,7 @@ class SourceFetcher:
             timeout=httpx.Timeout(timeout),
             follow_redirects=False,
             headers={"User-Agent": self.settings.fetch_user_agent},
-            transport=self.transport,
+            transport=self.transport or PublicHTTPTransport(), trust_env=False,
         ) as client:
             allowed, robots_status = await self._robots_allowed(client, source)
             if not allowed:

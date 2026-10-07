@@ -1,0 +1,15 @@
+# Reuse the exact reviewed dependency/OS image without contacting registries.
+# New application source and startup contract are copied in their entirety.
+# Build gate must verify this local tag resolves to sha256:6dbe620d5d550e653745a46d8dafd78969f870a06e9fe9a83e0a0b58f29c5ba0.
+FROM bee-researcher-direct:3.38.2-operational
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" org.opencontainers.image.version="3.39.0"
+ENV MARKET_INTELLIGENCE_BUILD_REVISION=${SOURCE_REVISION}
+COPY --chown=10002:10002 alembic.ini .
+COPY --chown=10002:10002 alembic ./alembic
+COPY --chown=10002:10002 app ./app
+COPY --chown=10002:10002 tests ./tests
+COPY --chown=10002:10002 scripts ./scripts
+COPY --chown=10002:10002 golden ./golden
+COPY --chown=10002:10002 VERSION ./VERSION
+COPY --chown=10002:10002 start-service.sh ./start-service.sh

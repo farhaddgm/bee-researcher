@@ -1,6 +1,24 @@
 /* Shared eight-language identity UI. No secrets, timer-based translations or fallback forms. */
 (() => {
   'use strict';
+  let securityLastActivity=Date.now();
+  for(const event of ['pointerdown','keydown'])document.addEventListener(event,()=>{securityLastActivity=Date.now()},{passive:true});
+  const securityFetch=window.fetch.bind(window);
+  window.fetch=(input,init={})=>{
+    const url=new URL(typeof input==='string'?input:input.url,location.href);
+    if(url.origin===location.origin && (url.pathname.startsWith('/admin/api/')||url.pathname.startsWith('/user/api/'))){
+      const headers=new Headers(init.headers||(input instanceof Request?input.headers:undefined));
+      if(!document.hidden&&Date.now()-securityLastActivity<30000)headers.set('X-User-Activity','1');
+      const method=String(init.method||(input instanceof Request?input.method:'GET')).toUpperCase();
+      if(!['GET','HEAD','OPTIONS'].includes(method)){
+        const name=url.pathname.startsWith('/user/api/')?'research_bee_user_csrf':'research_bee_admin_csrf';
+        const cookie=document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith(name+'='));
+        if(cookie)headers.set('X-CSRF-Token',decodeURIComponent(cookie.slice(name.length+1)));
+      }
+      init={...init,headers};
+    }
+    return securityFetch(input,init);
+  };
   const languages=['fa','en','tr','ar','es','it','de','fr'];
   const words={
     title:['ورود به Bee Researcher','Sign in to Bee Researcher','Bee Researcher’a giriş','تسجيل الدخول إلى Bee Researcher','Iniciar sesión en Bee Researcher','Accedi a Bee Researcher','Bei Bee Researcher anmelden','Se connecter à Bee Researcher'],
@@ -56,7 +74,7 @@
     projects:['دستیارهای مجاز','Authorized assistants','Yetkili asistanlar','المساعدون المصرح بهم','Asistentes autorizados','Assistenti autorizzati','Freigegebene Assistenten','Assistants autorisés'],
     portal:['دسترسی به بک‌آفیس User','User portal access','User portalına erişim','الوصول إلى بوابة User','Acceso al portal User','Accesso al portale User','Zugriff auf das User-Portal','Accès au portail User'],
     feedback:['اجازهٔ بازخورد روی خبرها','Allow news feedback','Haberlere geri bildirim izni','السماح بالتعليق على الأخبار','Permitir comentarios sobre noticias','Consenti feedback sulle notizie','Nachrichten-Feedback erlauben','Autoriser les avis sur les actualités'],
-    passwordHint:['۸ تا ۱۲۸ کاراکتر؛ خالی بگذارید تا رمز قبلی حفظ شود.','8–128 characters. Leave blank to keep the current password.','8–128 karakter. Mevcut parolayı korumak için boş bırakın.','من 8 إلى 128 حرفًا. اتركه فارغًا للاحتفاظ بكلمة المرور الحالية.','8–128 caracteres. Déjalo vacío para mantener la contraseña actual.','8–128 caratteri. Lascia vuoto per mantenere la password attuale.','8–128 Zeichen. Leer lassen, um das bisherige Passwort zu behalten.','8 à 128 caractères. Laissez vide pour conserver le mot de passe actuel.'],
+    passwordHint:['۱۵ تا ۱۲۸ کاراکتر؛ خالی بگذارید تا رمز قبلی حفظ شود.','15–128 characters. Leave blank to keep the current password.','15–128 karakter. Mevcut parolayı korumak için boş bırakın.','من 15 إلى 128 حرفًا. اتركه فارغًا للاحتفاظ بكلمة المرور الحالية.','15–128 caracteres. Déjalo vacío para mantener la contraseña actual.','15–128 caratteri. Lascia vuoto per mantenere la password attuale.','15–128 Zeichen. Leer lassen, um das bisherige Passwort zu behalten.','15 à 128 caractères. Laissez vide pour conserver le mot de passe actuel.'],
     methodHint:['فقط مالک می‌تواند اجازهٔ ورود گوگلی را تغییر دهد.','Only the owner can change Google sign-in permission.','Google ile giriş iznini yalnızca sahip değiştirebilir.','يمكن للمالك فقط تغيير إذن الدخول باستخدام Google.','Solo el propietario puede cambiar el permiso de Google.','Solo il proprietario può modificare il permesso Google.','Nur der Eigentümer kann die Google-Freigabe ändern.','Seul le propriétaire peut modifier l’autorisation Google.'],
     portalHint:['مجوز User، دستیار جدیدی اضافه نمی‌کند؛ بازخورد نیز مجوز جداگانه دارد.','User access adds no assistants. Feedback needs a separate permission.','User erişimi yeni asistan eklemez. Geri bildirim ayrı izin gerektirir.','الوصول إلى User لا يضيف مساعدين. التعليق يحتاج إذنًا منفصلًا.','El acceso a User no añade asistentes. Los comentarios requieren otro permiso.','L’accesso User non aggiunge assistenti. Il feedback richiede un permesso distinto.','User-Zugriff fügt keine Assistenten hinzu. Feedback benötigt eine eigene Freigabe.','L’accès User n’ajoute aucun assistant. Les avis nécessitent une autorisation distincte.'],
     currentPassword:['رمز فعلی','Current password','Mevcut parola','كلمة المرور الحالية','Contraseña actual','Password attuale','Aktuelles Passwort','Mot de passe actuel'],
@@ -104,5 +122,5 @@
   // Renew persistent Admin cookies only during actual foreground activity;
   // User remains bounded by 02:00 and needs no background renewal.
   let lastActivity=Date.now();for(const event of ['pointerdown','keydown'])document.addEventListener(event,()=>{lastActivity=Date.now()},{passive:true});
-  if(portal==='admin')setInterval(()=>{if(!document.hidden&&Date.now()-lastActivity<900000&&document.getElementById('app')?.classList.contains('hidden')===false)fetch('/admin/api/me',{credentials:'same-origin'}).catch(()=>{})},900000);
+  if(portal==='admin')setInterval(()=>{if(!document.hidden&&Date.now()-lastActivity<900000&&document.getElementById('app')?.classList.contains('hidden')===false)fetch('/admin/api/me',{credentials:'same-origin',headers:{'X-User-Activity':'1'}}).catch(()=>{})},900000);
 })();

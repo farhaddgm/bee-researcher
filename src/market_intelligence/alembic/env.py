@@ -39,9 +39,9 @@ async def run_async_migrations() -> None:
         poolclass=pool.NullPool,
     )
     async with connectable.connect() as connection:
-        await connection.execute(
-            text(f'CREATE SCHEMA IF NOT EXISTS "{settings.database_schema}"')
-        )
+        exists = await connection.scalar(text("SELECT to_regnamespace(:schema)"), {"schema": settings.database_schema})
+        if exists is None:
+            await connection.execute(text(f'CREATE SCHEMA "{settings.database_schema}"'))
         await connection.commit()
         await connection.run_sync(do_run_migrations)
     await connectable.dispose()

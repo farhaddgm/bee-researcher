@@ -30,6 +30,7 @@ class IsolationTest(unittest.TestCase):
                 "market_intelligence.service_state",
                 "market_intelligence.assistant_workspaces",
                 "market_intelligence.admin_users",
+                "market_intelligence.security_events",
                 "market_intelligence.admin_sessions",
                 "market_intelligence.admin_audit_logs",
                 "market_intelligence.assistant_members",

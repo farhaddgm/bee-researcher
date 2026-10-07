@@ -21,6 +21,8 @@ jobs:
       MARKET_INTELLIGENCE_SCHEDULER_ENABLED: "false"
       MARKET_INTELLIGENCE_TELEGRAM_POLLING_ENABLED: "false"
       MARKET_INTELLIGENCE_REDIS_PASSWORD: test-password
+      MARKET_INTELLIGENCE_CSRF_SIGNING_SECRET: ci-test-only-signing-secret-at-least-32
+      MARKET_INTELLIGENCE_MFA_ENCRYPTION_SECRET: ci-test-only-encryption-secret-at-least-32
       POSTGRES_DB: assistant_test
       POSTGRES_USER: assistant_test
       POSTGRES_PASSWORD: test-password

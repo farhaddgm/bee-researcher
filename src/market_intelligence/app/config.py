@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     database_max_overflow: int = Field(default=10, ge=0, le=30)
     database_pool_timeout_seconds: int = Field(default=15, ge=1, le=120)
 
+    redis_username: str = "default"
     redis_password: SecretStr
     redis_host: str = "redis"
     redis_port: int = 6379
@@ -131,20 +132,18 @@ class Settings(BaseSettings):
     google_redirect_uri: str | None = None
     # Legacy setting retained for old deployment configuration only.
     admin_session_ttl_hours: int = Field(default=6, ge=1, le=6)
-    # Approved Contenter-style rolling lifetime; hours above is legacy metadata.
-    # Reader sessions are additionally bounded by the next local 02:00.
+    # Retained as legacy metadata for existing clients; server deadlines below
+    # are authoritative. Readers also keep their next-local-02:00 boundary.
     account_session_ttl_days: int = Field(default=30, ge=1, le=30)
+    session_idle_minutes: int = Field(default=30, ge=5, le=60)
+    session_absolute_hours: int = Field(default=12, ge=1, le=24)
+    trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128"
+    telegram_identity_bindings: dict[str, str] = Field(default_factory=dict)
     admin_cookie_secure: bool = True
-    # Prefer a service-only signing key for CSRF tokens. The security module
-    # retains a derived fallback so existing deployments keep their contract
-    # until the owner provisions this independent secret.
+    # Production preflight requires independent signing/encryption keys.
     csrf_signing_secret: SecretStr | None = Field(default=None, min_length=32)
-    # TOTP secrets are encrypted at rest with this dedicated key.  The MFA
-    # module falls back to csrf_signing_secret for existing deployments until
-    # this independent secret is provisioned.
-    mfa_encryption_secret: SecretStr | None = None
-    # A bounded per-username/per-client counter protects the sign-in endpoint
-    # without turning Redis into an authentication dependency.
+    mfa_encryption_secret: SecretStr | None = Field(default=None, min_length=32)
+    # Shared Redis admission is atomic and fails closed on counter failure.
     login_max_attempts: int = Field(default=10, ge=3, le=20)
     login_ip_max_attempts: int = Field(default=30, ge=10, le=200)
     login_window_seconds: int = Field(default=900, ge=60, le=3600)
@@ -387,7 +386,7 @@ class Settings(BaseSettings):
     def redis_url(self) -> str:
         password = quote(self.redis_password.get_secret_value(), safe="")
         return (
-            f"redis://:{password}@{self.redis_host}:{self.redis_port}/"
+            f"redis://{quote(self.redis_username, safe='')}:{password}@{self.redis_host}:{self.redis_port}/"
             f"{self.redis_database}"
         )
 

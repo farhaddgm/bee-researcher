@@ -12,6 +12,7 @@ from typing import Awaitable, Callable
 from urllib.parse import urljoin
 
 import httpx
+from app.public_network import PublicHTTPTransport
 
 from app.config import Settings
 from app.fetchers import (
@@ -365,7 +366,7 @@ class ArticleFetcher:
             timeout=httpx.Timeout(timeout),
             follow_redirects=False,
             headers={"User-Agent": self.settings.fetch_user_agent},
-            transport=self.transport,
+            transport=self.transport or PublicHTTPTransport(), trust_env=False,
         ) as client:
             allowed, robots_status = await helper._robots_allowed(client, source)
             if not allowed:

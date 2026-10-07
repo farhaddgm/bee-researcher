@@ -573,6 +573,10 @@ async def client_error_report(
     return Response(status_code=204)
 
 
+from app.security_controls import USER_CSRF_COOKIE, request_activity, is_trusted_proxy
+from app.admin import canonical_login_identity
+from app.security_events import record_security_event, client_hash
+
 @app.middleware("http")
 async def private_indexing_headers(request: Request, call_next):
     """Keep the control plane private and reject cross-origin mutations."""
@@ -586,12 +590,7 @@ async def private_indexing_headers(request: Request, call_next):
             return JSONResponse(status_code=400, content={"detail": "invalid content length"})
 
     def trusted_proxy() -> bool:
-        client_host = request.client.host if request.client else ""
-        try:
-            address = ipaddress.ip_address(client_host)
-        except ValueError:
-            return False
-        return address.is_private or address.is_loopback
+        return is_trusted_proxy(request.client.host if request.client else "", settings)
 
     def forwarded_value(name: str) -> str:
         return request.headers.get(name, "").split(",", 1)[0].strip()
@@ -619,6 +618,8 @@ async def private_indexing_headers(request: Request, call_next):
     # cross-site requests when browsers send Origin; the double-submit token
     # below closes the common gap where Origin is absent.
     if mutating:
+        if request.headers.get("sec-fetch-site") == "cross-site":
+            return JSONResponse(status_code=403, content={"detail": "cross-origin request blocked"})
         origin = request.headers.get("origin", "").strip()
         if origin:
             parsed_origin = urlsplit(origin)
@@ -645,8 +646,17 @@ async def private_indexing_headers(request: Request, call_next):
                 request.cookies.get(ADMIN_SESSION_COOKIE),
                 settings,
             ):
+                await record_security_event("request.csrf_denied", severity="warning")
                 return JSONResponse(status_code=403, content={"detail": "csrf validation failed"})
-    response = await call_next(request)
+    if mutating and request.url.path.startswith("/user/api/") and request.url.path != "/user/api/login" and request.cookies.get("research_bee_user_session"):
+        if not csrf_token_matches(request.cookies.get(USER_CSRF_COOKIE), request.headers.get("x-csrf-token"), request.cookies.get("research_bee_user_session"), settings):
+            await record_security_event("reader.csrf_denied", severity="warning")
+            return JSONResponse(status_code=403, content={"detail": "csrf validation failed"})
+    activity_token = request_activity.set(mutating or request.headers.get("x-user-activity") == "1")
+    try:
+        response = await call_next(request)
+    finally:
+        request_activity.reset(activity_token)
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
@@ -1030,7 +1040,7 @@ def _login_client_address(request: Request) -> str:
         peer_address = ipaddress.ip_address(peer)
     except ValueError:
         return peer
-    if peer_address.is_private or peer_address.is_loopback:
+    if is_trusted_proxy(peer, settings):
         forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
         try:
             candidate = ipaddress.ip_address(forwarded)
@@ -1046,8 +1056,10 @@ async def _rate_limited_password_login(payload: LoginRequest, response: Response
     username = payload.username.strip().lower()
     if "@" in username:
         username = google_auth.normalize_email(username)
+    username = await canonical_login_identity(username)
     client_address = _login_client_address(http_request)
     if await login_attempts_exceeded(settings, username, client_address):
+        await record_security_event("login.rate_limited", severity="warning", details={"client_hash": client_hash(client_address)})
         raise HTTPException(
             status_code=429,
             detail="too many login attempts",
@@ -1057,6 +1069,7 @@ async def _rate_limited_password_login(payload: LoginRequest, response: Response
         result = await login_fn(payload, response)
     except HTTPException as exc:
         if exc.status_code == 401:
+            await record_security_event("login.failed", severity="warning", details={"client_hash": client_hash(client_address)})
             await record_login_failure(settings, username, client_address)
         raise
     await clear_login_failures(settings, username, client_address)
@@ -1746,7 +1759,9 @@ async def metadata(token: str | None = Cookie(default=None, alias="research_bee_
         "publish_max_items_per_run": settings.max_items_per_run,
             "processing_max_items_per_day": settings.processing_max_items_per_day,
         "freshness_window_days": settings.freshness_window_days,
-        "admin_session_idle_hours": settings.account_session_ttl_days * 24,
+        "admin_session_idle_hours": settings.session_idle_minutes / 60,
+        "session_idle_minutes": settings.session_idle_minutes,
+        "session_absolute_hours": settings.session_absolute_hours,
         "account_session_ttl_days": settings.account_session_ttl_days,
         "user_session_cutoff_local": "02:00",
         "ingestion": {

@@ -25,7 +25,7 @@ class AccountContracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_account_deployment(production)
         configured = production.model_copy(update={"google_client_id": "fixture.apps.googleusercontent.com",
-            "google_client_secret": SecretStr("synthetic"), "google_redirect_uri": "https://researcher.example/auth/google/callback"})
+            "google_client_secret": SecretStr("synthetic"), "postgres_password": SecretStr("synthetic-db"), "redis_password": SecretStr("synthetic-redis"), "redis_username": "researcher", "csrf_signing_secret": SecretStr("s"*40), "mfa_encryption_secret": SecretStr("m"*40), "google_redirect_uri": "https://researcher.example/auth/google/callback"})
         check_account_deployment(configured)
         for value in ("http://researcher.example/auth/google/callback", "https://contenter.example/auth/google/callback", "https://researcher.example/wrong"):
             with self.assertRaises(ValueError):
@@ -43,12 +43,12 @@ class AccountContracts(unittest.TestCase):
                        {"email": "name@company.com"}, {"display_name": "   "}):
             with self.assertRaises(ValidationError):
                 accounts.AccountCreate(**{**base, **values})
-        self.assertEqual("password", accounts.AccountCreate(**base, login_method="password", password="password").login_method)
+        self.assertEqual("password", accounts.AccountCreate(**base, login_method="password", password="violet herons cross mountain lakes").login_method)
 
-    def test_thirty_day_lifetime_is_bounded(self):
-        self.assertEqual(30, _account_session_lifetime().days)
-        with patch("app.admin.get_settings", return_value=type("S", (), {"account_session_ttl_days": 99})()):
-            self.assertEqual(30, _account_session_lifetime().days)
+    def test_session_idle_lifetime_is_short_and_server_bounded(self):
+        self.assertEqual(1800, _account_session_lifetime().total_seconds())
+        with self.assertRaises(ValidationError):
+            settings.__class__(postgres_db="test", postgres_user="test", postgres_password="test", redis_password="test", session_idle_minutes=61)
 
     def test_auth_mode_is_server_rendered_for_both_portals(self):
         with TestClient(app) as client:

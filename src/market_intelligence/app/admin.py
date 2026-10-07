@@ -55,6 +55,11 @@ from app.retention import MIN_RETENTION_DAYS, effective_retention_days
 from app.security_controls import CSRF_COOKIE, new_csrf_token
 from app.telegram_delivery import render_analysis_message
 
+from app.password_security import (hash_password as _hash_password, check_password as _check_password,
+    hash_password_async, check_password_async, validate_new_password, needs_rehash)
+from app.security_controls import USER_CSRF_COOKIE, request_activity
+
+
 COOKIE = "research_bee_admin_session"
 USER_SESSION_COOKIE = "research_bee_user_session"
 _WORKSPACE_WRITE_ROLES = frozenset({"admin", "owner", "assistant_admin", "editor"})
@@ -900,6 +905,8 @@ class AdminUserRequest(BaseModel):
     user_portal_access: bool | None = None
     user_feedback_access: bool | None = None
 
+    _password_policy = field_validator('password')(validate_new_password)
+
 
 class AdminUserUpdate(BaseModel):
     username: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_.-]{3,128}$")
@@ -918,6 +925,8 @@ class AdminUserManageUpdate(BaseModel):
     assistant_ids: list[uuid.UUID] | None = None
     user_portal_access: bool | None = None
     user_feedback_access: bool | None = None
+
+    _password_policy = field_validator('new_password')(validate_new_password)
 
 
 class UserPortalAccessUpdate(BaseModel):
@@ -945,6 +954,8 @@ class ReaderFeedbackRequest(BaseModel):
 class AdminUserPasswordUpdate(BaseModel):
     new_password: str = Field(min_length=12, max_length=256)
 
+    _password_policy = field_validator('new_password')(validate_new_password)
+
 
 class OrderMoveRequest(BaseModel):
     direction: Literal["up", "down"]
@@ -953,6 +964,8 @@ class OrderMoveRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(min_length=8, max_length=256)
     new_password: str = Field(min_length=12, max_length=256)
+
+    _password_policy = field_validator('new_password')(validate_new_password)
 
 
 class SupportTicketCreate(BaseModel):
@@ -1004,27 +1017,6 @@ class SupportTicketMessageCreate(BaseModel):
         return value
 
 
-def _hash_password(password: str, salt: bytes | None = None) -> str:
-    salt = salt or secrets.token_bytes(16)
-    digest = hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1)
-    return f"scrypt${salt.hex()}${digest.hex()}"
-
-
-_DUMMY_PASSWORD_HASH = _hash_password(secrets.token_urlsafe(24))
-
-
-def _check_password(password: str, encoded: str | None) -> bool:
-    if not encoded:
-        # Google-only accounts have no password. Still spend the same scrypt
-        # work so response timing does not reveal the account type.
-        _check_password(password, _DUMMY_PASSWORD_HASH)
-        return False
-    try:
-        _, salt_hex, digest_hex = encoded.split("$", 2)
-        actual = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex), n=2**14, r=8, p=1)
-        return hmac.compare_digest(actual.hex(), digest_hex)
-    except (ValueError, TypeError):
-        return False
 
 
 def password_login_allowed(user: AdminUser) -> bool:
@@ -1037,14 +1029,7 @@ def _mfa_enabled(user: AdminUser) -> bool:
 
 
 def _mfa_key() -> bytes:
-    """Resolve the at-rest key without ever persisting the TOTP secret plain.
-
-    A dedicated ``MARKET_INTELLIGENCE_MFA_ENCRYPTION_SECRET`` is preferred.
-    The existing CSRF signing secret is a backwards-compatible fallback for
-    installations that have not provisioned the dedicated key yet.
-    """
-    settings = get_settings()
-    candidate = getattr(settings, "mfa_encryption_secret", None) or getattr(settings, "csrf_signing_secret", None)
+    candidate = get_settings().mfa_encryption_secret
     raw = candidate.get_secret_value() if candidate else ""
     if len(raw) < 32:
         raise HTTPException(status_code=503, detail="mfa encryption secret is not configured")
@@ -1111,8 +1096,8 @@ def _admin_session_idle_hours() -> int:
 
 
 def _account_session_lifetime() -> timedelta:
-    """Rolling Contenter-style session, with authoritative server-side revocation."""
-    return timedelta(days=min(max(int(getattr(get_settings(), "account_session_ttl_days", 30)), 1), 30))
+    """Short server-side idle lifetime; absolute age is enforced separately."""
+    return timedelta(minutes=get_settings().session_idle_minutes)
 
 
 def _reader_nightly_expiry(created_at: datetime) -> datetime:
@@ -1143,6 +1128,18 @@ async def _audit(user_id: uuid.UUID | None, action: str, *, assistant_id: uuid.U
     async with SessionLocal() as session:
         session.add(AdminAuditLog(user_id=user_id, assistant_id=assistant_id, action=action, details=details or {}))
         await session.commit()
+    from app.security_events import record_security_event
+    await record_security_event(action, actor_id=user_id, assistant_id=assistant_id, details=details,
+        severity="warning" if any(part in action for part in ("account.", "password", "user.create", "user.update", "session.revoke")) else "info")
+
+
+async def canonical_login_identity(value: str) -> str:
+    identifier = value.strip().lower()
+    email = normalize_email(identifier) if "@" in identifier else None
+    async with SessionLocal() as session:
+        uid = await session.scalar(select(AdminUser.id).where(
+            AdminUser.email == email if email else AdminUser.username == identifier))
+    return f"account:{uid}" if uid else f"unknown:{email or identifier}"
 
 
 async def authenticate(
@@ -1170,20 +1167,22 @@ async def authenticate(
                 username=username,
                 email=owner_email(),
                 login_method="both",
-                password_hash=_hash_password(settings.admin_bootstrap_password.get_secret_value()),
+                password_hash=await hash_password_async(settings.admin_bootstrap_password.get_secret_value()),
                 role="admin",
             )
             session.add(user)
             await session.flush()
         # Verify the password before revealing the account state, so a
         # disabled or Google-only account cannot be discovered without it.
-        password_ok = _check_password(request.password, user.password_hash if user is not None else None)
+        password_ok = await check_password_async(request.password, user.password_hash if user is not None else None)
         if user is None or not password_ok or not password_login_allowed(user):
             raise HTTPException(status_code=401, detail="invalid credentials")
         if not user.active:
             # Return a stable machine-readable code. The backoffice translates
             # it into the selected language without exposing account details.
             raise HTTPException(status_code=403, detail="account_disabled")
+        if needs_rehash(user.password_hash):
+            user.password_hash = await hash_password_async(request.password)
         user.last_login_at = datetime.now(timezone.utc)
         raw = _add_session(session, user, nightly_reader_expiry=nightly_reader_expiry, mfa_required=require_mfa and _mfa_enabled(user))
         await session.commit()
@@ -1217,7 +1216,7 @@ def _cookie_secure() -> bool:
 def set_admin_session_cookies(response: Response, raw: str) -> None:
     # Both the persistent browser cookie and server-side idle deadline renew
     # during foreground activity. Revocation in the database is authoritative.
-    lifetime = int(_account_session_lifetime().total_seconds())
+    lifetime = get_settings().session_absolute_hours * 3600
     response.set_cookie(COOKIE, raw, max_age=lifetime, httponly=True, secure=_cookie_secure(), samesite="strict", path="/")
     # The session token stays HttpOnly. The separate, non-sensitive token is
     # readable by the browser only so the UI can send it in a custom header;
@@ -1228,7 +1227,8 @@ def set_admin_session_cookies(response: Response, raw: str) -> None:
 def set_reader_session_cookie(response: Response, raw: str) -> None:
     now = datetime.now(timezone.utc)
     deadline = min(now + _account_session_lifetime(), _reader_nightly_expiry(now))
-    response.set_cookie(USER_SESSION_COOKIE, raw, expires=deadline, httponly=True, secure=_cookie_secure(), samesite="strict", path="/user")
+    response.set_cookie(USER_SESSION_COOKIE, raw, expires=_reader_nightly_expiry(now), httponly=True, secure=_cookie_secure(), samesite="strict", path="/user")
+    response.set_cookie(USER_CSRF_COOKIE, new_csrf_token(raw, get_settings()), expires=_reader_nightly_expiry(now), httponly=False, secure=_cookie_secure(), samesite="strict", path="/user")
 
 
 async def _unique_username(session, base: str) -> str:
@@ -1294,7 +1294,7 @@ async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[s
     return raw, user
 
 
-async def current_admin(token: str | None) -> AdminUser:
+async def current_admin(token: str | None, *, touch: bool | None = None) -> AdminUser:
     if not token:
         raise HTTPException(status_code=401, detail="authentication required")
     digest = hashlib.sha256(token.encode()).hexdigest()
@@ -1316,13 +1316,16 @@ async def current_admin(token: str | None) -> AdminUser:
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=403, detail="account_disabled")
-        if session_row.expires_at <= now:
+        absolute = session_row.created_at + timedelta(hours=get_settings().session_absolute_hours)
+        if session_row.expires_at <= now or absolute <= now:
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=401, detail="session expired")
         # Approved rolling lifetime; never a JWT grace period after revocation.
-        session_row.expires_at = now + _account_session_lifetime()
-        await session.commit()
+        should_touch = request_activity.get() if touch is None else touch
+        if should_touch:
+            session_row.expires_at = min(now + _account_session_lifetime(), absolute)
+            await session.commit()
     return user
 
 
@@ -1353,7 +1356,7 @@ async def reader_login(request: LoginRequest, response: Response) -> dict[str, o
     return {"id": str(user.id), "username": user.username, "mfa_required": False, **user_portal_access_payload(user)}
 
 
-async def current_reader(token: str | None, *, touch: bool = True) -> AdminUser:
+async def current_reader(token: str | None, *, touch: bool | None = None) -> AdminUser:
     """Resolve a reader session and optionally renew its idle deadline.
 
     Background notification polling validates the session without touching it,
@@ -1384,14 +1387,16 @@ async def current_reader(token: str | None, *, touch: bool = True) -> AdminUser:
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=403, detail="user portal access denied")
-        if session_row.expires_at <= now or _reader_nightly_expiry(session_row.created_at) <= now:
+        if session_row.expires_at <= now or min(_reader_nightly_expiry(session_row.created_at), session_row.created_at + timedelta(hours=get_settings().session_absolute_hours)) <= now:
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=401, detail="session expired")
-        if touch:
+        should_touch = request_activity.get() if touch is None else touch
+        if should_touch:
             session_row.expires_at = min(
                 now + _account_session_lifetime(),
                 _reader_nightly_expiry(session_row.created_at),
+                session_row.created_at + timedelta(hours=get_settings().session_absolute_hours),
             )
             await session.commit()
     return user
@@ -1407,6 +1412,7 @@ async def reader_logout(response: Response, token: str | None) -> dict[str, str]
             )
             await session.commit()
     response.delete_cookie(USER_SESSION_COOKIE, path="/user")
+    response.delete_cookie(USER_CSRF_COOKIE, path="/user")
     return {"status": "logged_out"}
 
 
@@ -1424,7 +1430,7 @@ async def verify_mfa_session(code: str, recovery_code: str | None, token: str | 
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=403, detail="account_disabled")
-        if session_row.expires_at <= now:
+        if getattr(session_row, "portal", "admin") != "admin" or session_row.expires_at <= now or session_row.created_at + timedelta(hours=get_settings().session_absolute_hours) <= now:
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=401, detail="session expired")
@@ -1457,7 +1463,7 @@ async def verify_mfa_session(code: str, recovery_code: str | None, token: str | 
         preferences["mfa"] = config
         user.preferences = preferences
         session_row.mfa_verified = True
-        session_row.expires_at = now + timedelta(hours=_admin_session_idle_hours())
+        session_row.expires_at = min(now + _account_session_lifetime(), session_row.created_at + timedelta(hours=get_settings().session_absolute_hours))
         await session.commit()
     await _audit(user.id, "admin.mfa.verify", details={"method": "recovery" if used_recovery else "totp"})
     return {"status": "verified", "username": user.username, "used_recovery": used_recovery}
@@ -2130,7 +2136,7 @@ async def logout(response: Response, token: str | None) -> dict[str, str]:
 async def change_password(user: AdminUser, payload: ChangePasswordRequest) -> dict[str, str]:
     if not password_login_allowed(user):
         raise HTTPException(status_code=422, detail="Google-only accounts have no internal password")
-    if not _check_password(payload.current_password, user.password_hash):
+    if not await check_password_async(payload.current_password, user.password_hash):
         raise HTTPException(status_code=401, detail="current password is incorrect")
     if payload.current_password == payload.new_password:
         raise HTTPException(status_code=422, detail="new password must differ from current password")
@@ -2138,7 +2144,7 @@ async def change_password(user: AdminUser, payload: ChangePasswordRequest) -> di
         item = await session.get(AdminUser, user.id, with_for_update=True)
         if item is None or not item.active:
             raise HTTPException(status_code=404, detail="admin user not found")
-        item.password_hash = _hash_password(payload.new_password)
+        item.password_hash = await hash_password_async(payload.new_password)
         # A password rotation is a credential-compromise boundary. Revoke the
         # current session and every other session so the new password is the
         # only remaining authentication path.
@@ -2165,7 +2171,7 @@ async def change_user_password(user_id: uuid.UUID, payload: AdminUserPasswordUpd
         ensure_can_manage_account(user, item)
         if not password_login_allowed(item):
             raise HTTPException(status_code=422, detail="Google-only accounts have no internal password")
-        item.password_hash = _hash_password(payload.new_password)
+        item.password_hash = await hash_password_async(payload.new_password)
         await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         await session.commit()
     await _audit(user.id, "admin_user.password.rotate", details={"user_id": str(user_id)})
@@ -4732,6 +4738,17 @@ async def review_publication(
         history = list(approval.get("history") or [])
         history.append({"state": payload.state, "note": payload.note, "at": now, "by": str(user.id)})
         approval.update({"state": payload.state, "note": payload.note, "updated_at": now, "updated_by": str(user.id), "history": history[-20:]})
+        from app.source_review import requires_source_review, source_review_digest
+        analysis = await session.get(ArticleAnalysis, publication.analysis_id)
+        article = await session.get(NormalizedArticle, analysis.article_id) if analysis else None
+        if article and requires_source_review(publication, article):
+            if payload.state == "approved":
+                if not payload.note or len(payload.note.strip()) < 12:
+                    raise HTTPException(422, "suspicious source approval requires an explicit review note")
+                audit["source_security_approval"] = {"actor_id": str(user.id), "at": now,
+                    "digest": source_review_digest(publication, article)}
+            else:
+                audit.pop("source_security_approval", None)
         publication.audit = {**audit, "approval": approval}
         publication.updated_at = datetime.now(timezone.utc)
         await session.commit()
@@ -5144,6 +5161,9 @@ async def list_admin_incidents(user: AdminUser, assistant_id: uuid.UUID | None =
     """
     payload = await list_admin_notifications(user)
     incidents: list[dict[str, object]] = []
+    if is_owner(user):
+        from app.security_events import security_incidents
+        incidents.extend(item for item in await security_incidents() if not assistant_id or item.get("assistant_id") == str(assistant_id))
     for item in _mapping_rows(payload.get("notifications")):
         if assistant_id and str(item.get("assistant_id")) != str(assistant_id):
             continue
@@ -5387,7 +5407,7 @@ async def create_admin_user(payload: AdminUserRequest, user: AdminUser) -> dict[
             raise HTTPException(status_code=422, detail="an admin user must have at least one project assignment")
         if payload.user_feedback_access and not (payload.user_portal_access or payload.role == "admin"):
             raise HTTPException(status_code=422, detail="feedback access requires User-service access")
-        item = AdminUser(username=payload.username.lower(), password_hash=_hash_password(payload.password), role=payload.role, active=True)
+        item = AdminUser(username=payload.username.lower(), password_hash=await hash_password_async(payload.password), role=payload.role, active=True)
         if payload.user_portal_access is not None or payload.user_feedback_access is not None:
             item.preferences = {
                 "user_portal_access": {
@@ -5496,11 +5516,11 @@ async def manage_admin_user(user_id: uuid.UUID, payload: AdminUserManageUpdate, 
             if not password_login_allowed(item):
                 raise HTTPException(status_code=422, detail="Google-only accounts have no internal password")
             if user_id == user.id:
-                if not payload.current_password or not _check_password(payload.current_password, item.password_hash):
+                if not payload.current_password or not await check_password_async(payload.current_password, item.password_hash):
                     raise HTTPException(status_code=401, detail="current password is incorrect")
                 if payload.current_password == payload.new_password:
                     raise HTTPException(status_code=422, detail="new password must differ from current password")
-            item.password_hash = _hash_password(payload.new_password)
+            item.password_hash = await hash_password_async(payload.new_password)
             await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         changes = payload.model_dump(exclude_none=True, exclude={"new_password", "current_password", "assistant_ids", "user_portal_access", "user_feedback_access"})
         if "username" in changes:
@@ -5673,12 +5693,16 @@ class GoogleAccessGrant(BaseModel):
     password: str | None = Field(default=None, min_length=12, max_length=256)
     assistant_ids: list[uuid.UUID] | None = None
 
+    _password_policy = field_validator('password')(validate_new_password)
+
 
 class GoogleAccessUpdate(BaseModel):
     login_method: Literal["google", "both"] | None = None
     active: bool | None = None
     role: Literal["admin", "editor", "viewer", "assistant_admin", "analyst"] | None = None
     password: str | None = Field(default=None, min_length=12, max_length=256)
+
+    _password_policy = field_validator('password')(validate_new_password)
 
 
 def _require_owner(user: AdminUser) -> None:
@@ -5753,7 +5777,7 @@ async def grant_google_access(payload: GoogleAccessGrant, user: AdminUser) -> di
         if payload.login_method == "google":
             item.password_hash = None
         elif payload.password:
-            item.password_hash = _hash_password(payload.password)
+            item.password_hash = await hash_password_async(payload.password)
         item.email = email
         # Existing Google identity bindings are retained across re-grants.
         item.login_method = payload.login_method
@@ -5798,7 +5822,7 @@ async def update_google_access(user_id: uuid.UUID, payload: GoogleAccessUpdate, 
             item.password_hash = None
             revoke_sessions = True
         if payload.password and method == "both":
-            item.password_hash = _hash_password(payload.password)
+            item.password_hash = await hash_password_async(payload.password)
             revoke_sessions = True
         if payload.login_method:
             item.login_method = payload.login_method
