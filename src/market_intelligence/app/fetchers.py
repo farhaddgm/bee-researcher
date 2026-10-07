@@ -885,13 +885,22 @@ class SourceFetcher:
                             self.settings.fetch_max_items_per_source,
                         )
                     elif source.adapter == "html":
-                        items = parse_html_listing(
-                            response.content,
-                            str(response.url),
-                            self.settings.fetch_max_items_per_source,
-                            source.item_url_pattern,
-                            source.item_title_class_pattern,
-                        )
+                        # Legacy/imported sources can have an HTML adapter but
+                        # a real RSS/Atom URL. Parse the actual safe XML payload,
+                        # not its tags as HTML links. No extra request, guessed
+                        # endpoint or relaxation of robots/size/SSRF controls.
+                        prefix = response.content.lstrip(b"\xef\xbb\xbf \t\r\n")[:1024]
+                        is_feed = re.match(rb"(?:<\?xml[^>]*>\s*)?<(?:rss|feed)(?:\s|>)", prefix, re.I) is not None
+                        if is_feed:
+                            items = parse_feed(response.content, str(response.url), self.settings.fetch_max_items_per_source)
+                        else:
+                            items = parse_html_listing(
+                                response.content,
+                                str(response.url),
+                                self.settings.fetch_max_items_per_source,
+                                source.item_url_pattern,
+                                source.item_title_class_pattern,
+                            )
                     elif source.adapter in {"instagram_public", "instagram_private", "x_public", "x_private", "telegram_private"}:
                         items = parse_social_json(
                             response.content,

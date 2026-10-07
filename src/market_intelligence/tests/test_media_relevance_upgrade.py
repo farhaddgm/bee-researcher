@@ -11,7 +11,7 @@ os.environ.setdefault("MARKET_INTELLIGENCE_POSTGRES_USER", "assistant_test")
 os.environ.setdefault("MARKET_INTELLIGENCE_POSTGRES_PASSWORD", "test-password")
 os.environ.setdefault("MARKET_INTELLIGENCE_REDIS_PASSWORD", "test-password")
 
-from app.ai_relevance import classify_articles, relevance_context_hash, relevance_decision
+from app.ai_relevance import classify_articles, evidence_passages, relevance_context_hash, relevance_decision, RelevanceAssessmentError
 from app.admin import _SOURCE_DRAFT_SCHEMA, _SOURCE_SUGGESTIONS_SCHEMA, AssistantRuntimeSettingsUpdate, _verify_source_draft, _catalog_draft
 from app.fetchers import FetchFailure
 from types import SimpleNamespace
@@ -234,6 +234,38 @@ class RelevanceTest(unittest.IsolatedAsyncioTestCase):
             client.draft_json.return_value = {"scores": [{**row, **change}]}
             with self.assertRaises(RuntimeError):
                 await classify_articles(client, articles=[{"id": "a1", "title": "AI model", "text": "real facts"}], topics=[{"topic_key": "AI"}], business={}, mission="")
+
+    async def test_model_references_are_resolved_only_to_immutable_article_passages(self):
+        client = AsyncMock()
+        client.draft_json.return_value = {"scores": [{"article_id": "a1", "topic_key": "AI", "score": .92, "reason": "Direct coverage", "confidence": .9, "evidence": ["a0-body-0"], "excluded": False}]}
+        text = "An AI model was released with improved reasoning."
+        result = await classify_articles(client, articles=[{"id": "a1", "title": "News headline", "text": text}], topics=[{"topic_key": "AI"}], business={}, mission="")
+        metadata = json.loads(result[("a1", "AI")][1])
+        self.assertEqual([text], metadata["evidence"])
+        call = client.draft_json.call_args.kwargs
+        self.assertNotIn("text", call["user_payload"]["articles"][0])
+        self.assertEqual(text, call["user_payload"]["articles"][0]["passages"]["a0-body-0"])
+        self.assertIn("a0-body-0", call["schema"]["properties"]["scores"]["items"]["properties"]["evidence"]["items"]["enum"])
+
+    async def test_cross_article_or_unknown_evidence_reference_fails_closed(self):
+        client = AsyncMock()
+        for reference in ["a1-body-0", "invented-reference"]:
+            client.draft_json.return_value = {"scores": [{"article_id": "a1", "topic_key": "AI", "score": .92, "reason": "Direct coverage", "confidence": .9, "evidence": [reference], "excluded": False}]}
+            with self.assertRaises(RelevanceAssessmentError) as error:
+                await classify_articles(client, articles=[{"id": "a1", "title": "News headline", "text": "Actual source facts"}], topics=[{"topic_key": "AI"}], business={}, mission="")
+            self.assertEqual("relevance_evidence_invalid", error.exception.code)
+
+    def test_passages_preserve_tail_and_keep_each_quote_within_bound(self):
+        text = "news facts " * 2000 + "unique tail fact"
+        passages = evidence_passages("Headline", text, 0)
+        self.assertTrue(any("unique tail fact" in value for value in passages.values()))
+        self.assertTrue(all(len(value) <= 300 for value in passages.values()))
+
+    async def test_empty_source_never_spends_a_model_request(self):
+        client = AsyncMock()
+        with self.assertRaises(RelevanceAssessmentError):
+            await classify_articles(client, articles=[{"id": "a1", "title": "", "text": ""}], topics=[{"topic_key": "AI"}], business={}, mission="")
+        client.draft_json.assert_not_awaited()
 
     def test_per_topic_threshold_not_highest_raw_score_determines_winner(self):
         rows = [{"valid": True, "score": .8, "threshold": .95, "confidence": .9, "topic_key": "A"},

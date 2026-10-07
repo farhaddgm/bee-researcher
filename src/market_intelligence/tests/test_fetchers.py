@@ -85,6 +85,33 @@ class ParserTest(unittest.TestCase):
         self.assertEqual("A meaningful banking headline", parsed_html[0].title)
         self.assertEqual("https://example.com/123-news", parsed_html[0].url)
 
+
+class LegacyFeedAdapterTest(unittest.IsolatedAsyncioTestCase):
+    async def test_html_adapter_reads_real_rss_without_guessing_or_extra_requests(self):
+        requests = []
+        def handler(request):
+            requests.append(str(request.url))
+            if request.url.path == "/robots.txt":
+                return httpx.Response(200, text="User-agent: *\nAllow: /")
+            return httpx.Response(200, content=RSS, headers={"content-type": "application/rss+xml"})
+        fetcher = SourceFetcher(settings(), transport=httpx.MockTransport(handler), resolver=allow_test_destination, sleeper=no_sleep)
+        result = await fetcher.fetch(SourceSpec(source_key="legacy", name="Legacy", homepage_url="https://example.com", fetch_url="https://example.com/feed", adapter="html"))
+        self.assertEqual("succeeded", result.status)
+        self.assertEqual("https://example.com/news/1", result.items[0].url)
+        self.assertEqual(["https://example.com/robots.txt", "https://example.com/feed"], requests)
+
+    async def test_auto_feed_detection_never_bypasses_robots(self):
+        requests = []
+        def handler(request):
+            requests.append(request.url.path)
+            return httpx.Response(200, text="User-agent: *\nDisallow: /")
+        fetcher = SourceFetcher(settings(), transport=httpx.MockTransport(handler), resolver=allow_test_destination)
+        result = await fetcher.fetch(SourceSpec(source_key="legacy", name="Legacy", homepage_url="https://example.com", fetch_url="https://example.com/feed", adapter="html"))
+        self.assertEqual("robots_denied", result.status)
+        self.assertEqual(["/robots.txt"], requests)
+
+class ParserContinuationTest(unittest.TestCase):
+
     def test_feed_parser_rejects_dtd_and_external_entity_payloads(self):
         payload = b'''<?xml version="1.0"?>
         <!DOCTYPE rss [<!ENTITY local SYSTEM "file:///etc/passwd">]>

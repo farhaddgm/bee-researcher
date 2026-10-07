@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import math
 import unicodedata
+from typing import Any
 
 from app.openai_client import OpenAIClient, sanitize_untrusted_source
 
@@ -24,6 +26,30 @@ RELEVANCE_SCHEMA = {
 }
 
 SCORER_REVISION = "ai-v2-evidence"
+
+
+class RelevanceAssessmentError(RuntimeError):
+    """Stable diagnostic code, never source text or the model response."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def evidence_passages(title: str, text: str, article_index: int) -> dict[str, str]:
+    """Reference immutable source slices instead of asking models to retype quotes.
+
+    Keep every character available to the classifier, including the text tail.
+    Overlap boundaries so a short factual statement can cross a slice boundary.
+    The model selects identifiers; only the server resolves them into quotations.
+    """
+    passages = {}
+    for field, value in (("title", title), ("body", text)):
+        for offset in range(0, len(value), 250):
+            fragment = value[offset:offset + 300].strip()
+            if len(evidence_text(fragment)) >= 5:
+                passages[f"a{article_index}-{field}-{offset}"] = fragment
+    return passages
 
 
 def evidence_text(text: str) -> str:
@@ -90,9 +116,20 @@ def relevance_context_hash(context: dict) -> str:
 async def classify_articles(client: OpenAIClient, *, articles: list[dict], topics: list[dict],
                             business: dict, mission: str, max_input_chars: int = 6000) -> dict[tuple[str, str], tuple[float, str]]:
     safe_articles = []
-    for article in articles:
+    passages_by_article = {}
+    for article_index, article in enumerate(articles):
         title, text, safety = sanitize_untrusted_source(title=article["title"], text=article["text"], max_chars=max_input_chars)
         safe_articles.append({"article_id": article["id"], "title": title, "text": text, "safety": safety.as_dict(), "incomplete": article.get("incomplete", False)})
+        passages_by_article[str(article["id"])] = evidence_passages(title, text, article_index)
+    schema: dict[str, Any] = copy.deepcopy(RELEVANCE_SCHEMA)
+    reference_ids = [key for passages in passages_by_article.values() for key in passages]
+    if not reference_ids:
+        raise RelevanceAssessmentError("relevance_source_empty")
+    schema["properties"]["scores"]["items"]["properties"]["evidence"]["items"] = {"type": "string", "enum": reference_ids}
+    # Do not duplicate the body in the prompt. The passages contain the full
+    # sanitized input and stable references; IDs are scoped to their article.
+    prompt_articles = [{key: value for key, value in article.items() if key != "text"} |
+                       {"passages": passages_by_article[str(article["article_id"])]} for article in safe_articles]
     result = await client.draft_json(
         system_prompt=(
             "Classify every supplied article against EVERY approved topic, across languages. "
@@ -107,11 +144,13 @@ async def classify_articles(client: OpenAIClient, *, articles: list[dict], topic
             "Set excluded=true only when the article actually falls within a topic's excluded meaning, not merely "
             "because it quotes or negates a negative word. Business context may resolve ambiguity, never veto a direct topic match. "
             "Do not infer unseen facts. Confidence measures evidence sufficiency, not relevance. "
-            "Provide one or two SHORT exact verbatim quotes from the supplied title/body for positive scores; "
-            "an unrelated score can have no quote. Explain the semantic relationship briefly, in the topic's language. "
+            "Evidence must be one or two passage IDENTIFIERS belonging to that article, selected from its passages. "
+            "Never retype, translate, paraphrase or invent a quotation; the server resolves identifiers into exact source text. "
+            "Select passages that directly support the score. An unrelated score can have no evidence. "
+            "Explain the semantic relationship briefly, in the topic's language. "
             "Return exactly one score per article/topic pair using unchanged IDs."
-        ), user_payload={"articles": safe_articles, "approved_topics": topics, "optional_business": business, "project_mission": mission},
-        schema_name="article_relevance", schema=RELEVANCE_SCHEMA, max_output_tokens=8000,
+        ), user_payload={"articles": prompt_articles, "approved_topics": topics, "optional_business": business, "project_mission": mission},
+        schema_name="article_relevance", schema=schema, max_output_tokens=8000,
     )
     allowed = {(str(a["id"]), str(t["topic_key"])) for a in articles for t in topics}
     scores = {}
@@ -119,18 +158,23 @@ async def classify_articles(client: OpenAIClient, *, articles: list[dict], topic
         pair = (str(row.get("article_id")), str(row.get("topic_key")))
         value = row.get("score")
         if pair not in allowed or pair in scores or isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not 0 <= value <= 1:
-            raise RuntimeError("invalid or duplicate relevance score")
+            raise RelevanceAssessmentError("relevance_score_invalid")
         confidence = row.get("confidence")
         reason = str(row.get("reason") or "").strip()[:1000]
         quotes = row.get("evidence")
         article = next(a for a in safe_articles if str(a["article_id"]) == pair[0])
+        if isinstance(quotes, list):
+            # Legacy exact quotations remain readable for deterministic fixtures
+            # and older transports; live structured output is enum-constrained.
+            passages = passages_by_article[pair[0]]
+            quotes = [passages.get(q, q) if isinstance(q, str) else q for q in quotes]
         source = evidence_text(str(article["title"]) + "\n" + str(article["text"]))
         if (not reason or isinstance(confidence, bool) or not isinstance(confidence, (float, int))
                 or not math.isfinite(confidence) or not 0 <= confidence <= 1
                 or not isinstance(quotes, list) or len(quotes) > 2 or not isinstance(row.get("excluded"), bool)
                 or any(not isinstance(q, str) or len(q) > 350 or len(evidence_text(q)) < 5 or evidence_text(q) not in source for q in quotes)
                 or (value >= .10 and not quotes)):
-            raise RuntimeError("unsupported relevance assessment")
+            raise RelevanceAssessmentError("relevance_evidence_invalid")
         original = next(a for a in articles if str(a["id"]) == pair[0])
         metadata = {"revision": SCORER_REVISION, "reason": reason, "confidence": float(confidence),
                     "evidence": quotes, "excluded": row["excluded"],
@@ -140,5 +184,5 @@ async def classify_articles(client: OpenAIClient, *, articles: list[dict], topic
             metadata["truncated"] = len(original["text"]) > max_input_chars
         scores[pair] = (float(value), json.dumps(metadata, ensure_ascii=False))
     if set(scores) != allowed:
-        raise RuntimeError("incomplete relevance coverage")
+        raise RelevanceAssessmentError("relevance_coverage_incomplete")
     return scores
