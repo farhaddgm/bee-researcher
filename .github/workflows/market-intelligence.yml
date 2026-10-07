@@ -145,6 +145,8 @@ jobs:
           npm run ui:e2e
           npm run admin:research-context:e2e
           npm run admin:accounts:e2e
+          npm run admin:catalog:e2e
+          npm run admin:accessibility:e2e
       - name: Run isolated account and signed Google OIDC integration
         working-directory: src/market_intelligence
         env:

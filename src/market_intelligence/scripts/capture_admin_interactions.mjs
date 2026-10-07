@@ -26,6 +26,11 @@ async function shot(view, label, n) {
   captured.push({ view, label, png, html: png.replace(/\.png$/, '.html') });
 }
 async function closeOverlay() {
+  const accountDialog = page.locator('dialog.accounts-dialog[open]');
+  if (await accountDialog.count()) {
+    await accountDialog.getByRole('button', { name: /^(cancel|انصراف)$/i }).click();
+    await accountDialog.waitFor({ state: 'hidden' });
+  }
   const close = page.locator('.modal-backdrop:visible .modal-close, .modal-backdrop:visible button').filter({ hasText: /^(×|cancel|close|انصراف|بستن)$/i }).first();
   if (await close.isVisible().catch(() => false)) await close.click();
   const drawer = page.locator('#closeDrawer:visible').first();
@@ -95,7 +100,9 @@ await openSelector('sources', '#addSourceBtn', 'add-media', n++, '#modalRoot:not
 await openSelector('sources', '#sourceSuggestionBtn', 'suggest-media', n++);
 await openSelector('topics', '#addTopicBtn', 'add-topic', n++, '#modalRoot:not(.hidden) #draftTopicName');
 await openSelector('schedule', '#channelSettingsCard [data-edit-telegram]', 'telegram-settings', n++);
-await openSelector('account', '#newUserBtn', 'add-user', n++);
+// Account management now uses the email/Google access directory. The hidden
+// legacy password-user button must not be treated as the supported UI action.
+await openSelector('account', '#accountsPanel .accounts-head .btn.primary', 'add-user', n++, 'dialog.accounts-dialog[open]');
 await fs.writeFile(path.join(runDir, 'manifest.json'), JSON.stringify({ createdAt: new Date().toISOString(), screenshots: captured }, null, 2));
 await browser.close();
 console.log(JSON.stringify({ runDir, locale: requestedLocale, count: captured.length }, null, 2));

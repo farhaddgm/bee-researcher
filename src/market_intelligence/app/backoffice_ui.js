@@ -54,6 +54,14 @@
   }
   document.addEventListener('error',event=>{if(event.target instanceof HTMLImageElement)avatarFallback(event.target);},true);
   function enhanceTables(){
+    // Associate the visible, localized label rather than inventing a second
+    // accessible name. This also covers forms rebuilt by the legacy renderer.
+    document.querySelectorAll('.field').forEach(field=>{
+      const label=field.querySelector('label');
+      const control=field.querySelector('input:not([type="hidden"]),select,textarea');
+      if(label&&control?.id&&!label.htmlFor&&!label.contains(control))label.htmlFor=control.id;
+    });
+    document.getElementById('publicationStatus')?.setAttribute('aria-label',text('وضعیت انتشار'));
     document.querySelectorAll('.view.active .table-wrap,.view.active .schedule-grid-wrap').forEach((wrapper,index)=>{
       wrapper.tabIndex=0;wrapper.setAttribute('role','region');
       const heading=wrapper.closest('.view')?.querySelector('h2');if(heading){if(!heading.id)heading.id=`ui-view-${wrapper.closest('.view').id}`;wrapper.setAttribute('aria-labelledby',heading.id);}
@@ -62,7 +70,7 @@
     });
     document.querySelectorAll('#sidebarUserAvatar img,.sidebar-user-avatar img,.sidebar-account-avatar img').forEach(avatarFallback);
   }
-  for(const name of ['renderPublications','renderSources','renderTopics','renderAssistants','setView','setLanguage']){
+  for(const name of ['renderPublications','renderSources','renderTopics','renderAssistants','renderScheduleGrid','renderCollectionScheduleGrid','modal','setView','setLanguage']){
     const original=window[name];if(typeof original!=='function')continue;
     window[name]=function(){if(name==='setView'||name==='setLanguage')hideTip();const result=original.apply(this,arguments);enhanceTables();return result;};
   }

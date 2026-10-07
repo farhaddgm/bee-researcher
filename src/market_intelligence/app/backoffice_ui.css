@@ -1,5 +1,16 @@
 /* Shared presentation contract. No login, business rules or card text direction changes. */
 :root{--ui-control-height:40px;--ui-focus:var(--primary,#2457d6)}
+/* AA contrast for small secondary copy, including pale badges and table heads.
+   Keep the existing theme palette; only the foreground becomes more legible. */
+#app{--muted:#53657c}
+html[data-theme="dark"] #app{--muted:#b0bed0}
+@media(prefers-color-scheme:dark){html[data-theme="system"] #app{--muted:#b0bed0}}
+#app th{color:var(--muted)}
+#app .status{color:#4c5d76}
+#app .status.active,#app .status.published,#app .status.succeeded{color:#076a60}
+#app .status.draft,#app .status.preview{color:#9b6103}
+#app .status.failed,#app .status.paused{color:#b72d3c}
+#app .status.testing{color:#5b51b8}
 .main,.app-main,.content,.layout,.view,.card,.field,.setting{min-width:0}
 #app .main,#app .app-main{background:var(--bg,var(--soft));max-width:100%}
 #app .content,#app .layout{width:100%;max-width:1600px;box-sizing:border-box}

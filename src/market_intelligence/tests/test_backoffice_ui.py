@@ -31,6 +31,14 @@ class BackofficePresentationTest(unittest.TestCase):
         self.assertNotIn("avatar.innerHTML='<img", ADMIN_HTML)
         self.assertNotIn("preview.innerHTML='<img", ADMIN_HTML)
 
+    def test_schedule_controls_keep_native_toggle_button_semantics(self):
+        self.assertNotIn('role="gridcell" class="schedule-slot', ADMIN_HTML)
+        self.assertIn('aria-pressed="${on}"', ADMIN_HTML)
+
+    def test_accessible_field_names_use_the_existing_localized_label(self):
+        self.assertIn("label.htmlFor=control.id", ADMIN_HTML)
+        self.assertIn("text('وضعیت انتشار')", ADMIN_HTML)
+
     def test_minimal_settings_and_news_direction_contract_retained(self):
         self.assertIn('id="saveSettingsButton"', USER_HTML)
         self.assertEqual(USER_HTML.count('class="setting"'), 8)
