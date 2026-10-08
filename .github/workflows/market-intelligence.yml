@@ -15,7 +15,7 @@ on:
 
 jobs:
   unit-and-contract:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       MARKET_INTELLIGENCE_POSTGRES_DB: assistant_test
       MARKET_INTELLIGENCE_POSTGRES_USER: assistant_test
@@ -35,8 +35,8 @@ jobs:
       TELEGRAM_BOT_TOKEN: test-token
       ALLOWED_TELEGRAM_USER_ID: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, Node 24
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6, Node 24
         with:
           python-version: "3.13"
           cache: pip
@@ -60,7 +60,7 @@ jobs:
 
   browser-smoke:
     name: Required local authenticated browser E2E
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     needs: unit-and-contract
     services:
@@ -96,8 +96,8 @@ jobs:
       BEE_USER_URL: http://127.0.0.1:8010/user
       CAPTURE_OUTPUT: /tmp/bee-researcher-browser
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, Node 24
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6, Node 24
         with:
           node-version: "22"
           cache: npm
@@ -240,12 +240,12 @@ jobs:
 
   static-analysis:
     name: Static analysis and policy gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, Node 24
         with:
           fetch-depth: 2
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6, Node 24
         with:
           python-version: "3.13"
       - name: Install pinned analysis tools
@@ -267,12 +267,12 @@ jobs:
 
   security-supply-chain:
     name: Supply-chain security gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, Node 24
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6, Node 24
         with:
           python-version: "3.13"
           cache: pip
@@ -320,7 +320,7 @@ jobs:
 
   publish-sign:
     name: Publish and sign verified release candidate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     needs: [unit-and-contract, browser-smoke, static-analysis, security-supply-chain]
     permissions:
@@ -328,7 +328,7 @@ jobs:
       id-token: write
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, Node 24
         with:
           persist-credentials: false
       - name: Download the exact scanned image and SBOM
