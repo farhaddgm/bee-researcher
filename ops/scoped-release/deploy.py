@@ -21,8 +21,8 @@ APP = "ai-market-intelligence"
 ROOT = Path("/opt/ai-assistant")
 
 
-def run(args, *, timeout=60, data=None):
-    result = subprocess.run(args, input=data, capture_output=True, text=True, timeout=timeout)
+def run(args, *, timeout=60, data=None, env=None):
+    result = subprocess.run(args, input=data, capture_output=True, text=True, timeout=timeout, env=env)
     if result.returncode:
         # Command diagnostics may contain environment values. Do not echo them.
         raise RuntimeError(f"{args[0]} failed with exit {result.returncode}; diagnostics withheld")
@@ -66,6 +66,37 @@ def compose_command(current, extra=None):
     if extra:
         command += ["-f", str(extra)]
     return command
+
+
+def compose_environment(current):
+    # Compose interpolates each inherited file before it merges overrides.
+    # A private final snapshot alone cannot satisfy earlier ${VAR:?} fields.
+    # Provision only this service's actual values, never another app's env.
+    result = dict(os.environ)
+    result.update(dict(item.split("=", 1) for item in current["Config"]["Env"]
+                       if item.startswith("MARKET_INTELLIGENCE_") and "=" in item))
+    result["BEE_SCOPED_IMAGE"] = current["Image"]
+    return result
+
+
+def verify_shutdown(stopped, since):
+    state = stopped["State"]
+    if state.get("Running") or state.get("OOMKilled") or state.get("Error") or state.get("ExitCode") not in {0, 143}:
+        raise RuntimeError("graceful shutdown did not finish; refusing replacement")
+    # Uvicorn re-raises SIGTERM after its lifespan finishes: Docker reports
+    # 143 even for a clean stop. Neither 143 nor zero alone proves completion.
+    # Require both current-stop markers; never export the underlying logs.
+    logs = subprocess.run(["docker", "logs", "--since", since, "--tail", "200", stopped["Id"]],
+                          capture_output=True, text=True, timeout=30)
+    output = logs.stdout + logs.stderr
+    complete = re.search(r"(?m)^INFO:\s+Application shutdown complete\.\s*$", output)
+    finished = re.search(r"(?m)^INFO:\s+Finished server process \[\d+\]\s*$", output)
+    failure = re.search(r"(?m)^ERROR:|^Traceback \(most recent call last\):|"
+                        r"ASGI 'lifespan' protocol appears unsupported|Application shutdown failed|"
+                        r"Cancel \d+ running task|timeout graceful shutdown exceeded", output)
+    if logs.returncode or failure or not complete or not finished:
+        raise RuntimeError("shutdown completion evidence missing; refusing replacement")
+    return {"exit_code": state["ExitCode"], "lifespan_completed": True, "server_finished": True}
 
 
 def wait_health(revision, version, *, timeout=120, ready_required=True):
@@ -132,6 +163,7 @@ def deploy(args):
     save(rollback_override, {"services": {"market-intelligence": {
         "image": current["Image"], "stop_grace_period": "600s", "environment": dict(environment)}}}, private=True)
     rollback = compose_command(current, rollback_override)
+    compose_env = compose_environment(current)
     environment.update({
         "MARKET_INTELLIGENCE_VERSION": args.version,
         "MARKET_INTELLIGENCE_BUILD_REVISION": args.revision,
@@ -142,7 +174,7 @@ def deploy(args):
     save(override, {"services": {"market-intelligence": {
         "image": args.image, "stop_grace_period": "600s", "environment": environment}}}, private=True)
     command = compose_command(current, override)
-    run(command + ["config", "--quiet"])
+    run(command + ["config", "--quiet"], env=compose_env)
     controller = None
     stopped = False
     atomic = values.get("MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED", "false").lower() == "true"
@@ -170,11 +202,11 @@ def deploy(args):
                 raise RuntimeError("legacy application has active jobs; retry after completion")
         # SIGTERM lets Uvicorn finish HTTP/background work and its scheduler
         # lifespan. Only this container is stopped; no dependent service is.
+        stop_since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         run(["docker", "stop", "--time", "600", APP], timeout=630)
         stopped = True
-        if inspect(APP)["State"]["ExitCode"] != 0:
-            raise RuntimeError("graceful shutdown did not finish; refusing replacement")
-        run(command + ["up", "-d", "--no-deps", "--force-recreate", "market-intelligence"], timeout=180)
+        shutdown = verify_shutdown(inspect(APP), stop_since)
+        run(command + ["up", "-d", "--no-deps", "--force-recreate", "market-intelligence"], timeout=180, env=compose_env)
         # A new scheduler cannot emit its first successful heartbeat while
         # admission is closed. Verify liveness/source/image before releasing
         # the barrier, then require full readiness; waiting for /ready while
@@ -194,11 +226,12 @@ def deploy(args):
             "healthy": True, "atomic_drain_used": atomic, "drain_enabled_for_next_release": True,
             "migration_performed": False, "rekey_performed": False, "other_services_restarted": False,
             "runtime_environment_preserved_in_private_override": True,
+            "compose_interpolation_bound_to_runtime": True, "shutdown": shutdown,
         })
         print(json.dumps({"healthy": True, "version": args.version, "receipt": str(artifact / "deployment-receipt.json")}))
     except BaseException:
         if stopped:
-            run(rollback + ["up", "-d", "--no-deps", "--force-recreate", "market-intelligence"], timeout=180)
+            run(rollback + ["up", "-d", "--no-deps", "--force-recreate", "market-intelligence"], timeout=180, env=compose_env)
             # The restored scheduler has the same cold-heartbeat constraint.
             # Restore liveness and original private configuration first, then
             # release admission before awaiting its first successful tick.

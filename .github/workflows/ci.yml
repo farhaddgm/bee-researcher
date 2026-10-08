@@ -25,3 +25,5 @@ jobs:
             -e MARKET_INTELLIGENCE_POSTGRES_PASSWORD=ci-postgres-placeholder-0123456789 \
             -e MARKET_INTELLIGENCE_REDIS_PASSWORD=ci-redis-placeholder-0123456789 \
             bee-researcher-ci python -m unittest discover -s tests -q
+      - name: Verify real container shutdown and failure rejection
+        run: python3 ops/scoped-release/verify_container_shutdown.py --image bee-researcher-ci
