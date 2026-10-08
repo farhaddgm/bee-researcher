@@ -57,6 +57,7 @@ jobs:
   browser-smoke:
     name: Required local authenticated browser E2E
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     needs: unit-and-contract
     services:
       postgres:
@@ -134,21 +135,64 @@ jobs:
           echo "Application health check did not pass after $attempt attempts."
           cat /tmp/bee-researcher-e2e.log
           exit 1
-      - name: Run required Admin and User E2E suites
+      - name: Capture Admin inventory
+        timeout-minutes: 5
         working-directory: src/market_intelligence
-        run: |
-          npm run admin:inventory
-          npm run admin:interactions
-          npm run admin:locales
-          npm run admin:support:e2e
-          npm run user:e2e
-          npm run admin:media:e2e
-          npm run admin:models:e2e
-          npm run ui:e2e
-          npm run admin:research-context:e2e
-          npm run admin:accounts:e2e
-          npm run admin:catalog:e2e
-          npm run admin:accessibility:e2e
+        run: npm run admin:inventory
+      - name: Required Admin interactions
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:interactions
+      - name: Required eight-locale E2E
+        timeout-minutes: 5
+        working-directory: src/market_intelligence
+        run: npm run admin:locales
+      - name: Required support conversation E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:support:e2e
+      - name: Required user portal E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run user:e2e
+      - name: Required media and relevance E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:media:e2e
+      - name: Required model settings E2E
+        timeout-minutes: 3
+        working-directory: src/market_intelligence
+        run: npm run admin:models:e2e
+      - name: Required backoffice UI E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run ui:e2e
+      - name: Required research context E2E
+        timeout-minutes: 3
+        working-directory: src/market_intelligence
+        run: npm run admin:research-context:e2e
+      - name: Required account access E2E
+        timeout-minutes: 3
+        working-directory: src/market_intelligence
+        run: npm run admin:accounts:e2e
+      - name: Required catalog viewport E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:catalog:e2e
+      - name: Required accessibility E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:accessibility:e2e
+      - name: Preserve isolated E2E failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-browser-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/bee-researcher-e2e.log
+            /tmp/bee-researcher-browser/**/manifest.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Run isolated account and signed Google OIDC integration
         working-directory: src/market_intelligence
         env:
@@ -171,6 +215,7 @@ jobs:
         run: |
           python src/market_intelligence/scripts/verify_media_pipeline.py
           python src/market_intelligence/scripts/verify_job_recovery.py
+          python src/market_intelligence/scripts/verify_deployment_drain.py
       - name: Run isolated business research context SQL integration
         env:
           PYTHONPATH: src/market_intelligence

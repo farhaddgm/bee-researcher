@@ -27,6 +27,7 @@ from app.queue_names import queue_key
 from app.security_controls import redact_sensitive_text
 from app.telegram_delivery import TelegramClient
 from app.database import SessionLocal
+from app.deployment_drain import protected_work
 from app.models import AssistantWorkspace, JobRun
 from app.ingestion_service import DEFAULT_ASSISTANT_ID
 from app.bee_cfo.service import run_scheduled_reports, why_changed_for_report
@@ -549,6 +550,7 @@ async def _tick_assistant(
         STATUS.last_pipeline_status = str(delivery.get("status", "completed"))
 
 
+@protected_work
 async def scheduler_tick(settings: Settings, *, now: datetime | None = None) -> dict[str, object]:
     now = now or datetime.now(timezone.utc)
     schedule_times, _ = await scheduler_schedule_times(settings)

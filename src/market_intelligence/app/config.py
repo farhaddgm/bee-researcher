@@ -101,6 +101,9 @@ class Settings(BaseSettings):
     relevance_daily_request_cap: int = Field(default=100, ge=0, le=1000)
 
     scheduler_enabled: bool = True
+    # Enable for production and SQL acceptance. Synthetic unit tests can run
+    # without a database. Deployment tooling verifies the live flag explicitly.
+    deployment_drain_enabled: bool = False
     scheduler_poll_seconds: int = Field(default=30, ge=5, le=300)
     # A slot stays due for this many minutes, so a long scheduler tick that
     # crosses the slot minute delivers late instead of silently skipping it.

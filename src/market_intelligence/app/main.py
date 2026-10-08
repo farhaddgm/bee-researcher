@@ -25,6 +25,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from app.config import get_settings
 from app.observability import configure_logging
 from app.database import SessionLocal, check_database
+from app.deployment_drain import engine as deployment_lease_engine, work_lease
 from app.models import AssistantWorkspace
 from app.ingestion_service import (
     DEFAULT_ASSISTANT_ID,
@@ -378,6 +379,7 @@ async def lifespan(_: FastAPI):
         stop.set()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        await deployment_lease_engine.dispose()
 
 
 app = FastAPI(
@@ -400,6 +402,17 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
 # but that also makes its HTML response large. Compress text responses at the
 # application boundary; browsers that do not advertise gzip are unchanged.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def deployment_admission(request: Request, call_next):
+    if request.method in {"GET", "HEAD", "OPTIONS"} or not settings.deployment_drain_enabled:
+        return await call_next(request)
+    try:
+        async with work_lease(enabled=True):
+            return await call_next(request)
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
 
 # Bee CFO exposes an API/control contract only in phase one.  Its back-office
 # UI is intentionally out of scope; the router remains independently removable

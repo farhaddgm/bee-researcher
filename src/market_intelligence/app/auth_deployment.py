@@ -12,12 +12,12 @@ from app.google_auth import is_gmail
 def check_account_deployment(settings: Settings) -> None:
     if settings.environment.strip().lower() != "production":
         return
-    for name in ("csrf_signing_secret", "mfa_encryption_secret"):
-        value = getattr(settings, name)
+    values = [settings.postgres_password.get_secret_value(), settings.redis_password.get_secret_value()]
+    for name, value in (("csrf_signing_secret", settings.csrf_signing_secret),
+                        ("mfa_encryption_secret", settings.mfa_encryption_secret)):
         if not value or len(value.get_secret_value()) < 32:
             raise ValueError(f"independent {name} is required in production")
-    values = [settings.postgres_password.get_secret_value(), settings.redis_password.get_secret_value(),
-              settings.csrf_signing_secret.get_secret_value(), settings.mfa_encryption_secret.get_secret_value()]
+        values.append(value.get_secret_value())
     if len(set(values)) != len(values):
         raise ValueError("database, Redis, signing and encryption secrets must be independent")
     if settings.redis_username == "default":

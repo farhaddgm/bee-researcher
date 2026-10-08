@@ -115,6 +115,9 @@ def relevance_context_hash(context: dict) -> str:
 
 async def classify_articles(client: OpenAIClient, *, articles: list[dict], topics: list[dict],
                             business: dict, mission: str, max_input_chars: int = 6000) -> dict[tuple[str, str], tuple[float, str]]:
+    allowed = {(str(a["id"]), str(t["topic_key"])) for a in articles for t in topics}
+    if not allowed:
+        return {}
     safe_articles = []
     passages_by_article = {}
     for article_index, article in enumerate(articles):
@@ -126,6 +129,10 @@ async def classify_articles(client: OpenAIClient, *, articles: list[dict], topic
     if not reference_ids:
         raise RelevanceAssessmentError("relevance_source_empty")
     schema["properties"]["scores"]["items"]["properties"]["evidence"]["items"] = {"type": "string", "enum": reference_ids}
+    score_schema = schema["properties"]["scores"]
+    score_schema["minItems"] = score_schema["maxItems"] = len(allowed)
+    score_schema["items"]["properties"]["article_id"]["enum"] = sorted({pair[0] for pair in allowed})
+    score_schema["items"]["properties"]["topic_key"]["enum"] = sorted({pair[1] for pair in allowed})
     # Do not duplicate the body in the prompt. The passages contain the full
     # sanitized input and stable references; IDs are scoped to their article.
     prompt_articles = [{key: value for key, value in article.items() if key != "text"} |
@@ -152,15 +159,19 @@ async def classify_articles(client: OpenAIClient, *, articles: list[dict], topic
         ), user_payload={"articles": prompt_articles, "approved_topics": topics, "optional_business": business, "project_mission": mission},
         schema_name="article_relevance", schema=schema, max_output_tokens=8000,
     )
-    allowed = {(str(a["id"]), str(t["topic_key"])) for a in articles for t in topics}
+    if not isinstance(result, dict) or not isinstance(result.get("scores"), list):
+        raise RelevanceAssessmentError("relevance_coverage_incomplete")
     scores = {}
-    for row in result.get("scores") or []:
+    for row in result["scores"]:
+        if not isinstance(row, dict):
+            raise RelevanceAssessmentError("relevance_score_invalid")
         pair = (str(row.get("article_id")), str(row.get("topic_key")))
         value = row.get("score")
         if pair not in allowed or pair in scores or isinstance(value, bool) or not isinstance(value, (float, int)) or not math.isfinite(value) or not 0 <= value <= 1:
             raise RelevanceAssessmentError("relevance_score_invalid")
         confidence = row.get("confidence")
-        reason = str(row.get("reason") or "").strip()[:1000]
+        reason = row.get("reason")
+        reason = reason.strip()[:1000] if isinstance(reason, str) else ""
         quotes = row.get("evidence")
         article = next(a for a in safe_articles if str(a["article_id"]) == pair[0])
         if isinstance(quotes, list):

@@ -38,7 +38,7 @@ def validate_new_password(value: str | None) -> str | None:
     normalized = unicodedata.normalize("NFKC", value).casefold()
     compact = "".join(c for c in normalized if c.isalnum())
     base = compact.rstrip("0123456789")
-    leet = "".join(c for c in normalized.translate(str.maketrans({"0":"o", "1":"i", "3":"e", "4":"a", "5":"s", "7":"t", "@":"a", "$":"s"})) if c.isalnum()).rstrip("0123456789")
+    leet = "".join(c for c in normalized.translate(str.maketrans("013457@$", "oieastas")) if c.isalnum()).rstrip("0123456789")
     if compact in _COMMON or base in _COMMON or leet in _COMMON or len(set(compact)) < 5:
         raise ValueError("choose an uncommon password or a long passphrase")
     if compact in ("0123456789" * 13, "1234567890" * 13, "abcdefghijklmnopqrstuvwxyz" * 5):

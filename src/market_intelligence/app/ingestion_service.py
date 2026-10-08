@@ -14,6 +14,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import Settings, get_settings
 from app.database import SessionLocal
+from app.deployment_drain import protected_work
 from app.fetchers import DiscoveredItem, FetchFailure, FetchResult, SourceFetcher, SourceSpec, item_fingerprint
 from app.models import ArticleAnalysis, NormalizedArticle, Source, SourceFetchRun, SourceItem, Topic
 from app.queue_names import queue_key
@@ -379,6 +380,7 @@ async def _ingest_source(
         await redis.aclose()
 
 
+@protected_work
 async def run_ingestion(
     source_keys: list[str] | None = None,
     *,
@@ -428,6 +430,7 @@ async def run_ingestion(
     }
 
 
+@protected_work
 async def run_source_health_probe(
     *,
     assistant_id: uuid.UUID | None = None,
@@ -475,6 +478,7 @@ async def run_source_health_probe(
     }
 
 
+@protected_work
 async def run_source_probe(
     source_id: uuid.UUID,
     *,
@@ -645,6 +649,7 @@ async def run_source_probe(
     }
 
 
+@protected_work
 async def run_degraded_source_health_probe() -> dict[str, object]:
     """Check degraded public sources once per scheduler day."""
     return await run_source_health_probe(degraded_only=True, force=False)

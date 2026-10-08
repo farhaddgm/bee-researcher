@@ -5,7 +5,7 @@ import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpcore
 import httpx
@@ -47,6 +47,7 @@ class HardeningTest(unittest.IsolatedAsyncioTestCase):
     async def test_sensitive_changes_emit_warning_events_with_actor_and_scope(self):
         actor, assistant = uuid.uuid4(), uuid.uuid4()
         session, context = AsyncMock(), AsyncMock()
+        session.add = Mock()
         context.__aenter__.return_value = session
         with patch('app.admin.SessionLocal', return_value=context), patch('app.security_events.record_security_event', new=AsyncMock()) as record:
             for action in ('admin_user.manage', 'google_access.update', 'assistant.member.assign',

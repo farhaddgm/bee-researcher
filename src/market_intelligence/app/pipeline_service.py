@@ -22,10 +22,11 @@ from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 
 from app.article_extraction import ArticleDocument, ArticleFetcher
 from app.config import Settings, get_settings
-from app.ai_relevance import SCORER_REVISION, article_digest, assessment_metadata, classify_articles, relevance_context_hash, relevance_decision
+from app.ai_relevance import SCORER_REVISION, RelevanceAssessmentError, article_digest, assessment_metadata, classify_articles, relevance_context_hash, relevance_decision
 from app.business_context import CompiledBusinessProfile, assess_business, business_context_hash, full_article_hash
 from app.research_context import resolve_context, apply_context_decisions
 from app.database import SessionLocal
+from app.deployment_drain import protected_work
 from app.fetchers import FetchFailure
 from app.ingestion_service import DEFAULT_ASSISTANT_ID, run_ingestion, run_sources_independently
 from app.models import (
@@ -701,6 +702,44 @@ async def _reserve_relevance_budget(settings: Settings, assistant_id: uuid.UUID,
         return job_id
 
 
+async def _classify_relevance_batch(
+    settings: Settings, client: OpenAIClient, *, assistant_id: uuid.UUID,
+    inputs: list[dict[str, Any]], topics: list[dict], business: dict, mission: str,
+    input_chars: int, remaining_requests: int, max_input_chars: int = 6000,
+) -> tuple[dict[tuple[str, str], tuple[float, str]], str, int]:
+    """Retry one invalid classification, reserving and recording EVERY attempt.
+
+    Provider refusal/quota/network failures do not trigger this repair. Invalid
+    scores remain review-only. No model response or article text is logged.
+    The shared daily ledger and this run's cap also bound the second attempt.
+    """
+    requests = 0
+    status = "budget_deferred"
+    repairable = {"relevance_score_invalid", "relevance_evidence_invalid", "relevance_coverage_incomplete"}
+    for attempt in range(min(2, max(0, remaining_requests))):
+        job_id = await _reserve_relevance_budget(settings, assistant_id, input_chars)
+        if job_id is None:
+            return {}, "budget_deferred", requests
+        requests += 1
+        result_metadata = {"input_chars": input_chars, "model": settings.analysis_model,
+                           "scorer_revision": SCORER_REVISION, "classification_attempt": attempt + 1}
+        try:
+            scores = await classify_articles(client, articles=inputs, topics=topics, business=business,
+                                             mission=mission, max_input_chars=max_input_chars)
+        except Exception as exc:
+            code = str(getattr(exc, "code", type(exc).__name__))
+            await _finish_job(job_id, status="failed", result=result_metadata, error=code)
+            status = "provider_failed:" + code
+            if not isinstance(exc, RelevanceAssessmentError) or code not in repairable:
+                break
+            LOGGER.warning("relevance_validation_failed code=%s attempt=%d", code, attempt + 1)
+        else:
+            await _finish_job(job_id, status="succeeded", result={**result_metadata, "articles": len(inputs)})
+            return scores, "succeeded", requests
+    return {}, status, requests
+
+
+@protected_work
 async def score_pending_articles(
     settings: Settings,
     *,
@@ -768,21 +807,15 @@ async def score_pending_articles(
             batch = articles[offset:offset + batch_size]
             inputs: list[dict[str, Any]] = [{"id": str(a.id), "title": a.title, "text": a.normalized_text if context and context.live else a.normalized_text[:6000], "incomplete": a.extraction_status != "complete"} for a in batch]
             input_chars = sum(len(a["text"]) + len(a["title"]) for a in inputs) + len(str(topic_context)) + len(str(business)) + len(mission)
-            job_id = await _reserve_relevance_budget(settings, assistant_id, input_chars)
-            if job_id is None:
-                semantic_status = "budget_deferred"
-                break
-            requests += 1
-            try:
-                ai_scores.update(await classify_articles(client, articles=inputs, topics=topic_context, business=business, mission=mission,
-                    **({"max_input_chars": 20000} if context and context.live else {})))
-                await _finish_job(job_id, status="succeeded", result={"input_chars": input_chars, "articles": len(batch), "model": settings.analysis_model})
-                semantic_status = "succeeded"
-            except Exception as exc:
-                # No model evidence -> review-only lexical data, retried next run.
-                provider_code = str(getattr(exc, "code", type(exc).__name__))
-                semantic_status = "provider_failed:" + provider_code
-                await _finish_job(job_id, status="failed", result={"input_chars": input_chars, "model": settings.analysis_model, "scorer_revision": SCORER_REVISION}, error=provider_code)
+            batch_scores, semantic_status, used_requests = await _classify_relevance_batch(
+                settings, client, assistant_id=assistant_id, inputs=inputs, topics=topic_context,
+                business=business, mission=mission, input_chars=input_chars,
+                remaining_requests=settings.relevance_max_requests_per_run - requests,
+                max_input_chars=20000 if context and context.live else 6000,
+            )
+            requests += used_requests
+            ai_scores.update(batch_scores)
+            if semantic_status != "succeeded":
                 break
 
     rows: list[dict[str, object]] = []
@@ -958,6 +991,7 @@ async def _score_business_context(settings: Settings, *, assistant_id: uuid.UUID
     return {"state": "succeeded", "assessed": assessed, "calls": calls}
 
 
+@protected_work
 async def rescore_existing_articles(*, limit: int = 1000) -> dict[str, object]:
     return await score_pending_articles(get_settings(), limit=limit, rescore=True)
 
@@ -1185,6 +1219,7 @@ def _fallback_analysis(
     }
 
 
+@protected_work
 async def regenerate_fallback_analyses(*, limit: int = 200, assistant_id: uuid.UUID | None = None) -> dict[str, int]:
     """Repair incomplete fallback previews, never completed translations or sends."""
     base_settings = get_settings()
@@ -1364,6 +1399,7 @@ def _structured_analysis_payload(
     }
 
 
+@protected_work
 async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_id: uuid.UUID | None = None, fallback_only: bool = False) -> dict[str, object]:
     if assistant_id is None:
         async with SessionLocal() as session:
@@ -1773,6 +1809,7 @@ async def refresh_publication_previews(*, limit: int = 200) -> dict[str, int]:
     return {"candidates": len(rows), "refreshed": len(rows)}
 
 
+@protected_work
 async def repair_report_translations(settings: Settings, *, assistant_id: uuid.UUID, limit: int = 5, apply: bool = False) -> dict[str, Any]:
     """Scoped, budgeted repair; original source/scores/delivery stay immutable.
 
@@ -1902,6 +1939,7 @@ async def _release_publish_claim(publication_id: uuid.UUID, previous_status: str
             await session.commit()
 
 
+@protected_work
 async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: bool = False) -> dict[str, object]:
     """Send one publication to Telegram at most once.
 
@@ -2219,6 +2257,7 @@ async def approve_borderline_publication(publication_id: uuid.UUID) -> dict[str,
     return await publish_publication(publication_id)
 
 
+@protected_work
 async def publish_ready_previews(
     settings: Settings,
     *,
@@ -2866,6 +2905,7 @@ async def pipeline_metrics(*, assistant_id: uuid.UUID | None = None) -> dict[str
     }
 
 
+@protected_work
 async def run_pipeline(
     *,
     source_keys: list[str] | None = None,
