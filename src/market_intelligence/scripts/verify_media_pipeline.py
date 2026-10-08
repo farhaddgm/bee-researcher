@@ -4,7 +4,6 @@ No external provider or Telegram call is made. Refuse production databases.
 Run after `alembic upgrade head`, with PYTHONPATH=src/market_intelligence.
 """
 import asyncio
-import json
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
@@ -17,6 +16,7 @@ from app.database import SessionLocal, engine
 from app.models import AdminUser, ArticleAnalysis, ArticleTopic, AssistantWorkspace, NormalizedArticle, Publication, Source, SourceItem, Topic
 from app import admin
 from app.openai_client import StructuredAnalysis
+from app.ai_relevance import classify_articles
 from app import pipeline_service as pipeline
 
 
@@ -47,17 +47,27 @@ async def main():
                     session.add(NormalizedArticle(id=article_id, assistant_id=aid, source_item_id=iid, canonical_url="https://example.org/" + str(iid), title=text, normalized_text=text, language="en", published_at=now, extraction_status="complete", extraction_method="fixture"))
             await session.commit()
 
-        async def classify(_client, *, articles, topics, business, mission):
+        async def classify(_client, *, articles, topics, business, mission, max_input_chars=6000):
             assert not business, "A business-free workspace received a foreign business profile"
             assert len(topics) == 1, "Topics leaked across workspaces"
-            return {(a["id"], t["topic_key"]): (.92 if "model" in a["text"].lower() else .03,
-                    json.dumps({"revision": pipeline.SCORER_REVISION, "reason": "Fixture factual evidence", "confidence": .9,
-                                "evidence": [a["title"]], "excluded": "sponsored" in a["text"].lower(),
-                                "content_hash": pipeline.article_digest(a["title"], a["text"], a.get("incomplete", False))})) for a in articles for t in topics}
+            # Stub only the external transport, not the evidence validator.
+            # Keep the fixture's signature aligned with the real classifier;
+            # a swallowed TypeError must not masquerade as lexical rejection.
+            transport = AsyncMock()
+            transport.draft_json.return_value = {"scores": [
+                {"article_id": a["id"], "topic_key": t["topic_key"],
+                 "score": .92 if t["topic_key"] == "AI" and "model" in a["text"].lower() else .03,
+                 "reason": "Fixture factual evidence", "confidence": .9,
+                 "evidence": [f"a{index}-title-0"], "excluded": "sponsored" in a["text"].lower()}
+                for index, a in enumerate(articles) for t in topics
+            ]}
+            return await classify_articles(transport, articles=articles, topics=topics,
+                                           business=business, mission=mission, max_input_chars=max_input_chars)
 
         with patch.object(pipeline, "classify_articles", side_effect=classify):
-            await pipeline.score_pending_articles(cfg, limit=10, assistant_id=ids[0])
-            await pipeline.score_pending_articles(cfg, limit=10, assistant_id=ids[1])
+            for aid in ids:
+                result = await pipeline.score_pending_articles(cfg, limit=10, assistant_id=aid)
+                assert result["semantic"] == "succeeded", f"Isolated classifier failed: {result['semantic']}"
         async with SessionLocal() as session:
             rows = (await session.scalars(select(ArticleTopic).where(ArticleTopic.assistant_id.in_(ids)))).all()
             assert len(rows) == 4, "Missing or cross-project scores"
