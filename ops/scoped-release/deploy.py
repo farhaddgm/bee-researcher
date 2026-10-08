@@ -123,14 +123,21 @@ def deploy(args):
     artifact.mkdir(mode=0o755)
     private = ROOT / "ops/bee-researcher-direct/private" / (args.version + "-completion-" + stamp)
     private.mkdir(mode=0o700)
-    override = artifact / "production.override.json"
+    # Snapshot this service's actual environment, not a newly re-evaluated
+    # shared .env. Another project's deployment must not silently rotate our
+    # credentials/configuration. Compose interpolation requires literal '$'
+    # to be escaped. The complete override contains secrets: private 0600 only.
+    environment = {key: value.replace("$", "$$") for key, value in values.items()
+                   if key.startswith("MARKET_INTELLIGENCE_")}
+    environment.update({
+        "MARKET_INTELLIGENCE_VERSION": args.version,
+        "MARKET_INTELLIGENCE_BUILD_REVISION": args.revision,
+        "MARKET_INTELLIGENCE_IMAGE_DIGEST": image_id,
+        "MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED": "true",
+    })
+    override = private / "production.override.json"
     save(override, {"services": {"market-intelligence": {
-        "image": args.image, "stop_grace_period": "600s", "environment": {
-            "MARKET_INTELLIGENCE_VERSION": args.version,
-            "MARKET_INTELLIGENCE_BUILD_REVISION": args.revision,
-            "MARKET_INTELLIGENCE_IMAGE_DIGEST": image_id,
-            "MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED": "true",
-        }}}})
+        "image": args.image, "stop_grace_period": "600s", "environment": environment}}}, private=True)
     command = compose_command(current, override)
     run(command + ["config", "--quiet"])
     controller = None
@@ -183,6 +190,7 @@ def deploy(args):
             "image_id": image_id, "previous_revision": old_revision, "previous_version": old_version,
             "healthy": True, "atomic_drain_used": atomic, "drain_enabled_for_next_release": True,
             "migration_performed": False, "rekey_performed": False, "other_services_restarted": False,
+            "runtime_environment_preserved_in_private_override": True,
         })
         print(json.dumps({"healthy": True, "version": args.version, "receipt": str(artifact / "deployment-receipt.json")}))
     except BaseException:

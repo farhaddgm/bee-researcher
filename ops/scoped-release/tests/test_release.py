@@ -108,7 +108,8 @@ class ScopedReleaseTests(unittest.TestCase):
             (root / "ops/bee-researcher-direct/private").mkdir(parents=True)
             current = {"Image": "old-image", "Config": {"User": "market-intelligence", "Labels": {
                 "org.opencontainers.image.version": "3.39.0", "org.opencontainers.image.revision": REV}, "Env": [
-                "MARKET_INTELLIGENCE_POSTGRES_USER=bee_researcher_runtime", "MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED=true"]},
+                "MARKET_INTELLIGENCE_POSTGRES_USER=bee_researcher_runtime", "MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED=true",
+                "MARKET_INTELLIGENCE_POSTGRES_PASSWORD=synthetic$not-a-real-secret", "UNRELATED_SERVICE_TOKEN=not-copied"]},
                 "HostConfig": {"ReadonlyRootfs": True, "CapDrop": ["ALL"]}}
             live = {"Image": "new-image", "Config": {"User": "market-intelligence"}}
             controller = Mock(returncode=0)
@@ -136,6 +137,14 @@ class ScopedReleaseTests(unittest.TestCase):
                 release.deploy(args)
             self.assertEqual(observations, [(False, True), (True, False)])
             controller.communicate.assert_called_once_with("release\n", timeout=30)
+            overrides = list((root / "ops/bee-researcher-direct/private").glob("*/production.override.json"))
+            self.assertEqual(len(overrides), 1)
+            self.assertEqual(overrides[0].stat().st_mode & 0o777, 0o600)
+            env = json.loads(overrides[0].read_text())["services"]["market-intelligence"]["environment"]
+            self.assertEqual(env["MARKET_INTELLIGENCE_POSTGRES_PASSWORD"], "synthetic$$not-a-real-secret")
+            self.assertNotIn("UNRELATED_SERVICE_TOKEN", env)
+            self.assertEqual(env["MARKET_INTELLIGENCE_VERSION"], "3.39.1")
+            self.assertEqual(list((root / "ops/bee-researcher-direct/artifacts").glob("*/production.override.json")), [])
 
 
 if __name__ == "__main__":
