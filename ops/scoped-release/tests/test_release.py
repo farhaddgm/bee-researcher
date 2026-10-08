@@ -15,6 +15,50 @@ REF = "ghcr.io/farhaddgm/bee-researcher-market-intelligence@sha256:" + "b" * 64
 
 
 class ScopedReleaseTests(unittest.TestCase):
+    def test_compose_interpolation_uses_only_own_actual_runtime(self):
+        current = {"Image": "sha256:previous", "Config": {"Env": [
+            "MARKET_INTELLIGENCE_GOOGLE_CLIENT_SECRET=synthetic$literal",
+            "MARKET_INTELLIGENCE_VERSION=3.39.0", "UNRELATED_SECRET=not-copied"]}}
+        with patch.dict(release.os.environ, {"MARKET_INTELLIGENCE_VERSION": "wrong-shared-env"}, clear=True):
+            environment = release.compose_environment(current)
+        self.assertEqual(environment["MARKET_INTELLIGENCE_VERSION"], "3.39.0")
+        self.assertEqual(environment["MARKET_INTELLIGENCE_GOOGLE_CLIENT_SECRET"], "synthetic$literal")
+        self.assertEqual(environment["BEE_SCOPED_IMAGE"], "sha256:previous")
+        self.assertNotIn("UNRELATED_SECRET", environment)
+
+    def test_clean_uvicorn_sigterm_requires_both_completion_markers(self):
+        stopped = {"Id": "synthetic-container", "State": {"Running": False, "OOMKilled": False, "ExitCode": 143}}
+        result = Mock(returncode=0, stdout="", stderr="INFO:     Application shutdown complete.\nINFO:     Finished server process [1]\n")
+        with patch.object(release.subprocess, "run", return_value=result) as process:
+            self.assertEqual(release.verify_shutdown(stopped, "2026-10-08T00:00:00Z")["exit_code"], 143)
+        self.assertIn("--since", process.call_args.args[0])
+        self.assertIn(stopped["Id"], process.call_args.args[0])
+
+    def test_zero_or_sigterm_without_shutdown_evidence_is_not_success(self):
+        for code in (0, 143):
+            for output in ("", "INFO:     Application shutdown complete.\n", "INFO:     Finished server process [1]\n"):
+                stopped = {"Id": "synthetic", "State": {"ExitCode": code}}
+                with patch.object(release.subprocess, "run", return_value=Mock(returncode=0, stdout=output, stderr="")):
+                    with self.assertRaisesRegex(RuntimeError, "evidence missing"):
+                        release.verify_shutdown(stopped, "2026-10-08T00:00:00Z")
+
+    def test_sigkill_oom_and_other_failures_are_never_clean_shutdown(self):
+        for state in ({"ExitCode": 137}, {"ExitCode": 1}, {"ExitCode": 143, "OOMKilled": True},
+                      {"ExitCode": 0, "Running": True}, {"ExitCode": 143, "Error": "synthetic"}):
+            with patch.object(release.subprocess, "run") as process:
+                with self.assertRaisesRegex(RuntimeError, "did not finish"):
+                    release.verify_shutdown({"Id": "synthetic", "State": state}, "2026-10-08T00:00:00Z")
+                process.assert_not_called()
+
+    def test_uvicorn_auto_lifespan_fallback_is_not_success_even_with_markers(self):
+        markers = "INFO:     Application shutdown complete.\nINFO:     Finished server process [1]\n"
+        for error in ("INFO:     ASGI 'lifespan' protocol appears unsupported.\n",
+                      "ERROR:    Application shutdown failed.\n", "Traceback (most recent call last):\n"):
+            result = Mock(returncode=0, stdout="", stderr=error + markers)
+            with patch.object(release.subprocess, "run", return_value=result):
+                with self.assertRaisesRegex(RuntimeError, "evidence missing"):
+                    release.verify_shutdown({"Id": "synthetic", "State": {"ExitCode": 143}}, "2026-10-08T00:00:00Z")
+
     def test_rejects_other_repositories_and_mutable_tags_before_docker(self):
         for ref in ("latest", REF.replace("bee-researcher", "bee-consultant"), REF.split("@")[0] + ":latest"):
             with patch.object(release, "inspect") as inspect:
@@ -131,7 +175,7 @@ class ScopedReleaseTests(unittest.TestCase):
             with patch.object(release, "ROOT", root), patch.object(release, "candidate", return_value="new-image"), \
                     patch.object(release, "inspect", side_effect=[current, {"State": {"ExitCode": 0}}, live]), \
                     patch.object(release, "compose_command", return_value=["docker", "compose"]), \
-                    patch.object(release, "run", return_value=""), patch.object(release, "wait_health", side_effect=readiness), \
+                    patch.object(release, "run", return_value=""), patch.object(release, "verify_shutdown", return_value={"exit_code": 143}), patch.object(release, "wait_health", side_effect=readiness), \
                     patch.object(release.subprocess, "Popen", return_value=controller), \
                     patch.object(release.select, "select", return_value=([controller.stdout], [], [])):
                 release.deploy(args)
@@ -180,7 +224,7 @@ class ScopedReleaseTests(unittest.TestCase):
             with patch.object(release, "ROOT", root), patch.object(release, "candidate", return_value="new-image"), \
                     patch.object(release, "inspect", side_effect=[current, {"State": {"ExitCode": 0}}]), \
                     patch.object(release, "compose_command", return_value=["docker", "compose"]), \
-                    patch.object(release, "run", return_value=""), patch.object(release, "wait_health", side_effect=readiness), \
+                    patch.object(release, "run", return_value=""), patch.object(release, "verify_shutdown", return_value={"exit_code": 143}), patch.object(release, "wait_health", side_effect=readiness), \
                     patch.object(release.subprocess, "Popen", return_value=controller), \
                     patch.object(release.select, "select", return_value=([controller.stdout], [], [])):
                 with self.assertRaisesRegex(RuntimeError, "candidate verification failed"):
