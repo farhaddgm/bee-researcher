@@ -4,10 +4,12 @@ import { chromium } from 'playwright';
 // clickable while a responsive layer above it receives the pointer event.
 // This intentionally uses page.mouse.click rather than locator.click so it
 // exercises the browser hit-test at the button's visible centre.
-const baseUrl = process.env.BEE_ADMIN_URL || 'https://researcher.beeproject.ir/admin';
+const baseUrl = process.env.BEE_ADMIN_URL;
 const username = process.env.MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_USERNAME;
 const password = process.env.MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_PASSWORD;
-if (!username || !password) throw new Error('Admin bootstrap credentials are unavailable.');
+if (!baseUrl || !username || !password || process.env.MARKET_INTELLIGENCE_ENVIRONMENT !== 'test') {
+  throw new Error('Catalog E2E requires an isolated test application and credentials.');
+}
 
 const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ viewport: { width: 1920, height: 980 } });
@@ -74,7 +76,7 @@ async function openWithPhysicalClick(view, buttonId, fieldId, viewport) {
   return { viewport: viewport.width, view, buttonId, topHit: diagnostic.topHit };
 }
 
-await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+await page.goto(new URL("/admin/login-up",baseUrl).href, { waitUntil: 'domcontentloaded', timeout: 30000 });
 await page.locator('#loginUser').fill(username);
 await page.locator('#loginPass').fill(password);
 await page.locator('#loginSubmit').click();
@@ -84,7 +86,7 @@ const results = [];
 const widths = [1920, 1680, 1440, 1280, 1120, 1000, 900, 800];
 for (const width of widths) {
   const viewport = { width, height: 980 };
-  results.push(await openWithPhysicalClick('sources', 'addSourceBtn', 'directSourceName', viewport));
+  results.push(await openWithPhysicalClick('sources', 'addSourceBtn', 'mediaDraftName', viewport));
   results.push(await openWithPhysicalClick('topics', 'addTopicBtn', 'draftTopicName', viewport));
 }
 

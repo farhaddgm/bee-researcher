@@ -149,7 +149,7 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
         settings = SimpleNamespace(
             timezone="Europe/Berlin",
             owner_email="owner@gmail.com",
-            admin_session_ttl_hours=6,
+            admin_session_ttl_hours=6, session_absolute_hours=12,
         )
         with (
             patch("app.admin.SessionLocal", return_value=SessionContext()),
@@ -220,6 +220,7 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
         owner = SimpleNamespace(username="owner-account", email="owner@gmail.com", role="admin", id=uuid.uuid4())
         with (
             patch("app.admin.list_admin_notifications", new=AsyncMock(return_value={"notifications": []})),
+            patch("app.security_events.security_incidents", new=AsyncMock(return_value=[])),
             patch("app.admin._visible_project_scope_ids", new=AsyncMock(return_value=None)),
             patch("app.admin.SessionLocal", return_value=SessionContext()),
             patch("app.admin.get_settings", return_value=SimpleNamespace(owner_email="owner@gmail.com")),
@@ -357,15 +358,15 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
         self.assertFalse(any(row["configured"] for row in result["channels"]))
 
     def test_admin_user_password_requires_long_secret(self):
-        self.assertEqual(12, len(AdminUserPasswordUpdate(new_password="a" * 12).new_password))
+        self.assertEqual(34, len(AdminUserPasswordUpdate(new_password="violet herons cross mountain lakes").new_password))
         with self.assertRaises(ValidationError):
             AdminUserPasswordUpdate(new_password="short")
 
     def test_user_management_supports_selected_projects_and_required_roles(self):
         selected = uuid.uuid4()
-        payload = AdminUserRequest(username="limited-user", password="a" * 12, role="editor", assistant_ids=[selected])
+        payload = AdminUserRequest(username="limited-user", password="violet herons cross mountain lakes", role="editor", assistant_ids=[selected])
         self.assertEqual([selected], payload.assistant_ids)
-        managed = AdminUserManageUpdate(role="viewer", assistant_ids=[selected], new_password="b" * 12)
+        managed = AdminUserManageUpdate(role="viewer", assistant_ids=[selected], new_password="patient badgers traverse riverbanks")
         self.assertEqual("viewer", managed.role)
         self.assertEqual([selected], managed.assistant_ids)
 
@@ -396,6 +397,8 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
         )
         self.assertEqual(["farhaadnoroozi"], settings.allowed_feedback_usernames)
         self.assertEqual(7, settings.freshness_window_days)
+        for model in ("gpt-6.1-sol", "gpt-6-luna", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"):
+            self.assertEqual(model, AssistantRuntimeSettingsUpdate(analysis_model=model).analysis_model)
         with self.assertRaises(ValidationError):
             AssistantRuntimeSettingsUpdate(analysis_model="arbitrary-model")
         for invalid in (0, 31):

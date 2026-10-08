@@ -13,12 +13,13 @@ import httpx
 
 from app.config import Settings
 from app.security_controls import redact_sensitive_text
+from app.report_language import normalize_language, report_copy
 
 
 TELEGRAM_MESSAGE_LIMIT = 4096
 PRODUCT_MESSAGE_LIMIT = 1200
 SAFE_MESSAGE_LIMIT = PRODUCT_MESSAGE_LIMIT
-MESSAGE_TEMPLATE_VERSION = "mi-020-v1.1.9"
+MESSAGE_TEMPLATE_VERSION = "mi-020-v1.2.0"
 
 
 def _normalize_message_text(value: str) -> str:
@@ -138,16 +139,19 @@ def render_analysis_message(
     incomplete: bool,
     template_blocks: list[dict[str, object]] | None = None,
     business_name: str = "داتین",
+    output_language: str = "fa",
 ) -> str:
     del confidence, action, incomplete
+    language = normalize_language(output_language)
+    labels = report_copy(language)
     escaped_url = html.escape(source_url.strip(), quote=True)
     try:
         publication = datetime.fromisoformat(published_at) if published_at else None
         if publication and publication.tzinfo is None:
             publication = publication.replace(tzinfo=timezone.utc)
-        publication_date = _jalali_date(published_at)
+        publication_date = _jalali_date(published_at) if language == "fa" else (publication.strftime("%Y-%m-%d %H:%M %Z") if publication else labels["unknown"])
     except ValueError:
-        publication_date = "نامشخص"
+        publication_date = labels["unknown"]
 
     headline_text = _normalize_message_text(headline)
     business_label = _normalize_message_text(business_name) or "داتین"
@@ -155,21 +159,21 @@ def render_analysis_message(
     summary_text = _clean_summary(summary)
     risks: list[str] = []
     if _normalize_message_text(opportunity):
-        risks.append(f"○ فرصت: {_normalize_message_text(opportunity)}")
+        risks.append(f"○ {labels['opportunity']}: {_normalize_message_text(opportunity)}")
     if _normalize_message_text(risk):
-        risks.append(f"○ ریسک: {_normalize_message_text(risk)}")
+        risks.append(f"○ {labels['risk']}: {_normalize_message_text(risk)}")
     def build(summary_limit: int, connection_limit: int, opportunity_limit: int) -> str:
         opportunity_block = ""
         if risks:
-            opportunity_block = "\n\n🔍 <b>فرصت و ریسک:</b>\n" + "\n".join(
+            opportunity_block = f"\n\n🔍 <b>{labels['risks']}:</b>\n" + "\n".join(
                 _bounded_prose(item, opportunity_limit // len(risks)) for item in risks
             )
         message = (
             f"📢 <b>{_bounded_prose(headline_text, 150)}</b>\n\n"
             f"{_bounded_prose(summary_text, summary_limit)}\n\n"
-            f"🔗 مطالعه بیشتر: <a href=\"{escaped_url}\">{_escaped_text(source_text, 120)}</a>\n"
+            f"🔗 {labels['read_more']}: <a href=\"{escaped_url}\">{_escaped_text(source_text, 120)}</a>\n"
             f"{publication_date}\n\n"
-            f"💡 <b>ارتباط با {html.escape(business_label, quote=False)}:</b>\n{_bounded_prose(business_connection, connection_limit)}"
+            f"💡 <b>{labels['connection']} {html.escape(business_label, quote=False)}:</b>\n{_bounded_prose(business_connection, connection_limit)}"
             f"{opportunity_block}"
         )
         return message
@@ -200,15 +204,15 @@ def render_analysis_message(
             # intentionally add no raw URL or HTML to the message body.
             "image": lambda b: "",
             "summary": lambda b: f"{block_emoji(b, '') + ' ' if block_emoji(b, '') else ''}{_bounded_prose(summary_text, block_limit(b, 'summary'))}",
-            "business_connection": lambda b: f"{block_emoji(b, '💡')} <b>ارتباط با {html.escape(business_label, quote=False)}:</b>\n{_bounded_prose(business_connection, block_limit(b, 'business_connection'))}",
-            "opportunity": lambda b: f"{block_emoji(b, '🔍')} <b>فرصت:</b> {_bounded_prose(opportunity, block_limit(b, 'opportunity'))}",
-            "risk": lambda b: f"{block_emoji(b, '⚠️')} <b>ریسک:</b> {_bounded_prose(risk, block_limit(b, 'risk'))}",
-            "source": lambda b: f"{block_emoji(b, '🔗')} <b>منبع:</b> <a href=\"{escaped_url}\">{_escaped_text(source_text, block_limit(b, 'source'))}</a>",
+            "business_connection": lambda b: f"{block_emoji(b, '💡')} <b>{labels['connection']} {html.escape(business_label, quote=False)}:</b>\n{_bounded_prose(business_connection, block_limit(b, 'business_connection'))}",
+            "opportunity": lambda b: f"{block_emoji(b, '🔍')} <b>{labels['opportunity']}:</b> {_bounded_prose(opportunity, block_limit(b, 'opportunity'))}",
+            "risk": lambda b: f"{block_emoji(b, '⚠️')} <b>{labels['risk']}:</b> {_bounded_prose(risk, block_limit(b, 'risk'))}",
+            "source": lambda b: f"{block_emoji(b, '🔗')} <b>{labels['source']}:</b> <a href=\"{escaped_url}\">{_escaped_text(source_text, block_limit(b, 'source'))}</a>",
             "published_at": lambda b: f"{block_emoji(b, '🕒')} {publication_date}" if block_emoji(b, '🕒') else publication_date,
             "source_url": lambda b: f"<a href=\"{escaped_url}\">{_escaped_text(source_text, block_limit(b, 'source_url'))}</a>",
             # TelegramClient adds the actual inline buttons for the feedback
             # channel. This block is a useful cue in preview/observer layouts.
-            "feedback": lambda b: f"{block_emoji(b, '🗳')} <b>بازخورد:</b> مرتبط / نامرتبط",
+            "feedback": lambda b: f"{block_emoji(b, '🗳')} <b>{labels['feedback']}:</b> {labels['feedback_choices']}",
             "footer": lambda b: f"{block_emoji(b, '') + ' ' if block_emoji(b, '') else ''}Bee Researcher",
         }
         parts = []
@@ -229,7 +233,7 @@ def render_analysis_message(
             custom = custom[:PRODUCT_MESSAGE_LIMIT].rsplit(" ", 1)[0].rstrip()
         if not custom:
             raise AssertionError("MI template rendered an empty message")
-        return custom
+        return custom if language == "fa" else custom.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
 
     message = build(350, 300, 250)
     if len(message) > PRODUCT_MESSAGE_LIMIT:
@@ -239,7 +243,7 @@ def render_analysis_message(
         message = build(180, 160, 80)
     if len(message) > PRODUCT_MESSAGE_LIMIT:
         raise AssertionError("MI-014 renderer exceeded its 1200-character message limit")
-    return message
+    return message if language == "fa" else message.translate(str.maketrans("۰۱۲۳۴۵۶۷۸۹", "0123456789"))
 
 
 @dataclass(frozen=True, slots=True)

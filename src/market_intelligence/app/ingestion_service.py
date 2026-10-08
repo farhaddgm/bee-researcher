@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Awaitable, Callable, Iterable, TypeVar
 
@@ -14,10 +14,13 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import Settings, get_settings
 from app.database import SessionLocal
-from app.fetchers import FetchFailure, FetchResult, SourceFetcher, SourceSpec, item_fingerprint
+from app.deployment_drain import protected_work
+from app.fetchers import DiscoveredItem, FetchFailure, FetchResult, SourceFetcher, SourceSpec, item_fingerprint
 from app.models import ArticleAnalysis, NormalizedArticle, Source, SourceFetchRun, SourceItem, Topic
 from app.queue_names import queue_key
 from app.relevance import combine_topic_score, lexical_topic_score
+from app.observability import log_event
+from app.security_controls import redact_sensitive_text
 
 
 T = TypeVar("T")
@@ -145,7 +148,9 @@ async def _record_result(
     status_code: int | None = None,
     attempts: int = 0,
     content_extraction_ok: bool = True,
+    update_ingestion_state: bool = True,
 ) -> None:
+    error = redact_sensitive_text(error, limit=2000) if error else None
     finished_at = datetime.now(timezone.utc)
     async with SessionLocal() as session:
         source = await session.get(Source, source_id, with_for_update=True)
@@ -178,7 +183,7 @@ async def _record_result(
             )
         )
         source.last_attempt_at = started_at
-        if status != "rate_limited":
+        if update_ingestion_state and status != "rate_limited":
             source.next_allowed_at = finished_at + timedelta(
                 seconds=source.rate_limit_seconds
             )
@@ -189,7 +194,7 @@ async def _record_result(
             source.health_status = "healthy"
             source.consecutive_failures = 0
             source.last_error = None
-            if result is not None:
+            if result is not None and update_ingestion_state:
                 source.etag = result.etag or source.etag
                 source.last_modified = result.last_modified or source.last_modified
         elif status in {"succeeded", "not_modified"} and not content_extraction_ok:
@@ -208,6 +213,12 @@ async def _record_result(
             source.consecutive_failures += 1
             source.last_error = (error or status)[:2000]
         await session.commit()
+        log_event(
+            "source_fetch_finished", assistant_id=str(source.assistant_id),
+            source_id=str(source_id), status=status, status_code=actual_code,
+            items_seen=seen, items_inserted=inserted, attempts=actual_attempts,
+            extraction_ok=content_extraction_ok and status in {"succeeded", "not_modified"}, probe=not update_ingestion_state,
+        )
 
 
 async def _store_items(
@@ -234,7 +245,7 @@ async def _store_items(
     statement = (
         postgresql_insert(SourceItem)
         .values(rows)
-        .on_conflict_do_nothing(index_elements=[SourceItem.fingerprint])
+        .on_conflict_do_nothing(index_elements=[SourceItem.assistant_id, SourceItem.fingerprint])
         .returning(SourceItem.id)
     )
     async with SessionLocal() as session:
@@ -249,6 +260,7 @@ async def _ingest_source(
     settings: Settings,
     force: bool,
     store_items: bool = True,
+    observed_items: list[DiscoveredItem] | None = None,
 ) -> SourceRunResult:
     started_at = datetime.now(timezone.utc)
     async with SessionLocal() as session:
@@ -257,12 +269,16 @@ async def _ingest_source(
             return SourceRunResult(str(source_id), "disabled")
         source_key = source.source_key
         if not force and source.next_allowed_at and source.next_allowed_at > started_at:
-            await _record_result(source_id, started_at, None, status="rate_limited")
+            await _record_result(source_id, started_at, None, status="rate_limited", update_ingestion_state=store_items)
             return SourceRunResult(source_key, "rate_limited")
         spec = _source_spec(source)
+        if not store_items:
+            # A health check must read content, not inherit a conditional 304,
+            # and must never acknowledge data that ingestion has not stored.
+            spec = replace(spec, etag=None, last_modified=None)
 
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
-    lock_segment = f"ingest_lock_{source_key.lower().replace('-', '_')}"
+    lock_segment = f"ingest_lock_{source_id.hex}"
     lock_name = queue_key(lock_segment, settings=settings)
     lock_token = uuid.uuid4().hex
     acquired = False
@@ -279,6 +295,8 @@ async def _ingest_source(
             return SourceRunResult(source_key, "skipped_locked")
         fetcher = SourceFetcher(settings)
         result = await fetcher.fetch(spec)
+        if observed_items is not None:
+            observed_items.extend(result.items)
         if result.status == "robots_denied":
             await _record_result(
                 source_id,
@@ -286,6 +304,7 @@ async def _ingest_source(
                 result,
                 status="robots_denied",
                 error="robots.txt denied the configured fetch URL",
+                update_ingestion_state=store_items,
             )
             return SourceRunResult(source_key, "robots_denied")
         # A health probe deliberately fetches and records the source outcome
@@ -306,6 +325,7 @@ async def _ingest_source(
             status="succeeded" if result.status == "degraded" else result.status,
             inserted=inserted,
             content_extraction_ok=extraction_ok,
+            update_ingestion_state=store_items,
         )
         return SourceRunResult(
             source_key,
@@ -316,7 +336,7 @@ async def _ingest_source(
             status_code=result.status_code,
         )
     except FetchFailure as exc:
-        error = f"FetchFailure: {exc}"
+        error = redact_sensitive_text(f"FetchFailure: {exc}", limit=2000)
         await _record_result(
             source_id,
             started_at,
@@ -325,6 +345,7 @@ async def _ingest_source(
             error=error,
             status_code=exc.status_code,
             attempts=exc.attempts,
+            update_ingestion_state=store_items,
         )
         return SourceRunResult(
             source_key,
@@ -334,13 +355,14 @@ async def _ingest_source(
             error=error,
         )
     except Exception as exc:
-        error = f"{type(exc).__name__}: {exc}"[:2000]
+        error = redact_sensitive_text(f"{type(exc).__name__}: {exc}", limit=2000)
         await _record_result(
             source_id,
             started_at,
             None,
             status="failed",
             error=error,
+            update_ingestion_state=store_items,
         )
         return SourceRunResult(source_key, "failed", error=error)
     finally:
@@ -358,6 +380,7 @@ async def _ingest_source(
         await redis.aclose()
 
 
+@protected_work
 async def run_ingestion(
     source_keys: list[str] | None = None,
     *,
@@ -407,6 +430,7 @@ async def run_ingestion(
     }
 
 
+@protected_work
 async def run_source_health_probe(
     *,
     assistant_id: uuid.UUID | None = None,
@@ -454,6 +478,7 @@ async def run_source_health_probe(
     }
 
 
+@protected_work
 async def run_source_probe(
     source_id: uuid.UUID,
     *,
@@ -465,9 +490,9 @@ async def run_source_probe(
 
     This is the bounded, operator-facing smoke test used immediately after a
     source is saved.  It deliberately reuses the production ingestion lock,
-    parser and item store, then applies the same lexical relevance contract
-    as the pipeline.  No normalized article, publication or Telegram send is
-    created here; the result is only a reviewable diagnostic.
+    parser and item store. Keyword matches are diagnostics, NOT AI relevance
+    decisions. No normalized article, paid model call, publication or Telegram
+    send is created here. A cross-language source needs normal AI analysis.
     """
     bounded_limit = min(max(int(limit), 10), 20)
     base_settings = settings or get_settings()
@@ -487,11 +512,13 @@ async def run_source_probe(
         source_key = source.source_key
         source_name = source.name
 
+    observed: list[DiscoveredItem] = []
     run = await _ingest_source(
         source_id,
         settings=probe_settings,
         force=True,
         store_items=True,
+        observed_items=observed,
     )
     if run.status == "degraded":
         return {
@@ -532,20 +559,10 @@ async def run_source_probe(
                 .order_by(Topic.importance.desc(), Topic.display_order, Topic.topic_key)
             )
         ).scalars().all()
-        items = (
-            await session.execute(
-                select(SourceItem)
-                .where(
-                    SourceItem.source_id == source_id,
-                    SourceItem.assistant_id == assistant_id,
-                )
-                .order_by(
-                    SourceItem.published_at.desc().nullslast(),
-                    SourceItem.discovered_at.desc(),
-                )
-                .limit(bounded_limit)
-            )
-        ).scalars().all()
+        # Use the fetched text itself: stored fingerprint duplicates may have
+        # an older excerpt or a retention-purged tombstone. Neither describes
+        # the extractability of the current HTTP response.
+        items = observed[:bounded_limit]
         current_source = await session.get(Source, source_id)
 
     thresholds = [
@@ -579,7 +596,9 @@ async def run_source_probe(
                 score.positive_matches,
                 score.negative_matches,
             )
-            if best is None or candidate[0] > best[0]:
+            # A lower raw score passing its own topic threshold is more
+            # meaningful than a higher score that misses a stricter threshold.
+            if best is None or (candidate[0] >= candidate[2], candidate[0] - candidate[2]) > (best[0] >= best[2], best[0] - best[2]):
                 best = candidate
         score_value = best[0] if best else 0.0
         threshold = best[2] if best else default_threshold
@@ -599,6 +618,8 @@ async def run_source_probe(
                 "state": state,
                 "topic": best[1] if best else None,
                 "matched_terms": list(best[3]) if best else [],
+                "score_kind": "lexical_diagnostic",
+                "ai_state": "pending",
             }
         )
     def relevance_sort_key(row: dict[str, object]) -> float:
@@ -620,11 +641,15 @@ async def run_source_probe(
         "related": related,
         "near_threshold": near,
         "top_results": results[:5],
+        "score_kind": "lexical_diagnostic",
+        "ai_state": "pending",
+        "no_ai_request": True,
         "error": error,
         "no_publish": True,
     }
 
 
+@protected_work
 async def run_degraded_source_health_probe() -> dict[str, object]:
     """Check degraded public sources once per scheduler day."""
     return await run_source_health_probe(degraded_only=True, force=False)

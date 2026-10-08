@@ -16,6 +16,7 @@ from app.pipeline_service import (
     _claim_job,
     _finish_job,
     apply_retention,
+    expire_abandoned_job_runs,
     generate_weekly_report,
     publish_ready_previews,
     record_feedback,
@@ -26,6 +27,7 @@ from app.queue_names import queue_key
 from app.security_controls import redact_sensitive_text
 from app.telegram_delivery import TelegramClient
 from app.database import SessionLocal
+from app.deployment_drain import protected_work, work_lease
 from app.models import AssistantWorkspace, JobRun
 from app.ingestion_service import DEFAULT_ASSISTANT_ID
 from app.bee_cfo.service import run_scheduled_reports, why_changed_for_report
@@ -548,6 +550,7 @@ async def _tick_assistant(
         STATUS.last_pipeline_status = str(delivery.get("status", "completed"))
 
 
+@protected_work
 async def scheduler_tick(settings: Settings, *, now: datetime | None = None) -> dict[str, object]:
     now = now or datetime.now(timezone.utc)
     schedule_times, _ = await scheduler_schedule_times(settings)
@@ -662,9 +665,16 @@ async def scheduler_tick(settings: Settings, *, now: datetime | None = None) -> 
 
 async def scheduler_loop(settings: Settings, stop: asyncio.Event) -> None:
     STATUS.scheduler_running = True
+    reconciled_at: datetime | None = None
     try:
         while not stop.is_set():
             try:
+                now = datetime.now(timezone.utc)
+                if reconciled_at is None or now - reconciled_at >= timedelta(hours=1):
+                    expired = await expire_abandoned_job_runs(now=now)
+                    reconciled_at = now
+                    if expired:
+                        _log_runtime_event("abandoned_jobs_reconciled", count=expired)
                 result = await scheduler_tick(settings)
                 STATUS.last_scheduler_tick = datetime.now(timezone.utc).isoformat()
                 STATUS.last_scheduler_error = None
@@ -714,102 +724,106 @@ async def telegram_feedback_loop(settings: Settings, stop: asyncio.Event) -> Non
         offset = int(stored_offset) if stored_offset else None
         while not stop.is_set():
             try:
-                updates = await telegram.get_updates(offset)
-                for update in updates:
-                    raw_update_id = update.get("update_id", 0)
-                    try:
-                        update_id = int(raw_update_id) if isinstance(raw_update_id, (int, str)) else 0
-                    except (TypeError, ValueError, OverflowError):
-                        update_id = 0
-                    offset = update_id + 1
-                    STATUS.last_feedback_update_id = update_id
-                    callback_value = update.get("callback_query")
-                    callback = callback_value if isinstance(callback_value, dict) else {}
-                    callback_id = str(callback.get("id") or "")
-                    data = str(callback.get("data") or "")
-                    user_value = callback.get("from")
-                    user = user_value if isinstance(user_value, dict) else {}
-                    username = str(user.get("username") or "").lower()
-                    parts = data.split(":", 2)
-                    if len(parts) != 3 or parts[0] != "mi" or parts[1] not in {"up", "down"}:
-                        message = update.get("message") or {}
-                        chat = message.get("chat") if isinstance(message, dict) else {}
-                        sender = message.get("from") if isinstance(message, dict) else {}
-                        text = str(message.get("text") or "") if isinstance(message, dict) else ""
-                        username = str(sender.get("username") or "").strip().lower().lstrip("@") if isinstance(sender, dict) else ""
-                        chat_id = str(chat.get("id") or "") if isinstance(chat, dict) else ""
-                        private_chat = isinstance(chat, dict) and str(chat.get("type") or "") == "private"
-                        command = WHY_CHANGED_COMMAND.fullmatch(text)
-                        if not command or not private_chat or username not in settings.allowed_telegram_username_values or not chat_id:
-                            continue
-                        rate_key = queue_key(f"bee_cfo_why_{username}", settings=settings)
-                        if not await redis.set(rate_key, "1", ex=60, nx=True):
-                            await telegram.send_analysis(
-                                "لطفاً یک دقیقه دیگر دوباره تلاش کنید.",
-                                analysis_id=__import__("uuid").UUID(command.group(1)),
-                                channel_id=chat_id,
-                                include_feedback_buttons=False,
-                                silent=True,
-                                message_limit=1200,
-                            )
+                # Admit the entire polling cycle, including the offset commit.
+                # Never acknowledge/skip a Telegram update during maintenance.
+                async with work_lease():
+                    updates = await telegram.get_updates(offset)
+                    for update in updates:
+                        raw_update_id = update.get("update_id", 0)
+                        try:
+                            update_id = int(raw_update_id) if isinstance(raw_update_id, (int, str)) else 0
+                        except (TypeError, ValueError, OverflowError):
+                            update_id = 0
+                        offset = update_id + 1
+                        STATUS.last_feedback_update_id = update_id
+                        callback_value = update.get("callback_query")
+                        callback = callback_value if isinstance(callback_value, dict) else {}
+                        callback_id = str(callback.get("id") or "")
+                        data = str(callback.get("data") or "")
+                        user_value = callback.get("from")
+                        user = user_value if isinstance(user_value, dict) else {}
+                        username = str(user.get("username") or "").lower()
+                        parts = data.split(":", 2)
+                        if len(parts) != 3 or parts[0] != "mi" or parts[1] not in {"up", "down"}:
+                            message = update.get("message") or {}
+                            chat = message.get("chat") if isinstance(message, dict) else {}
+                            sender = message.get("from") if isinstance(message, dict) else {}
+                            text = str(message.get("text") or "") if isinstance(message, dict) else ""
+                            username = str(sender.get("username") or "").strip().lower().lstrip("@") if isinstance(sender, dict) else ""
+                            chat_id = str(chat.get("id") or "") if isinstance(chat, dict) else ""
+                            private_chat = isinstance(chat, dict) and str(chat.get("type") or "") == "private"
+                            command = WHY_CHANGED_COMMAND.fullmatch(text)
+                            if not command or not private_chat or not isinstance(sender, dict) or str(sender.get("id")) not in settings.telegram_identity_bindings or chat_id != str(sender.get("id")):
+                                continue
+                            rate_key = queue_key(f"bee_cfo_why_{sender.get('id')}", settings=settings)
+                            if not await redis.set(rate_key, "1", ex=60, nx=True):
+                                await telegram.send_analysis(
+                                    "لطفاً یک دقیقه دیگر دوباره تلاش کنید.",
+                                    analysis_id=__import__("uuid").UUID(command.group(1)),
+                                    channel_id=chat_id,
+                                    include_feedback_buttons=False,
+                                    silent=True,
+                                    message_limit=1200,
+                                )
+                                continue
+                            try:
+                                result = await why_changed_for_report(
+                                    __import__("uuid").UUID(command.group(1)), telegram_sender=sender
+                                )
+                                await telegram.send_analysis(
+                                    str(result["message"]),
+                                    analysis_id=__import__("uuid").UUID(command.group(1)),
+                                    channel_id=chat_id,
+                                    include_feedback_buttons=False,
+                                    silent=True,
+                                    message_limit=1200,
+                                )
+                            except (KeyError, ValueError):
+                                await telegram.send_analysis(
+                                    "شناسهٔ گزارش معتبر نیست یا به Bee CFO تعلق ندارد.",
+                                    analysis_id=__import__("uuid").UUID(command.group(1)),
+                                    channel_id=chat_id,
+                                    include_feedback_buttons=False,
+                                    silent=True,
+                                    message_limit=1200,
+                                )
+                            except Exception:
+                                LOGGER.exception("unexpected Bee CFO why-changed command failure")
+                                await telegram.send_analysis(
+                                    "پاسخ «چرا تغییر کرد؟» اکنون آماده نیست.",
+                                    analysis_id=__import__("uuid").UUID(command.group(1)),
+                                    channel_id=chat_id,
+                                    include_feedback_buttons=False,
+                                    silent=True,
+                                    message_limit=1200,
+                                )
                             continue
                         try:
-                            result = await why_changed_for_report(
-                                __import__("uuid").UUID(command.group(1)), requestor=username
+                            analysis_id = __import__("uuid").UUID(parts[2])
+                            feedback_result = await record_feedback(
+                                analysis_id,
+                                actor_key="",
+                                value=parts[1],
+                                source="telegram_callback",
+                                telegram_sender=user,
                             )
-                            await telegram.send_analysis(
-                                str(result["message"]),
-                                analysis_id=__import__("uuid").UUID(command.group(1)),
-                                channel_id=chat_id,
-                                include_feedback_buttons=False,
-                                silent=True,
-                                message_limit=1200,
-                            )
-                        except (KeyError, ValueError):
-                            await telegram.send_analysis(
-                                "شناسهٔ گزارش معتبر نیست یا به Bee CFO تعلق ندارد.",
-                                analysis_id=__import__("uuid").UUID(command.group(1)),
-                                channel_id=chat_id,
-                                include_feedback_buttons=False,
-                                silent=True,
-                                message_limit=1200,
-                            )
+                            if callback_id:
+                                await telegram.answer_callback(
+                                    callback_id,
+                                    "این بازخورد قبلاً ثبت شده است."
+                                    if feedback_result.get("duplicate")
+                                    else "بازخورد ثبت شد.",
+                                )
+                        except ValueError as exc:
+                            LOGGER.warning("feedback rejected: %s", redact_sensitive_text(str(exc), limit=300))
+                            if callback_id:
+                                await telegram.answer_callback(callback_id, str(exc))
                         except Exception:
-                            LOGGER.exception("unexpected Bee CFO why-changed command failure")
-                            await telegram.send_analysis(
-                                "پاسخ «چرا تغییر کرد؟» اکنون آماده نیست.",
-                                analysis_id=__import__("uuid").UUID(command.group(1)),
-                                channel_id=chat_id,
-                                include_feedback_buttons=False,
-                                silent=True,
-                                message_limit=1200,
-                            )
-                        continue
-                    try:
-                        analysis_id = __import__("uuid").UUID(parts[2])
-                        feedback_result = await record_feedback(
-                            analysis_id,
-                            actor_key=username,
-                            value=parts[1],
-                            source="telegram_callback",
-                        )
-                        if callback_id:
-                            await telegram.answer_callback(
-                                callback_id,
-                                "این بازخورد قبلاً ثبت شده است."
-                                if feedback_result.get("duplicate")
-                                else "بازخورد ثبت شد.",
-                            )
-                    except ValueError as exc:
-                        LOGGER.warning("feedback rejected: %s", redact_sensitive_text(str(exc), limit=300))
-                        if callback_id:
-                            await telegram.answer_callback(callback_id, str(exc))
-                    except Exception:
-                        LOGGER.exception("unexpected Telegram feedback failure")
-                        if callback_id:
-                            await telegram.answer_callback(callback_id, "ثبت بازخورد ناموفق بود.")
-                if offset is not None:
-                    await redis.set(offset_key, str(offset))
+                            LOGGER.exception("unexpected Telegram feedback failure")
+                            if callback_id:
+                                await telegram.answer_callback(callback_id, "ثبت بازخورد ناموفق بود.")
+                    if offset is not None:
+                        await redis.set(offset_key, str(offset))
             except Exception:
                 await asyncio.sleep(5)
     finally:

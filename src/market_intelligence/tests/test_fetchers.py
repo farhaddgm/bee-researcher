@@ -3,6 +3,7 @@ import os
 import unittest
 
 import httpx
+import brotli
 
 
 os.environ.setdefault("MARKET_INTELLIGENCE_POSTGRES_DB", "assistant_test")
@@ -84,6 +85,33 @@ class ParserTest(unittest.TestCase):
         self.assertEqual("A meaningful banking headline", parsed_html[0].title)
         self.assertEqual("https://example.com/123-news", parsed_html[0].url)
 
+
+class LegacyFeedAdapterTest(unittest.IsolatedAsyncioTestCase):
+    async def test_html_adapter_reads_real_rss_without_guessing_or_extra_requests(self):
+        requests = []
+        def handler(request):
+            requests.append(str(request.url))
+            if request.url.path == "/robots.txt":
+                return httpx.Response(200, text="User-agent: *\nAllow: /")
+            return httpx.Response(200, content=RSS, headers={"content-type": "application/rss+xml"})
+        fetcher = SourceFetcher(settings(), transport=httpx.MockTransport(handler), resolver=allow_test_destination, sleeper=no_sleep)
+        result = await fetcher.fetch(SourceSpec(source_key="legacy", name="Legacy", homepage_url="https://example.com", fetch_url="https://example.com/feed", adapter="html"))
+        self.assertEqual("succeeded", result.status)
+        self.assertEqual("https://example.com/news/1", result.items[0].url)
+        self.assertEqual(["https://example.com/robots.txt", "https://example.com/feed"], requests)
+
+    async def test_auto_feed_detection_never_bypasses_robots(self):
+        requests = []
+        def handler(request):
+            requests.append(request.url.path)
+            return httpx.Response(200, text="User-agent: *\nDisallow: /")
+        fetcher = SourceFetcher(settings(), transport=httpx.MockTransport(handler), resolver=allow_test_destination)
+        result = await fetcher.fetch(SourceSpec(source_key="legacy", name="Legacy", homepage_url="https://example.com", fetch_url="https://example.com/feed", adapter="html"))
+        self.assertEqual("robots_denied", result.status)
+        self.assertEqual(["/robots.txt"], requests)
+
+class ParserContinuationTest(unittest.TestCase):
+
     def test_feed_parser_rejects_dtd_and_external_entity_payloads(self):
         payload = b'''<?xml version="1.0"?>
         <!DOCTYPE rss [<!ENTITY local SYSTEM "file:///etc/passwd">]>
@@ -158,6 +186,39 @@ class ParserTest(unittest.TestCase):
 
 
 class FetcherTest(unittest.IsolatedAsyncioTestCase):
+    async def test_brotli_feed_is_decoded_before_parsing(self):
+        transport = httpx.MockTransport(lambda request: httpx.Response(
+            200, headers={"content-encoding": "br", "content-type": "application/xml"},
+            content=brotli.compress(RSS),
+        ))
+        fetcher = SourceFetcher(settings(), transport=transport, resolver=allow_test_destination)
+        result = await fetcher.fetch(SourceSpec("RSS", "Feed", "https://example.com", "https://example.com/rss", "rss", robots_policy="disabled"))
+        self.assertEqual("succeeded", result.status)
+        self.assertEqual("خبر بانکي تازه", result.items[0].title)
+
+    async def test_stream_limit_stops_download_without_content_length(self):
+        visited = []
+
+        class Stream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                for index in range(4):
+                    visited.append(index)
+                    yield b"x" * 60_000
+
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, stream=Stream()))
+        fetcher = SourceFetcher(settings().model_copy(update={"fetch_max_bytes": 100_000}), transport=transport, resolver=allow_test_destination)
+        with self.assertRaisesRegex(FetchFailure, "byte limit") as raised:
+            await fetcher.fetch(SourceSpec("RSS", "Feed", "https://example.com", "https://example.com/rss", "rss", robots_policy="disabled"))
+        self.assertEqual([0, 1], visited)
+        self.assertEqual(1, raised.exception.attempts)
+        self.assertEqual(200, raised.exception.status_code)
+
+    async def test_html_error_page_is_not_reported_as_unsafe_xml(self):
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, text="<!DOCTYPE html><html>Page unavailable</html>"))
+        fetcher = SourceFetcher(settings(), transport=transport, resolver=allow_test_destination)
+        with self.assertRaisesRegex(FetchFailure, "HTML page, not an RSS"):
+            await fetcher.fetch(SourceSpec("RSS", "Feed", "https://example.com", "https://example.com/rss", "rss", robots_policy="disabled"))
+
     async def test_discovery_does_not_follow_redirects_into_private_addresses(self):
         calls: list[str] = []
 

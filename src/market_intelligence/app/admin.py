@@ -18,11 +18,12 @@ from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Cookie, HTTPException, Response
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from sqlalchemy import case, delete, func, or_, select, text, true, update
 from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
+from app.ai_models import SUPPORTED_ANALYSIS_MODELS, analysis_model_options
 from app.database import SessionLocal
 from app.models import (
     AdminAuditLog,
@@ -49,9 +50,15 @@ from app.models import (
 from app.openai_client import OpenAIClient
 from app.fetchers import FetchFailure, SourceFetcher, SourceSpec, validate_connector_binding, validate_public_url_syntax
 from app.google_auth import GoogleAuthError, GoogleIdentity, is_gmail, normalize_email
+from app.media_discovery import discover_media, normalized_name, publisher_host, publisher_identity
 from app.retention import MIN_RETENTION_DAYS, effective_retention_days
 from app.security_controls import CSRF_COOKIE, new_csrf_token
 from app.telegram_delivery import render_analysis_message
+
+from app.password_security import (hash_password as _hash_password, check_password as _check_password,
+    hash_password_async, check_password_async, validate_new_password, needs_rehash)
+from app.security_controls import USER_CSRF_COOKIE, request_activity
+
 
 COOKIE = "research_bee_admin_session"
 USER_SESSION_COOKIE = "research_bee_user_session"
@@ -313,7 +320,9 @@ def can_view_admin_user(viewer: AdminUser, target: AdminUser) -> bool:
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(min_length=1, max_length=128)
+    # E-mail is the public identifier. Legacy usernames remain accepted on
+    # the unlinked password route so existing installations are not locked out.
+    username: str = Field(min_length=1, max_length=320, validation_alias=AliasChoices("username", "email"))
     password: str = Field(min_length=8, max_length=256)
 
 
@@ -635,6 +644,8 @@ class BusinessProfileCreate(BusinessProfileUpdate):
 class CatalogDraftRequest(BaseModel):
     name: str = Field(min_length=1, max_length=240)
     instruction: str = Field(default="", max_length=4000)
+    page: int = Field(default=0, ge=0, le=9)
+    exclude_urls: list[str] = Field(default_factory=list, max_length=100)
 
 
 class AssistantDraftRequest(BaseModel):
@@ -743,6 +754,7 @@ class BusinessDraftRequest(BaseModel):
 
 
 class AssistantRuntimeSettingsUpdate(BaseModel):
+    relevance_threshold: float | None = Field(default=None, ge=0, le=1)
     max_items_per_run: int | None = Field(default=None, ge=1, le=7)
     freshness_window_days: int | None = Field(default=None, ge=1, le=7)
     telegram_silent_notifications: bool | None = None
@@ -768,8 +780,7 @@ class AssistantRuntimeSettingsUpdate(BaseModel):
             return None
         # Keep the selector explicit and auditable; arbitrary model strings
         # must never be able to bypass the deployment's supported set.
-        allowed = {"gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.5", "gpt-5.4"}
-        if value not in allowed:
+        if value not in SUPPORTED_ANALYSIS_MODELS:
             raise ValueError("analysis_model is not in the supported model list")
         return value
 
@@ -894,6 +905,8 @@ class AdminUserRequest(BaseModel):
     user_portal_access: bool | None = None
     user_feedback_access: bool | None = None
 
+    _password_policy = field_validator('password')(validate_new_password)
+
 
 class AdminUserUpdate(BaseModel):
     username: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_.-]{3,128}$")
@@ -912,6 +925,8 @@ class AdminUserManageUpdate(BaseModel):
     assistant_ids: list[uuid.UUID] | None = None
     user_portal_access: bool | None = None
     user_feedback_access: bool | None = None
+
+    _password_policy = field_validator('new_password')(validate_new_password)
 
 
 class UserPortalAccessUpdate(BaseModel):
@@ -939,6 +954,8 @@ class ReaderFeedbackRequest(BaseModel):
 class AdminUserPasswordUpdate(BaseModel):
     new_password: str = Field(min_length=12, max_length=256)
 
+    _password_policy = field_validator('new_password')(validate_new_password)
+
 
 class OrderMoveRequest(BaseModel):
     direction: Literal["up", "down"]
@@ -947,6 +964,8 @@ class OrderMoveRequest(BaseModel):
 class ChangePasswordRequest(BaseModel):
     current_password: str = Field(min_length=8, max_length=256)
     new_password: str = Field(min_length=12, max_length=256)
+
+    _password_policy = field_validator('new_password')(validate_new_password)
 
 
 class SupportTicketCreate(BaseModel):
@@ -998,27 +1017,6 @@ class SupportTicketMessageCreate(BaseModel):
         return value
 
 
-def _hash_password(password: str, salt: bytes | None = None) -> str:
-    salt = salt or secrets.token_bytes(16)
-    digest = hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1)
-    return f"scrypt${salt.hex()}${digest.hex()}"
-
-
-_DUMMY_PASSWORD_HASH = _hash_password(secrets.token_urlsafe(24))
-
-
-def _check_password(password: str, encoded: str | None) -> bool:
-    if not encoded:
-        # Google-only accounts have no password. Still spend the same scrypt
-        # work so response timing does not reveal the account type.
-        _check_password(password, _DUMMY_PASSWORD_HASH)
-        return False
-    try:
-        _, salt_hex, digest_hex = encoded.split("$", 2)
-        actual = hashlib.scrypt(password.encode(), salt=bytes.fromhex(salt_hex), n=2**14, r=8, p=1)
-        return hmac.compare_digest(actual.hex(), digest_hex)
-    except (ValueError, TypeError):
-        return False
 
 
 def password_login_allowed(user: AdminUser) -> bool:
@@ -1031,14 +1029,7 @@ def _mfa_enabled(user: AdminUser) -> bool:
 
 
 def _mfa_key() -> bytes:
-    """Resolve the at-rest key without ever persisting the TOTP secret plain.
-
-    A dedicated ``MARKET_INTELLIGENCE_MFA_ENCRYPTION_SECRET`` is preferred.
-    The existing CSRF signing secret is a backwards-compatible fallback for
-    installations that have not provisioned the dedicated key yet.
-    """
-    settings = get_settings()
-    candidate = getattr(settings, "mfa_encryption_secret", None) or getattr(settings, "csrf_signing_secret", None)
+    candidate = get_settings().mfa_encryption_secret
     raw = candidate.get_secret_value() if candidate else ""
     if len(raw) < 32:
         raise HTTPException(status_code=503, detail="mfa encryption secret is not configured")
@@ -1104,6 +1095,11 @@ def _admin_session_idle_hours() -> int:
         return 6
 
 
+def _account_session_lifetime() -> timedelta:
+    """Short server-side idle lifetime; absolute age is enforced separately."""
+    return timedelta(minutes=get_settings().session_idle_minutes)
+
+
 def _reader_nightly_expiry(created_at: datetime) -> datetime:
     """Return the first 02:00 cutoff after a reader session is created.
 
@@ -1132,6 +1128,18 @@ async def _audit(user_id: uuid.UUID | None, action: str, *, assistant_id: uuid.U
     async with SessionLocal() as session:
         session.add(AdminAuditLog(user_id=user_id, assistant_id=assistant_id, action=action, details=details or {}))
         await session.commit()
+    from app.security_events import record_security_event, security_event_severity
+    await record_security_event(action, actor_id=user_id, assistant_id=assistant_id, details=details,
+        severity=security_event_severity(action))
+
+
+async def canonical_login_identity(value: str) -> str:
+    identifier = value.strip().lower()
+    email = normalize_email(identifier) if "@" in identifier else None
+    async with SessionLocal() as session:
+        uid = await session.scalar(select(AdminUser.id).where(
+            AdminUser.email == email if email else AdminUser.username == identifier))
+    return f"account:{uid}" if uid else f"unknown:{email or identifier}"
 
 
 async def authenticate(
@@ -1143,7 +1151,9 @@ async def authenticate(
     settings = get_settings()
     username = request.username.strip().lower()
     async with SessionLocal() as session:
-        user = (await session.execute(select(AdminUser).where(AdminUser.username == username))).scalar_one_or_none()
+        identifier = normalize_email(username) if "@" in username else None
+        condition = AdminUser.email == identifier if identifier else AdminUser.username == username
+        user = (await session.execute(select(AdminUser).where(condition))).scalar_one_or_none()
         if (
             user is None
             and settings.admin_bootstrap_password
@@ -1157,20 +1167,23 @@ async def authenticate(
                 username=username,
                 email=owner_email(),
                 login_method="both",
-                password_hash=_hash_password(settings.admin_bootstrap_password.get_secret_value()),
+                password_hash=await hash_password_async(settings.admin_bootstrap_password.get_secret_value()),
                 role="admin",
             )
             session.add(user)
             await session.flush()
         # Verify the password before revealing the account state, so a
         # disabled or Google-only account cannot be discovered without it.
-        password_ok = _check_password(request.password, user.password_hash if user is not None else None)
+        password_ok = await check_password_async(request.password, user.password_hash if user is not None else None)
         if user is None or not password_ok or not password_login_allowed(user):
             raise HTTPException(status_code=401, detail="invalid credentials")
         if not user.active:
             # Return a stable machine-readable code. The backoffice translates
             # it into the selected language without exposing account details.
             raise HTTPException(status_code=403, detail="account_disabled")
+        if needs_rehash(user.password_hash):
+            user.password_hash = await hash_password_async(request.password)
+        user.last_login_at = datetime.now(timezone.utc)
         raw = _add_session(session, user, nightly_reader_expiry=nightly_reader_expiry, mfa_required=require_mfa and _mfa_enabled(user))
         await session.commit()
     await _audit(user.id, "admin.login", details={"method": "password"})
@@ -1181,13 +1194,14 @@ def _add_session(session, user: AdminUser, *, nightly_reader_expiry: bool = Fals
     """Stage a new server-side session row and return its raw token."""
     raw = secrets.token_urlsafe(40)
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(hours=_admin_session_idle_hours())
+    expires_at = now + _account_session_lifetime()
     if nightly_reader_expiry:
         expires_at = min(expires_at, _reader_nightly_expiry(now))
     session.add(
         AdminSession(
             user_id=user.id,
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
+            portal="user" if nightly_reader_expiry else "admin",
             expires_at=expires_at,
             mfa_verified=not mfa_required,
         )
@@ -1200,18 +1214,21 @@ def _cookie_secure() -> bool:
 
 
 def set_admin_session_cookies(response: Response, raw: str) -> None:
-    # Server-side idle expiry is authoritative. A persistent cookie would
-    # turn this into an absolute timeout, so use a browser-session cookie and
-    # let current_admin enforce the six-hour inactivity boundary.
-    response.set_cookie(COOKIE, raw, httponly=True, secure=_cookie_secure(), samesite="strict", path="/")
+    # Both the persistent browser cookie and server-side idle deadline renew
+    # during foreground activity. Revocation in the database is authoritative.
+    lifetime = get_settings().session_absolute_hours * 3600
+    response.set_cookie(COOKIE, raw, max_age=lifetime, httponly=True, secure=_cookie_secure(), samesite="strict", path="/")
     # The session token stays HttpOnly. The separate, non-sensitive token is
     # readable by the browser only so the UI can send it in a custom header;
     # cross-site pages cannot read it and therefore cannot forge mutations.
-    response.set_cookie(CSRF_COOKIE, new_csrf_token(raw, get_settings()), httponly=False, secure=_cookie_secure(), samesite="strict", path="/")
+    response.set_cookie(CSRF_COOKIE, new_csrf_token(raw, get_settings()), max_age=lifetime, httponly=False, secure=_cookie_secure(), samesite="strict", path="/")
 
 
 def set_reader_session_cookie(response: Response, raw: str) -> None:
-    response.set_cookie(USER_SESSION_COOKIE, raw, httponly=True, secure=_cookie_secure(), samesite="strict", path="/user")
+    now = datetime.now(timezone.utc)
+    deadline = min(now + _account_session_lifetime(), _reader_nightly_expiry(now))
+    response.set_cookie(USER_SESSION_COOKIE, raw, expires=deadline, httponly=True, secure=_cookie_secure(), samesite="strict", path="/user")
+    response.set_cookie(USER_CSRF_COOKIE, new_csrf_token(raw, get_settings()), expires=deadline, httponly=False, secure=_cookie_secure(), samesite="strict", path="/user")
 
 
 async def _unique_username(session, base: str) -> str:
@@ -1242,6 +1259,7 @@ async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[s
         if user is None and owner:
             user = AdminUser(
                 username=await _unique_username(session, email.split("@", 1)[0]),
+                display_name=(identity.name or "Owner")[:160],
                 email=email,
                 login_method="google",
                 password_hash=None,
@@ -1257,6 +1275,7 @@ async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[s
         if owner:
             # The owner can never be locked out by another administrator.
             user.active = True
+            user.role = "admin"
             if user.login_method == "password":
                 user.login_method = "both"
         if not user.active:
@@ -1264,13 +1283,18 @@ async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[s
         if portal == "user" and not user_portal_access_allowed(user):
             raise GoogleAuthError("not_allowed", "user portal access denied")
         user.google_sub = identity.sub
+        user.last_login_at = datetime.now(timezone.utc)
         raw = _add_session(session, user, nightly_reader_expiry=portal == "user")
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise GoogleAuthError("not_allowed", "identity binding conflict") from exc
     await _audit(user.id, "admin.login", details={"method": "google", "portal": portal})
     return raw, user
 
 
-async def current_admin(token: str | None) -> AdminUser:
+async def current_admin(token: str | None, *, touch: bool | None = None) -> AdminUser:
     if not token:
         raise HTTPException(status_code=401, detail="authentication required")
     digest = hashlib.sha256(token.encode()).hexdigest()
@@ -1285,19 +1309,23 @@ async def current_admin(token: str | None) -> AdminUser:
         if row is None:
             raise HTTPException(status_code=401, detail="session expired")
         session_row, user = row
+        if getattr(session_row, "portal", "admin") != "admin":
+            raise HTTPException(status_code=401, detail="session expired")
         if not user.active:
             # Deactivation immediately invalidates any race-winning request.
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=403, detail="account_disabled")
-        if session_row.expires_at <= now:
+        absolute = session_row.created_at + timedelta(hours=get_settings().session_absolute_hours)
+        if session_row.expires_at <= now or absolute <= now:
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=401, detail="session expired")
-        # Sliding idle timeout: every authenticated request gets at most six
-        # more hours, so six hours without a request always closes the session.
-        session_row.expires_at = now + timedelta(hours=_admin_session_idle_hours())
-        await session.commit()
+        # Approved rolling lifetime; never a JWT grace period after revocation.
+        should_touch = request_activity.get() if touch is None else touch
+        if should_touch:
+            session_row.expires_at = min(now + _account_session_lifetime(), absolute)
+            await session.commit()
     return user
 
 
@@ -1328,7 +1356,7 @@ async def reader_login(request: LoginRequest, response: Response) -> dict[str, o
     return {"id": str(user.id), "username": user.username, "mfa_required": False, **user_portal_access_payload(user)}
 
 
-async def current_reader(token: str | None, *, touch: bool = True) -> AdminUser:
+async def current_reader(token: str | None, *, touch: bool | None = None) -> AdminUser:
     """Resolve a reader session and optionally renew its idle deadline.
 
     Background notification polling validates the session without touching it,
@@ -1349,6 +1377,8 @@ async def current_reader(token: str | None, *, touch: bool = True) -> AdminUser:
         if row is None:
             raise HTTPException(status_code=401, detail="session expired")
         session_row, user = row
+        if getattr(session_row, "portal", "user") != "user":
+            raise HTTPException(status_code=401, detail="session expired")
         if not user.active:
             await session.delete(session_row)
             await session.commit()
@@ -1357,14 +1387,16 @@ async def current_reader(token: str | None, *, touch: bool = True) -> AdminUser:
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=403, detail="user portal access denied")
-        if session_row.expires_at <= now or _reader_nightly_expiry(session_row.created_at) <= now:
+        if session_row.expires_at <= now or min(_reader_nightly_expiry(session_row.created_at), session_row.created_at + timedelta(hours=get_settings().session_absolute_hours)) <= now:
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=401, detail="session expired")
-        if touch:
+        should_touch = request_activity.get() if touch is None else touch
+        if should_touch:
             session_row.expires_at = min(
-                now + timedelta(hours=_admin_session_idle_hours()),
+                now + _account_session_lifetime(),
                 _reader_nightly_expiry(session_row.created_at),
+                session_row.created_at + timedelta(hours=get_settings().session_absolute_hours),
             )
             await session.commit()
     return user
@@ -1380,6 +1412,7 @@ async def reader_logout(response: Response, token: str | None) -> dict[str, str]
             )
             await session.commit()
     response.delete_cookie(USER_SESSION_COOKIE, path="/user")
+    response.delete_cookie(USER_CSRF_COOKIE, path="/user")
     return {"status": "logged_out"}
 
 
@@ -1397,7 +1430,7 @@ async def verify_mfa_session(code: str, recovery_code: str | None, token: str | 
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=403, detail="account_disabled")
-        if session_row.expires_at <= now:
+        if getattr(session_row, "portal", "admin") != "admin" or session_row.expires_at <= now or session_row.created_at + timedelta(hours=get_settings().session_absolute_hours) <= now:
             await session.delete(session_row)
             await session.commit()
             raise HTTPException(status_code=401, detail="session expired")
@@ -1430,7 +1463,7 @@ async def verify_mfa_session(code: str, recovery_code: str | None, token: str | 
         preferences["mfa"] = config
         user.preferences = preferences
         session_row.mfa_verified = True
-        session_row.expires_at = now + timedelta(hours=_admin_session_idle_hours())
+        session_row.expires_at = min(now + _account_session_lifetime(), session_row.created_at + timedelta(hours=get_settings().session_absolute_hours))
         await session.commit()
     await _audit(user.id, "admin.mfa.verify", details={"method": "recovery" if used_recovery else "totp"})
     return {"status": "verified", "username": user.username, "used_recovery": used_recovery}
@@ -2101,7 +2134,9 @@ async def logout(response: Response, token: str | None) -> dict[str, str]:
 
 
 async def change_password(user: AdminUser, payload: ChangePasswordRequest) -> dict[str, str]:
-    if not _check_password(payload.current_password, user.password_hash):
+    if not password_login_allowed(user):
+        raise HTTPException(status_code=422, detail="Google-only accounts have no internal password")
+    if not await check_password_async(payload.current_password, user.password_hash):
         raise HTTPException(status_code=401, detail="current password is incorrect")
     if payload.current_password == payload.new_password:
         raise HTTPException(status_code=422, detail="new password must differ from current password")
@@ -2109,7 +2144,7 @@ async def change_password(user: AdminUser, payload: ChangePasswordRequest) -> di
         item = await session.get(AdminUser, user.id, with_for_update=True)
         if item is None or not item.active:
             raise HTTPException(status_code=404, detail="admin user not found")
-        item.password_hash = _hash_password(payload.new_password)
+        item.password_hash = await hash_password_async(payload.new_password)
         # A password rotation is a credential-compromise boundary. Revoke the
         # current session and every other session so the new password is the
         # only remaining authentication path.
@@ -2134,7 +2169,9 @@ async def change_user_password(user_id: uuid.UUID, payload: AdminUserPasswordUpd
         if is_owner(item) and not is_owner(user):
             raise HTTPException(status_code=403, detail="the owner password can only be changed by the owner")
         ensure_can_manage_account(user, item)
-        item.password_hash = _hash_password(payload.new_password)
+        if not password_login_allowed(item):
+            raise HTTPException(status_code=422, detail="Google-only accounts have no internal password")
+        item.password_hash = await hash_password_async(payload.new_password)
         await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         await session.commit()
     await _audit(user.id, "admin_user.password.rotate", details={"user_id": str(user_id)})
@@ -2469,7 +2506,11 @@ async def _visible_project_scope_ids(session, user: AdminUser) -> set[uuid.UUID]
 
 
 async def _ensure_user_manage_scope(session, target_user_id: uuid.UUID, user: AdminUser) -> set[uuid.UUID] | None:
-    """Ensure a project admin only manages users sharing an assigned project."""
+    """Account-wide changes cannot affect an identity in unassigned projects.
+
+    Project membership screens remain the way to manage a single project's
+    grants; resetting a shared account's credentials is an owner action.
+    """
     scope = await _project_admin_scope_ids(session, user)
     if scope is None:
         return None
@@ -2480,10 +2521,9 @@ async def _ensure_user_manage_scope(session, target_user_id: uuid.UUID, user: Ad
     target_projects = set((await session.execute(
         select(AssistantMember.assistant_id).where(
             AssistantMember.user_id == target_user_id,
-            AssistantMember.assistant_id.in_(scope),
         )
     )).scalars().all())
-    if not target_projects:
+    if not target_projects or not target_projects.issubset(scope):
         raise HTTPException(status_code=403, detail="user is outside your project scope")
     return scope
 
@@ -2937,7 +2977,7 @@ _SOURCE_DRAFT_SCHEMA = {
         "match_explanation": {"type": "string"},
         "alternatives": {"type": "array", "maxItems": 3, "items": {"type": "string"}},
     },
-    "required": ["name", "homepage_url", "fetch_url", "adapter", "language", "region", "output_language", "priority", "access_notes", "research_notes", "fit_reason", "example_article", "overlap_notes", "match_status", "match_explanation", "alternatives"],
+    "required": ["name", "homepage_url", "fetch_url", "adapter", "access_policy", "credential_ref", "account_ref", "language", "region", "output_language", "priority", "access_notes", "research_notes", "fit_reason", "example_article", "overlap_notes", "match_status", "match_explanation", "alternatives"],
     "additionalProperties": False,
 }
 _SOURCE_SUGGESTIONS_SCHEMA = {
@@ -2945,7 +2985,7 @@ _SOURCE_SUGGESTIONS_SCHEMA = {
     "properties": {
         "suggestions": {
             "type": "array",
-            "maxItems": 5,
+            "maxItems": 10,
             "items": {
                 "type": "object",
                 "properties": {
@@ -3058,10 +3098,10 @@ def _media_query_tokens(value: str) -> set[str]:
 
 def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] | None:
     """Resolve a known public source without depending on an external model."""
-    requested = str(name or "").strip().casefold()
+    requested = normalized_name(str(name or ""))
     for entry in _LOCAL_MEDIA_DIRECTORY:
-        aliases = [value.casefold() for value in _string_values(entry.get("aliases"))]
-        if requested in aliases or any(alias in requested or requested in alias for alias in aliases):
+        aliases = [normalized_name(value) for value in _string_values(entry.get("aliases"))]
+        if requested in aliases:
             return {
                 "name": str(entry["name"]), "homepage_url": str(entry["homepage_url"]),
                 "fetch_url": str(entry["fetch_url"]), "adapter": str(entry["adapter"]),
@@ -3097,7 +3137,7 @@ def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] |
             "access_notes": "Public feed from Bee Researcher directory.",
             "research_notes": "The closest public-media directory match was selected from the supplied keyword; review it before registration.",
             "fit_reason": str(entry["summary"]), "example_article": "", "overlap_notes": "",
-            "match_status": "match",
+            "match_status": "uncertain",
             "match_explanation": f"بهترین تطبیق آفلاین با امتیاز {score} از فهرست رسانه‌های عمومی پیدا شد.",
             "alternatives": [str(row[2]["name"]) for row in ranked[1:4]],
             "draft_source": "local_keyword_match",
@@ -3110,7 +3150,7 @@ def _local_source_draft(name: str, instruction: str = "") -> dict[str, object] |
         homepage = f"https://{candidate}/"
         return {
             "name": str(name).strip()[:160], "homepage_url": homepage,
-            "fetch_url": f"{homepage}feed/", "adapter": "rss", "language": "", "output_language": "source", "region": "",
+            "fetch_url": homepage, "adapter": "html", "language": "unknown", "output_language": "source", "region": "Global",
             "priority": 3, "access_notes": "Feed path is a proposal; review it before saving.",
             "research_notes": "A public domain was supplied directly; the feed path must pass the connection check.",
             "fit_reason": str(instruction or "Public source supplied by the owner.")[:600],
@@ -3299,9 +3339,27 @@ async def _catalog_draft(
     instruction: str,
 ) -> dict[str, object]:
     if kind == "source":
+        if name.strip().startswith(("https://", "http://")):
+            # Explicit public URLs remain usable when external drafting is
+            # unavailable; verification still applies the normal SSRF/parser gates.
+            direct = _local_source_draft(name.strip(), instruction)
+            if direct is not None:
+                # Preserve channel/article paths; t.me/ alone is not a source.
+                direct.update(homepage_url=name.strip(), fetch_url=name.strip(),
+                              adapter="telegram_public" if publisher_host(name.strip()) in {"t.me", "telegram.me"} else "html")
+                return direct
+        try:
+            return await asyncio.wait_for(discover_media(get_settings(), name=name, instruction=instruction, schema=_SOURCE_DRAFT_SCHEMA), timeout=90)
+        except Exception as exc:
+            provider_status = str(getattr(exc, "code", type(exc).__name__))
         local_draft = _local_source_draft(name, instruction)
         if local_draft is not None:
+            local_draft["provider_status"] = provider_status
             return local_draft
+        aliases = {alias: str(row["name"]) for row in _LOCAL_MEDIA_DIRECTORY for alias in _string_values(row.get("aliases"))}
+        aliases = {normalized_name(alias): value for alias, value in aliases.items()}
+        names = list(dict.fromkeys(aliases.get(a, a) for a in difflib.get_close_matches(normalized_name(name), list(aliases), n=3, cutoff=0.55)))
+        return {"name": name, "homepage_url": "", "fetch_url": "", "adapter": "html", "language": "unknown", "output_language": "source", "region": "Global", "priority": 3, "match_status": "uncertain", "match_explanation": "جست‌وجوی آنلاین موقتاً در دسترس نیست؛ این به معنی نبود رسانه نیست. دوباره تلاش کنید یا آدرس عمومی را وارد کنید.", "alternatives": names[:3], "draft_source": "fallback", "provider_status": provider_status}
     settings = get_settings()
     client = OpenAIClient(settings)
     system = (
@@ -3343,66 +3401,24 @@ async def _catalog_draft(
 async def _source_suggestions(
     keyword: str,
     instruction: str,
+    *, exclude: list[str] | None = None, page: int = 0,
 ) -> dict[str, object]:
-    """Return up to five concise, review-first media candidates.
+    """Return up to ten concise, evidenced, review-first media candidates.
 
     The discovery step deliberately does not fabricate feed adapters or
     credentials. Those operational details are resolved only after the owner
     approves one candidate.
     """
     local = _local_source_suggestions(keyword, instruction)
-    if local["suggestions"]:
-        return local
-    settings = get_settings()
-    client = OpenAIClient(settings)
-    system = (
-        "شما پژوهشگر کشف رسانه هستید. برای کلیدواژه داده‌شده حداکثر پنج رسانه تخصصی، "
-        "عمومی و معتبر پیشنهاد دهید. فهرست را از نظر تناسب موضوعی، اعتبار، قابلیت خواندن، "
-        "زبان، منطقه و نوع رسانه متنوع کنید؛ رسانه‌های تکراری یا پنج رسانهٔ هم‌نوع پیشنهاد ندهید. "
-        "برای هر مورد زبان، منطقه، نوع رسانه، امتیاز اطمینان بین صفر و یک و حداکثر سه شاهد معتبر بدهید. "
-        "فقط نام، آدرس وب‌سایت، توضیح دو یا سه خطی و دلیل تناسب را برگردانید. "
-        "اگر از اعتبار یا آدرس مطمئن نیستید آن رسانه را پیشنهاد ندهید. اگر مورد مناسبی نیست، "
-        "suggestions را خالی بگذارید و در message توضیح کوتاه و در alternatives حداکثر سه نام "
-        "مشابه و محتمل پیشنهاد کنید. خروجی فقط JSON باشد."
-    )
     try:
-        result = await asyncio.wait_for(
-            client.draft_json(
-                system_prompt=system,
-                # Keyword and optional operator guidance are the complete
-                # external discovery payload. Project data stays local.
-                user_payload={"keyword": keyword, "instruction": instruction},
-                schema_name="market_intelligence_source_suggestions",
-                schema=_SOURCE_SUGGESTIONS_SCHEMA,
-            ),
-            timeout=50,
-        )
-        result_data = _object_mapping(result)
-        rows = _mapping_rows(result_data.get("suggestions"))
-        return {
-            "suggestions": [
-                {
-                    **dict(row),
-                    "language": str(row.get("language") or "unknown"),
-                    "region": str(row.get("region") or "Global"),
-                    "source_type": str(row.get("source_type") or "specialist_public_media"),
-                    "confidence": min(max(_safe_float_value(row.get("confidence"), default=0.55), 0.0), 1.0),
-                    "evidence": [value[:2048] for value in _string_values(row.get("evidence"))[:3] if value.strip()],
-                }
-                for row in rows[:5]
-                if str(row.get("name") or "").strip() and str(row.get("homepage_url") or "").strip()
-            ],
-            "message": str(result_data.get("message") or "").strip()[:600],
-            "alternatives": [value.strip()[:160] for value in _string_values(result_data.get("alternatives"))[:3] if value.strip()],
-        }
-    except Exception:
-        return {
-            "suggestions": [],
-            "message": "رسانه‌ای برای این کلیدواژه پیدا نشد؛ نام دقیق، دامنهٔ عمومی یا کلیدواژهٔ مشخص‌تری وارد کنین.",
-            "alternatives": local["alternatives"],
-        }
-
-
+        return await asyncio.wait_for(discover_media(get_settings(), name=keyword, instruction=instruction, schema=_SOURCE_SUGGESTIONS_SCHEMA, suggestions=True, exclude=exclude, page=page), timeout=90)
+    except Exception as exc:
+        excluded = {publisher_identity(url) for url in (exclude or [])}
+        local["suggestions"] = [row for row in _mapping_rows(local.get("suggestions")) if publisher_identity(str(row.get("homepage_url") or "")) not in excluded]
+        local["provider_status"] = str(getattr(exc, "code", type(exc).__name__))
+        local["draft_source"] = "local_directory"
+        local["message"] = "جست‌وجوی آنلاین موقتاً در دسترس نیست؛ فقط نتایج فهرست محلی نمایش داده می‌شوند."
+        return local
 async def _assistant_media_context(assistant_id: uuid.UUID) -> dict[str, object]:
     """Return a small, non-secret project brief for media discovery.
 
@@ -3418,7 +3434,8 @@ async def _assistant_media_context(assistant_id: uuid.UUID) -> dict[str, object]
             select(BusinessProfile).where(BusinessProfile.assistant_id == assistant_id).order_by(BusinessProfile.id)
         )).all()
         selected_id = str((assistant.config or {}).get("active_business_id") or "")
-        profile = next((row for row in profiles if str(row.id) == selected_id), profiles[0] if profiles else None)
+        legacy_profile = profiles[0] if profiles and "active_business_id" not in (assistant.config or {}) else None
+        profile = next((row for row in profiles if str(row.id) == selected_id), legacy_profile)
         sources = (await session.scalars(
             select(Source.name).where(Source.assistant_id == assistant_id).order_by(Source.priority.desc(), Source.name).limit(20)
         )).all()
@@ -3451,12 +3468,16 @@ async def _verify_source_draft(draft: dict[str, object]) -> dict[str, object]:
 
     The test uses the same SSRF checks, robots policy and parsers as runtime
     collection, but does not persist a Source, article or publication.  It is
-    intentionally bounded to a single request attempt and 20 seconds.
+    bounded to two discovered feeds and the evidenced HTML, within 30 seconds.
     """
     homepage = str(draft.get("homepage_url") or "").strip()
     fetch_url = str(draft.get("fetch_url") or "").strip()
     adapter = str(draft.get("adapter") or "rss").strip()
     match_status = str(draft.get("match_status") or "uncertain")
+    provider_status = str(draft.get("provider_status") or "")
+    if (not homepage or not fetch_url) and provider_status and provider_status != "succeeded":
+        return {"status": "provider_unavailable", "provider_status": provider_status,
+                "message": "سرویس AI در دسترس نیست؛ این به معنی نبود رسانه نیست.", "items_found": 0, "editable": True}
     if match_status == "not_found" or not homepage or not fetch_url:
         return {
             "status": "not_found",
@@ -3480,21 +3501,39 @@ async def _verify_source_draft(draft: dict[str, object]) -> dict[str, object]:
             "message": "آدرس‌های پیشنهادی عمومی و معتبر نیستند؛ این رسانه ثبت نشد.",
             "items_found": 0,
         }
+    async def verify_candidates():
+        fetcher = SourceFetcher(get_settings())
+        candidates = [(fetch_url, adapter)]
+        if adapter == "html":
+            try:
+                feeds = await asyncio.wait_for(fetcher.discover_feeds(homepage), timeout=7)
+                candidates = feeds[:2] + candidates
+            except (FetchFailure, ValueError, OSError, asyncio.TimeoutError):
+                pass
+        elif adapter == "rss":
+            # An evidenced but obsolete RSS URL must not hide readable HTML.
+            candidates.append((homepage, "html"))
+        transient = False
+        last = None
+        for candidate_url, candidate_adapter in dict.fromkeys(candidates):
+            try:
+                result = await asyncio.wait_for(fetcher.fetch(SourceSpec(
+                    source_key="DRAFT-VERIFY", name=str(draft.get("name") or "media draft")[:160],
+                    homepage_url=homepage, fetch_url=candidate_url, adapter=candidate_adapter,
+                    request_timeout_seconds=7, max_retries=0)), timeout=8)
+            except (FetchFailure, ValueError, OSError, asyncio.TimeoutError) as error:
+                transient |= getattr(error, "status_code", None) is None
+                continue
+            last = result
+            if result.status == "succeeded" and result.items:
+                draft["fetch_url"], draft["adapter"] = candidate_url, candidate_adapter
+                return {"status": "ready", "message": "اتصال رسانه و خواندن نمونه‌ای از محتوای آن تأیید شد.",
+                        "items_found": len(result.items), "response_url": result.response_url}
+        return {"status": "needs_review" if transient else "not_usable", "editable": True,
+                "message": "اتصال موقتاً در دسترس نیست؛ مشخصات رسانه را بررسی کنید." if transient else "رسانه پاسخ داد، اما محتوای قابل‌خواندن پیدا نشد.",
+                "items_found": 0, "response_url": last.response_url if last else homepage}
     try:
-        result = await asyncio.wait_for(
-            SourceFetcher(get_settings()).fetch(
-                SourceSpec(
-                    source_key="DRAFT-VERIFY",
-                    name=str(draft.get("name") or "media draft")[:160],
-                    homepage_url=homepage,
-                    fetch_url=fetch_url,
-                    adapter=adapter,
-                    request_timeout_seconds=20,
-                    max_retries=0,
-                )
-            ),
-            timeout=25,
-        )
+        return await asyncio.wait_for(verify_candidates(), timeout=30)
     except (FetchFailure, ValueError, OSError, asyncio.TimeoutError) as exc:
         # A transport/DNS/timeout failure is not proof that the publication
         # is invalid.  Keep the candidate editable so the owner can correct
@@ -3506,26 +3545,13 @@ async def _verify_source_draft(draft: dict[str, object]) -> dict[str, object]:
         if status_code is None:
             return {
                 "status": "needs_review",
-                "message": f"اتصال خودکار موقتاً در دسترس نبود؛ آدرس و نوع اتصال را مرور و سپس ثبت کنین: {str(exc)[:260]}",
+                "message": "اتصال خودکار موقتاً در دسترس نبود؛ آدرس و نوع اتصال را مرور و سپس ثبت کنید.",
                 "items_found": 0,
                 "editable": True,
             }
-        return {"status": "not_usable", "message": f"رسانه پاسخ HTTP معتبر نداد: {str(exc)[:300]}", "items_found": 0, "editable": True}
+        return {"status": "not_usable", "message": "رسانه پاسخ HTTP معتبر نداد.", "items_found": 0, "editable": True}
     except Exception:
         return {"status": "not_usable", "message": "اتصال یا خواندن محتوای رسانه تأیید نشد.", "items_found": 0}
-    if result.status == "succeeded" and result.items:
-        return {
-            "status": "ready",
-            "message": "اتصال رسانه و خواندن نمونه‌ای از محتوای آن تأیید شد.",
-            "items_found": len(result.items),
-            "response_url": result.response_url,
-        }
-    return {
-        "status": "not_usable",
-        "message": "رسانه پاسخ داد، اما محتوای قابل‌خواندن برای این نوع اتصال پیدا نشد.",
-        "items_found": len(result.items),
-        "response_url": result.response_url,
-    }
 
 
 async def draft_source(assistant_id: uuid.UUID, payload: CatalogDraftRequest, user: AdminUser) -> dict[str, object]:
@@ -3748,7 +3774,17 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
     keyword = payload.name.strip()
     if not keyword:
         raise HTTPException(status_code=422, detail="media keyword is required")
-    discovery = await _source_suggestions(keyword, payload.instruction.strip())
+    async with SessionLocal() as session:
+        workspace = await session.get(AssistantWorkspace, assistant_id)
+        existing = (await session.scalars(select(Source.homepage_url).where(Source.assistant_id == assistant_id))).all()
+        config_before = dict(workspace.config or {}) if workspace else {}
+    history_key = hashlib.sha256((normalized_name(keyword) + "\n" + payload.instruction.strip()).encode()).hexdigest()
+    histories = dict(config_before.get("source_discovery_seen") or {})
+    exclude = list(existing) + payload.exclude_urls
+    exclude.extend(str(_object_mapping(row.get("draft")).get("homepage_url") or "") for row in _source_suggestion_rows(config_before))
+    if payload.page:
+        exclude.extend(histories.get(history_key) or [])
+    discovery = await _source_suggestions(keyword, payload.instruction.strip(), exclude=exclude, page=payload.page)
     candidates = _mapping_rows(discovery.get("suggestions"))
     suggestions = []
     async with SessionLocal() as session:
@@ -3764,11 +3800,12 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
             str(_object_mapping(row.get("draft")).get("homepage_url") or "").strip().rstrip("/").casefold()
             for row in rows if row.get("status", "pending") == "pending"
         }
-        for candidate in candidates[:5]:
+        seen_hosts = {publisher_identity(url) for url in exclude if publisher_identity(url)}
+        for candidate in candidates[:10]:
             candidate_name = str(candidate.get("name") or "").strip()[:160]
             candidate_homepage = str(candidate.get("homepage_url") or "").strip()[:2048]
             homepage_key = candidate_homepage.rstrip("/").casefold()
-            if not candidate_name or not candidate_homepage or candidate_name.casefold() in existing_names or homepage_key in existing_homepages or homepage_key in pending_homepages:
+            if not publisher_identity(candidate_homepage) or publisher_identity(candidate_homepage) in seen_hosts or not candidate_name or candidate_name.casefold() in existing_names or homepage_key in existing_homepages or homepage_key in pending_homepages:
                 continue
             suggestion: dict[str, object] = {
                 "id": str(uuid.uuid4()),
@@ -3793,12 +3830,19 @@ async def create_source_suggestion(assistant_id: uuid.UUID, payload: CatalogDraf
                 rows.insert(0, suggestion)
                 pending_homepages.add(homepage_key)
                 suggestions.append(suggestion)
+                seen_hosts.add(publisher_identity(candidate_homepage))
         config["source_suggestions"] = rows[:50]
+        histories = dict(config.get("source_discovery_seen") or {})
+        histories[history_key] = list(dict.fromkeys((histories.get(history_key) or []) + [str(_object_mapping(row.get("draft")).get("homepage_url") or "") for row in suggestions]))[-100:]
+        config["source_discovery_seen"] = dict(list(histories.items())[-20:])
         item.config = config
         await session.commit()
     await _audit(user.id, "source.suggestion.create", assistant_id=assistant_id, details={"keyword": keyword, "count": len(suggestions)})
     return {
         "keyword": keyword,
+        "provider": discovery.get("draft_source"),
+        "provider_status": discovery.get("provider_status", "succeeded"),
+        "page": payload.page,
         "count": len(suggestions),
         "suggestions": suggestions,
         "message": str(discovery.get("message") or "").strip()[:600],
@@ -3849,17 +3893,15 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
         # website. Resolve the operational feed/adapter details lazily at
         # approval time, outside any database transaction.
         draft = dict(_object_mapping(suggestion.get("draft")))
+        connector_keys = ("homepage_url", "fetch_url", "adapter")
+        requested_connector = {key: draft.get(key) for key in connector_keys}
         context = await _assistant_media_context(assistant_id)
         if not str(draft.get("fetch_url") or "").strip():
-            enriched = await _catalog_draft(
-                "source",
-                str(draft.get("name") or suggestion.get("name") or "").strip(),
-                f"تکمیل اطلاعات فنی رسانه برای کلیدواژه: {suggestion.get('keyword') or ''}",
-            )
-            if isinstance(enriched, dict):
-                # Preserve any newer non-empty values saved on the suggestion
-                # while filling only the missing operational fields.
-                draft = {**enriched, **{key: value for key, value in draft.items() if value not in (None, "")}}
+            # Use the exact evidenced publisher the owner chose. Searching
+            # its name again could silently switch to a different namesake.
+            homepage = str(draft.get("homepage_url") or "").strip()
+            is_telegram = publisher_host(homepage) in {"t.me", "telegram.me"}
+            draft.update(fetch_url=homepage, adapter="telegram_public" if is_telegram else "html", match_status="match", access_policy="public_only")
 
         verification = await _verify_source_draft(draft)
         if verification.get("status") != "ready":
@@ -3879,9 +3921,11 @@ async def decide_source_suggestion(assistant_id: uuid.UUID, suggestion_id: uuid.
             if suggestion.get("status") != "pending":
                 return suggestion
             latest_draft = _object_mapping(suggestion.get("draft"))
+            if any(latest_draft.get(key) != requested_connector[key] for key in connector_keys):
+                raise HTTPException(status_code=409, detail="source suggestion changed during verification; verify the new publisher again")
             draft = {
                 **draft,
-                **{key: value for key, value in latest_draft.items() if value not in (None, "")},
+                **{key: value for key, value in latest_draft.items() if value not in (None, "") and key not in connector_keys},
             }
             homepage = str(draft.get("homepage_url") or "").strip()
             fetch_url = str(draft.get("fetch_url") or "").strip()
@@ -4552,6 +4596,9 @@ async def get_assistant_runtime_settings(assistant_id: uuid.UUID, user: AdminUse
         "limits": limits,
         "telegram_silent_notifications": bool(runtime.get("telegram_silent_notifications", False)),
         "analysis_model": runtime.get("analysis_model", get_settings().analysis_model),
+        "analysis_model_options": analysis_model_options(),
+        "relevance_threshold": runtime.get("relevance_threshold", app_settings.relevance_threshold if assistant_id == DEFAULT_ASSISTANT_ID else 0.0),
+        "ai_analysis_ready": app_settings.openai_ready,
         "allowed_feedback_usernames": list(runtime.get("allowed_feedback_usernames", sorted(get_settings().allowed_telegram_username_values))),
         "schedule_slots": list(runtime.get("schedule_slots", [])),
         "timezone": runtime.get("timezone", get_settings().timezone),
@@ -4635,7 +4682,7 @@ async def preview_assistant_runtime_settings(
         proposed["active_business_id"] = None
     changes = {
         key: {"before": current.get(key), "after": proposed.get(key)}
-        for key in ("max_items_per_run", "freshness_window_days", "telegram_silent_notifications", "analysis_model", "schedule_slots", "timezone", "active_business_id", "collection_enabled", "collection_schedule_slots", "collection_max_items_per_source", "collection_max_items_per_run", "collection_max_items_per_day")
+        for key in ("max_items_per_run", "freshness_window_days", "telegram_silent_notifications", "analysis_model", "relevance_threshold", "schedule_slots", "timezone", "active_business_id", "collection_enabled", "collection_schedule_slots", "collection_max_items_per_source", "collection_max_items_per_run", "collection_max_items_per_day")
         if current.get(key) != proposed.get(key)
     }
     slots = _object_list(proposed.get("schedule_slots"))
@@ -4665,7 +4712,7 @@ async def preview_assistant_runtime_settings(
             "collection_max_items_per_run": 1000,
             "collection_max_items_per_day": 1000,
         },
-        "proposed": {key: proposed.get(key) for key in ("max_items_per_run", "freshness_window_days", "telegram_silent_notifications", "analysis_model", "schedule_slots", "timezone", "active_business_id", "collection_enabled", "collection_schedule_slots", "collection_max_items_per_source", "collection_max_items_per_run", "collection_max_items_per_day")},
+        "proposed": {key: proposed.get(key) for key in ("max_items_per_run", "freshness_window_days", "telegram_silent_notifications", "analysis_model", "relevance_threshold", "schedule_slots", "timezone", "active_business_id", "collection_enabled", "collection_schedule_slots", "collection_max_items_per_source", "collection_max_items_per_run", "collection_max_items_per_day")},
     }
 
 
@@ -4691,6 +4738,17 @@ async def review_publication(
         history = list(approval.get("history") or [])
         history.append({"state": payload.state, "note": payload.note, "at": now, "by": str(user.id)})
         approval.update({"state": payload.state, "note": payload.note, "updated_at": now, "updated_by": str(user.id), "history": history[-20:]})
+        from app.source_review import requires_source_review, source_review_digest
+        analysis = await session.get(ArticleAnalysis, publication.analysis_id)
+        article = await session.get(NormalizedArticle, analysis.article_id) if analysis else None
+        if article and requires_source_review(publication, article):
+            if payload.state == "approved":
+                if not payload.note or len(payload.note.strip()) < 12:
+                    raise HTTPException(422, "suspicious source approval requires an explicit review note")
+                audit["source_security_approval"] = {"actor_id": str(user.id), "at": now,
+                    "digest": source_review_digest(publication, article)}
+            else:
+                audit.pop("source_security_approval", None)
         publication.audit = {**audit, "approval": approval}
         publication.updated_at = datetime.now(timezone.utc)
         await session.commit()
@@ -4702,6 +4760,8 @@ async def publication_explanation(assistant_id: uuid.UUID, analysis_id: uuid.UUI
     """Return a score/evidence chain made only from persisted source data."""
     await _require_assistant_access(assistant_id, user)
     from app.insights import quality_projection
+    from app.ai_relevance import assessment_metadata
+    from app.pipeline_service import _article_decisions
 
     async with SessionLocal() as session:
         row = (await session.execute(
@@ -4714,8 +4774,9 @@ async def publication_explanation(assistant_id: uuid.UUID, analysis_id: uuid.UUI
         if row is None:
             raise HTTPException(status_code=404, detail="analysis not found")
         analysis, article, source = row
+        decision = (await _article_decisions(session, [article], get_settings()))[article.id]
         topic_rows = (await session.execute(
-            select(ArticleTopic, Topic).join(Topic, Topic.id == ArticleTopic.topic_id).where(ArticleTopic.assistant_id == assistant_id, ArticleTopic.article_id == article.id).order_by(ArticleTopic.combined_score.desc())
+            select(ArticleTopic, Topic).join(Topic, Topic.id == ArticleTopic.topic_id).where(ArticleTopic.assistant_id == assistant_id, ArticleTopic.article_id == article.id, Topic.enabled.is_(True)).order_by(ArticleTopic.ai_score.desc().nullslast())
         )).all()
         cluster_ids = [value for value in (await session.execute(select(ClusterMember.cluster_id).where(ClusterMember.assistant_id == assistant_id, ClusterMember.article_id == article.id))).scalars().all()]
         related_rows: list[Any] = []
@@ -4734,7 +4795,7 @@ async def publication_explanation(assistant_id: uuid.UUID, analysis_id: uuid.UUI
         "analysis_id": str(analysis_id),
         "article": {"title": article.title, "url": article.canonical_url, "published_at": article.published_at, "language": article.language, "extraction_status": article.extraction_status},
         "source": {"name": source.name, "source_key": source.source_key, "health_status": source.health_status, "url": source.fetch_url},
-        "relevance": {"score": max((float(item.combined_score) for item, _topic in topic_rows), default=0.0), "topics": [{"name": topic.name, "combined_score": float(item.combined_score), "lexical_score": float(item.lexical_score), "semantic_score": item.semantic_score, "explanation": item.explanation, "matched_positive": item.matched_positive, "matched_negative": item.matched_negative, "selected": bool(item.selected)} for item, topic in topic_rows]},
+        "relevance": {**decision, "score": decision["relevance_score"] if decision["relevance_state"] != "pending" else None, "topics": [{"name": topic.name, "ai_score": item.ai_score, "score_kind": "historical_diagnostic", "explanation": assessment_metadata(item.explanation).get("reason", ""), "evidence": assessment_metadata(item.explanation).get("evidence", []), "matched_positive": item.matched_positive, "matched_negative": item.matched_negative} for item, topic in topic_rows]},
         "quality": quality,
         "analysis": {"status": analysis.status, "confidence": float(analysis.confidence), "facts": analysis.facts, "inferences": analysis.inferences, "citations": analysis.citations, "model": analysis.model, "created_at": analysis.created_at},
         "corroboration": [{"title": title, "source": name, "url": url} for title, name, url in related_rows],
@@ -5100,6 +5161,9 @@ async def list_admin_incidents(user: AdminUser, assistant_id: uuid.UUID | None =
     """
     payload = await list_admin_notifications(user)
     incidents: list[dict[str, object]] = []
+    if is_owner(user):
+        from app.security_events import security_incidents
+        incidents.extend(item for item in await security_incidents() if not assistant_id or item.get("assistant_id") == str(assistant_id))
     for item in _mapping_rows(payload.get("notifications")):
         if assistant_id and str(item.get("assistant_id")) != str(assistant_id):
             continue
@@ -5295,7 +5359,7 @@ async def update_user_portal_access(
         ensure_can_manage_account(user, item)
         scope = await _ensure_user_manage_scope(session, user_id, user)
         if scope is not None and user_id != user.id:
-            # _ensure_user_manage_scope already checked shared project access;
+            # _ensure_user_manage_scope already checked account-wide scope;
             # retain the local variable to make that boundary explicit.
             _ = scope
         if payload.feedback_enabled and not payload.enabled:
@@ -5310,6 +5374,7 @@ async def update_user_portal_access(
             "updated_by": str(user.username),
         }
         item.preferences = preferences
+        await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         await session.commit()
     await _audit(user.id, "admin_user.user_portal_access", details={"user_id": str(user_id), "enabled": payload.enabled, "feedback_enabled": payload.feedback_enabled})
     return {"id": str(item.id), "username": item.username, **user_portal_access_payload(item)}
@@ -5342,7 +5407,7 @@ async def create_admin_user(payload: AdminUserRequest, user: AdminUser) -> dict[
             raise HTTPException(status_code=422, detail="an admin user must have at least one project assignment")
         if payload.user_feedback_access and not (payload.user_portal_access or payload.role == "admin"):
             raise HTTPException(status_code=422, detail="feedback access requires User-service access")
-        item = AdminUser(username=payload.username.lower(), password_hash=_hash_password(payload.password), role=payload.role, active=True)
+        item = AdminUser(username=payload.username.lower(), password_hash=await hash_password_async(payload.password), role=payload.role, active=True)
         if payload.user_portal_access is not None or payload.user_feedback_access is not None:
             item.preferences = {
                 "user_portal_access": {
@@ -5412,6 +5477,8 @@ async def update_admin_user(user_id: uuid.UUID, payload: AdminUserUpdate, user: 
             raise HTTPException(status_code=422, detail="the owner account cannot be deactivated")
         for key, value in changes.items():
             setattr(item, key, value)
+        if any(key in changes for key in ("active", "role")) or portal_enabled is not None or feedback_enabled is not None:
+            await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         try:
             await session.commit()
         except Exception as exc:
@@ -5446,12 +5513,14 @@ async def manage_admin_user(user_id: uuid.UUID, payload: AdminUserManageUpdate, 
         if not is_owner(user) and payload.role is not None and _ROLE_RANK.get(payload.role, 0) >= role_rank(user):
             raise HTTPException(status_code=403, detail="cannot grant a role equal to or higher than your own")
         if payload.new_password is not None:
+            if not password_login_allowed(item):
+                raise HTTPException(status_code=422, detail="Google-only accounts have no internal password")
             if user_id == user.id:
-                if not payload.current_password or not _check_password(payload.current_password, item.password_hash):
+                if not payload.current_password or not await check_password_async(payload.current_password, item.password_hash):
                     raise HTTPException(status_code=401, detail="current password is incorrect")
                 if payload.current_password == payload.new_password:
                     raise HTTPException(status_code=422, detail="new password must differ from current password")
-            item.password_hash = _hash_password(payload.new_password)
+            item.password_hash = await hash_password_async(payload.new_password)
             await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         changes = payload.model_dump(exclude_none=True, exclude={"new_password", "current_password", "assistant_ids", "user_portal_access", "user_feedback_access"})
         if "username" in changes:
@@ -5499,7 +5568,7 @@ async def manage_admin_user(user_id: uuid.UUID, payload: AdminUserManageUpdate, 
                 existing = {member.assistant_id for member in memberships}
                 for assistant_id in selected - existing:
                     session.add(AssistantMember(assistant_id=assistant_id, user_id=user_id, role=member_role))
-        if payload.active is False:
+        if any(value is not None for value in (payload.active, payload.role, payload.assistant_ids, payload.user_portal_access, payload.user_feedback_access)):
             await session.execute(delete(AdminSession).where(AdminSession.user_id == user_id))
         try:
             await session.commit()
@@ -5563,6 +5632,7 @@ async def list_active_sessions(user: AdminUser, current_token: str | None) -> di
         "sessions": [{
             "id": str(item.id),
             "username": account.username,
+            "portal": getattr(item, "portal", "admin"),
             "created_at": item.created_at.isoformat(),
             "expires_at": item.expires_at.isoformat(),
             "current": bool(current_hash and hmac.compare_digest(item.token_hash, current_hash)),
@@ -5614,6 +5684,7 @@ class GoogleAccessGrant(BaseModel):
     """Owner-managed Gmail allowlist entry."""
 
     email: str = Field(min_length=6, max_length=320)
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
     # Attach the address to an existing account instead of creating one.
     user_id: uuid.UUID | None = None
     username: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_.-]{3,128}$")
@@ -5622,12 +5693,16 @@ class GoogleAccessGrant(BaseModel):
     password: str | None = Field(default=None, min_length=12, max_length=256)
     assistant_ids: list[uuid.UUID] | None = None
 
+    _password_policy = field_validator('password')(validate_new_password)
+
 
 class GoogleAccessUpdate(BaseModel):
     login_method: Literal["google", "both"] | None = None
     active: bool | None = None
     role: Literal["admin", "editor", "viewer", "assistant_admin", "analyst"] | None = None
     password: str | None = Field(default=None, min_length=12, max_length=256)
+
+    _password_policy = field_validator('password')(validate_new_password)
 
 
 def _require_owner(user: AdminUser) -> None:
@@ -5651,7 +5726,7 @@ def _google_access_payload(item: AdminUser) -> dict[str, object]:
 
 def _validated_gmail(value: str) -> str:
     email = normalize_email(value)
-    if not is_gmail(email):
+    if not is_gmail(email) or not re.fullmatch(r"[a-z0-9_%-]+@gmail\.com", email):
         raise HTTPException(status_code=422, detail="only @gmail.com addresses can use Google sign-in")
     return email
 
@@ -5674,12 +5749,17 @@ async def grant_google_access(payload: GoogleAccessGrant, user: AdminUser) -> di
     if email == owner_email():
         raise HTTPException(status_code=422, detail="the owner address is reserved for the owner account")
     async with SessionLocal() as session:
-        if await session.scalar(select(AdminUser.id).where(AdminUser.email == email)) is not None:
-            raise HTTPException(status_code=409, detail="this Gmail address already has access")
-        if payload.user_id is not None:
-            item = await session.get(AdminUser, payload.user_id, with_for_update=True)
-            if item is None:
+        existing_user = (await session.execute(select(AdminUser).where(AdminUser.email == email).with_for_update())).scalar_one_or_none()
+        item: AdminUser
+        if existing_user is not None:
+            if payload.user_id is not None and payload.user_id != existing_user.id:
+                raise HTTPException(status_code=409, detail="this Gmail address belongs to another account")
+            item = existing_user
+        elif payload.user_id is not None:
+            attached = await session.get(AdminUser, payload.user_id, with_for_update=True)
+            if attached is None:
                 raise HTTPException(status_code=404, detail="admin user not found")
+            item = attached
             if is_owner(item):
                 raise HTTPException(status_code=422, detail="the owner account is managed automatically")
             if item.email:
@@ -5688,24 +5768,32 @@ async def grant_google_access(payload: GoogleAccessGrant, user: AdminUser) -> di
             username = (payload.username or "").strip().lower() or await _unique_username(session, email.split("@", 1)[0])
             item = AdminUser(username=username, role=payload.role, active=True, password_hash=None)
             session.add(item)
+        if payload.display_name:
+            item.display_name = payload.display_name.strip()
+        item.role = payload.role
+        item.active = True
         if payload.login_method == "both" and not (item.password_hash or payload.password):
             raise HTTPException(status_code=422, detail="a password is required for Gmail + password sign-in")
         if payload.login_method == "google":
             item.password_hash = None
         elif payload.password:
-            item.password_hash = _hash_password(payload.password)
+            item.password_hash = await hash_password_async(payload.password)
         item.email = email
-        item.google_sub = None
+        # Existing Google identity bindings are retained across re-grants.
         item.login_method = payload.login_method
-        await session.flush()
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            await session.rollback()
+            raise HTTPException(status_code=409, detail="username or Gmail address already exists") from exc
         if payload.assistant_ids:
             selected = set(payload.assistant_ids)
             found = (await session.execute(select(AssistantWorkspace.id).where(AssistantWorkspace.id.in_(selected)))).scalars().all()
             if len(found) != len(selected):
                 raise HTTPException(status_code=404, detail="one or more selected projects do not exist")
-            existing = set((await session.execute(select(AssistantMember.assistant_id).where(AssistantMember.user_id == item.id))).scalars().all())
+            existing_memberships = set((await session.execute(select(AssistantMember.assistant_id).where(AssistantMember.user_id == item.id))).scalars().all())
             member_role = "admin" if item.role in {"admin", "assistant_admin"} else "editor" if item.role == "editor" else "viewer"
-            for assistant_id in selected - existing:
+            for assistant_id in selected - existing_memberships:
                 session.add(AssistantMember(assistant_id=assistant_id, user_id=item.id, role=member_role))
         # The sign-in contract changed: close every existing session.
         await session.execute(delete(AdminSession).where(AdminSession.user_id == item.id))
@@ -5729,12 +5817,12 @@ async def update_google_access(user_id: uuid.UUID, payload: GoogleAccessUpdate, 
         method = payload.login_method or item.login_method
         if method == "both" and not (item.password_hash or payload.password):
             raise HTTPException(status_code=422, detail="a password is required for Gmail + password sign-in")
-        revoke_sessions = False
+        revoke_sessions = bool(payload.login_method is not None or payload.role is not None)
         if payload.login_method == "google" and item.password_hash:
             item.password_hash = None
             revoke_sessions = True
         if payload.password and method == "both":
-            item.password_hash = _hash_password(payload.password)
+            item.password_hash = await hash_password_async(payload.password)
             revoke_sessions = True
         if payload.login_method:
             item.login_method = payload.login_method
@@ -5758,7 +5846,7 @@ async def revoke_google_access(user_id: uuid.UUID, user: AdminUser) -> dict[str,
             raise HTTPException(status_code=404, detail="Gmail access not found")
         if is_owner(item):
             raise HTTPException(status_code=422, detail="the owner Gmail access cannot be removed")
-        item.email = None
+        # Preserve the email identifier when reverting to password-only.
         item.google_sub = None
         item.login_method = "password"
         if not item.password_hash:

@@ -7,6 +7,8 @@
 *.p12
 *.pfx
 secrets/
+ops/bee-researcher-direct/private/
+ops/bee-researcher-direct/artifacts/
 
 # Python and test artifacts
 __pycache__/
@@ -20,6 +22,7 @@ dist/
 build/
 *.egg-info/
 .venv/
+node_modules/
 *.log
 *.tmp
 

@@ -1,0 +1,16 @@
+# Apply ONLY with the existing production compose.yml, not candidate compose.yaml.
+# No credential is persisted here. A dedicated Researcher key takes precedence.
+# The existing generic key is used only when that dedicated key is absent.
+services:
+  market-intelligence:
+    image: ${MARKET_INTELLIGENCE_IMAGE_REF:?verified release digest is required}
+    environment:
+      MARKET_INTELLIGENCE_VERSION: "3.33.6"
+      MARKET_INTELLIGENCE_BUILD_REVISION: ${MARKET_INTELLIGENCE_BUILD_REVISION:?verified source commit is required}
+      MARKET_INTELLIGENCE_IMAGE_DIGEST: ${MARKET_INTELLIGENCE_IMAGE_DIGEST:?verified image digest is required}
+      # Explicit owner approval: requested media discovery and relevance AI.
+      MARKET_INTELLIGENCE_EXTERNAL_ANALYSIS_APPROVED: "true"
+      MARKET_INTELLIGENCE_OPENAI_API_KEY: ${MARKET_INTELLIGENCE_OPENAI_API_KEY:-${OPENAI_API_KEY:-}}
+      MARKET_INTELLIGENCE_DISCOVERY_MODEL: ${MARKET_INTELLIGENCE_DISCOVERY_MODEL:-gpt-4.1-mini}
+      MARKET_INTELLIGENCE_GOOGLE_SEARCH_API_KEY: ${MARKET_INTELLIGENCE_GOOGLE_SEARCH_API_KEY:-}
+      MARKET_INTELLIGENCE_GOOGLE_SEARCH_ENGINE_ID: ${MARKET_INTELLIGENCE_GOOGLE_SEARCH_ENGINE_ID:-}

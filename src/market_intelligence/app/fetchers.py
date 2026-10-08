@@ -17,6 +17,7 @@ from urllib.parse import urljoin, urlparse, urlunparse
 from urllib.robotparser import RobotFileParser
 
 import httpx
+from app.public_network import PublicHTTPTransport
 from defusedxml import ElementTree as SafeET
 from defusedxml.common import DefusedXmlException
 
@@ -627,6 +628,45 @@ def parse_html_listing(
     return items
 
 
+class PublicFeedLinks(HTMLParser):
+    """Only publisher-advertised alternate feeds; never guess URL paths."""
+    def __init__(self, base_url: str):
+        super().__init__()
+        self.base_url = base_url
+        self.links: list[tuple[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        kind = str(attributes.get("type") or "").lower().split(";")[0].strip()
+        if tag.lower() == "link" and "alternate" in str(attributes.get("rel") or "").lower().split() and kind in {"application/rss+xml", "application/atom+xml", "application/feed+json"}:
+            try:
+                url = validate_public_url_syntax(urljoin(self.base_url, str(attributes.get("href") or "")))
+                if attributes.get("href"):
+                    pair = (url, "json" if kind == "application/feed+json" else "rss")
+                    if pair not in self.links:
+                        self.links.append(pair)
+            except ValueError:
+                pass
+
+
+class PublicPublisherLinks(HTMLParser):
+    def __init__(self, base_url: str):
+        super().__init__()
+        self.base_url = base_url
+        self.links: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "a":
+            return
+        href = dict(attrs).get("href")
+        if not href or len(self.links) >= 500:
+            return
+        try:
+            self.links.append(validate_public_url_syntax(urljoin(self.base_url, href)))
+        except ValueError:
+            pass
+
+
 class SourceFetcher:
     def __init__(
         self,
@@ -648,6 +688,7 @@ class SourceFetcher:
         headers: dict[str, str] | None = None,
         *,
         allowed_credential_hosts: frozenset[str] = frozenset(),
+        max_bytes: int | None = None,
     ) -> httpx.Response:
         current = validate_public_url_syntax(url)
         for _ in range(MAX_REDIRECTS + 1):
@@ -658,10 +699,24 @@ class SourceFetcher:
                 if parsed.scheme != "https" or (parsed.hostname or "").lower().rstrip(".") not in allowed_credential_hosts:
                     raise FetchFailure("connector credential cannot be sent to this host")
             await self.resolver(current)
-            response = await client.get(current, headers=headers or {})
-            if response.status_code not in REDIRECT_STATUS_CODES:
-                return response
-            location = response.headers.get("location")
+            # Enforce the bound during download, not after client.get() has
+            # buffered an arbitrarily large (or decompressed) response.
+            limit = max_bytes if max_bytes is not None else self.settings.fetch_max_bytes
+            async with client.stream("GET", current, headers=headers or {}) as response:
+                if response.status_code not in REDIRECT_STATUS_CODES:
+                    length = response.headers.get("content-length", "")
+                    if length.isdigit() and int(length) > limit:
+                        raise FetchFailure("source response exceeds the byte limit", status_code=response.status_code)
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(body) + len(chunk) > limit:
+                            raise FetchFailure("source response exceeds the byte limit", status_code=response.status_code)
+                        body.extend(chunk)
+                    # _content has already been decoded by HTTPX (including
+                    # Brotli). Do not create a new response and decode twice.
+                    response._content = bytes(body)
+                    return response
+                location = response.headers.get("location")
             if not location:
                 raise FetchFailure("redirect response did not include Location")
             current = validate_public_url_syntax(urljoin(current, location))
@@ -707,7 +762,7 @@ class SourceFetcher:
         parsed = urlparse(source.fetch_url)
         robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
         try:
-            response = await self._request(client, robots_url)
+            response = await self._request(client, robots_url, max_bytes=512_000)
         except (httpx.HTTPError, OSError, ValueError, FetchFailure):
             return True, "unavailable"
         if response.status_code != 200:
@@ -720,6 +775,35 @@ class SourceFetcher:
         allowed = parser.can_fetch(self.settings.fetch_user_agent, source.fetch_url)
         return allowed, "allowed" if allowed else "denied"
 
+    async def publisher_links(self, reference_url: str) -> list[str]:
+        """Corroborate an official homepage linked by a real search result."""
+        url = validate_public_url_syntax(reference_url)
+        source = SourceSpec(source_key="REFERENCE", name="Publisher reference", homepage_url=url, fetch_url=url, adapter="html", max_retries=0)
+        async with httpx.AsyncClient(timeout=5, follow_redirects=False, headers={"User-Agent": self.settings.fetch_user_agent}, transport=self.transport or PublicHTTPTransport(), trust_env=False) as client:
+            allowed, _ = await self._robots_allowed(client, source)
+            if not allowed:
+                return []
+            response = await self._request(client, url, max_bytes=2_000_000)
+            if response.status_code != 200 or len(response.content) > 2_000_000:
+                return []
+            parser = PublicPublisherLinks(str(response.url))
+            parser.feed(response.text)
+            return parser.links
+
+    async def discover_feeds(self, homepage: str) -> list[tuple[str, str]]:
+        homepage = validate_public_url_syntax(homepage)
+        source = SourceSpec(source_key="DISCOVER", name="Feed discovery", homepage_url=homepage, fetch_url=homepage, adapter="html", max_retries=0)
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False, headers={"User-Agent": self.settings.fetch_user_agent}, transport=self.transport or PublicHTTPTransport(), trust_env=False) as client:
+            allowed, _ = await self._robots_allowed(client, source)
+            if not allowed:
+                return []
+            response = await self._request(client, homepage, max_bytes=2_000_000)
+            if response.status_code != 200 or len(response.content) > 2_000_000:
+                return []
+            parser = PublicFeedLinks(str(response.url))
+            parser.feed(response.text)
+            return parser.links[:3]
+
     async def fetch(self, source: SourceSpec) -> FetchResult:
         headers: dict[str, str] = self._connector_headers(source)
         if source.etag:
@@ -731,7 +815,7 @@ class SourceFetcher:
             timeout=httpx.Timeout(timeout),
             follow_redirects=False,
             headers={"User-Agent": self.settings.fetch_user_agent},
-            transport=self.transport,
+            transport=self.transport or PublicHTTPTransport(), trust_env=False,
         ) as client:
             allowed, robots_status = await self._robots_allowed(client, source)
             if not allowed:
@@ -781,12 +865,9 @@ class SourceFetcher:
                             robots_status=robots_status,
                         )
                     response.raise_for_status()
-                    length = response.headers.get("content-length")
-                    if length and int(length) > self.settings.fetch_max_bytes:
-                        raise FetchFailure("source response exceeds the byte limit")
-                    if len(response.content) > self.settings.fetch_max_bytes:
-                        raise FetchFailure("source response exceeds the byte limit")
                     if source.adapter in {"rss"}:
+                        if b"<!doctype html" in response.content[:500].lower() or b"<html" in response.content[:500].lower():
+                            raise FetchFailure("configured feed returned an HTML page, not an RSS/Atom feed", status_code=response.status_code, attempts=attempt)
                         items = parse_feed(
                             response.content,
                             str(response.url),
@@ -805,13 +886,22 @@ class SourceFetcher:
                             self.settings.fetch_max_items_per_source,
                         )
                     elif source.adapter == "html":
-                        items = parse_html_listing(
-                            response.content,
-                            str(response.url),
-                            self.settings.fetch_max_items_per_source,
-                            source.item_url_pattern,
-                            source.item_title_class_pattern,
-                        )
+                        # Legacy/imported sources can have an HTML adapter but
+                        # a real RSS/Atom URL. Parse the actual safe XML payload,
+                        # not its tags as HTML links. No extra request, guessed
+                        # endpoint or relaxation of robots/size/SSRF controls.
+                        prefix = response.content.lstrip(b"\xef\xbb\xbf \t\r\n")[:1024]
+                        is_feed = re.match(rb"(?:<\?xml[^>]*>\s*)?<(?:rss|feed)(?:\s|>)", prefix, re.I) is not None
+                        if is_feed:
+                            items = parse_feed(response.content, str(response.url), self.settings.fetch_max_items_per_source)
+                        else:
+                            items = parse_html_listing(
+                                response.content,
+                                str(response.url),
+                                self.settings.fetch_max_items_per_source,
+                                source.item_url_pattern,
+                                source.item_title_class_pattern,
+                            )
                     elif source.adapter in {"instagram_public", "instagram_private", "x_public", "x_private", "telegram_private"}:
                         items = parse_social_json(
                             response.content,
@@ -837,7 +927,11 @@ class SourceFetcher:
                         last_modified=response.headers.get("last-modified"),
                         robots_status=robots_status,
                     )
-                except (httpx.TransportError, httpx.TimeoutException) as exc:
+                except FetchFailure as exc:
+                    if not exc.attempts:
+                        exc.attempts = attempt
+                    raise
+                except (httpx.TransportError, httpx.TimeoutException, OSError) as exc:
                     last_error = exc
                     if attempt < attempts:
                         await self.sleeper(min(2 ** (attempt - 1), 4))

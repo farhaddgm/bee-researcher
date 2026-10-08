@@ -13,7 +13,7 @@ from collections import deque
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import Cookie, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
@@ -23,9 +23,12 @@ from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import get_settings
+from app.observability import configure_logging
 from app.database import SessionLocal, check_database
+from app.deployment_drain import engine as deployment_lease_engine, work_lease
 from app.models import AssistantWorkspace
 from app.ingestion_service import (
+    DEFAULT_ASSISTANT_ID,
     list_sources,
     run_degraded_source_health_probe,
     run_ingestion,
@@ -38,6 +41,7 @@ from app.pipeline_service import (
     feedback_daily_report,
     generate_weekly_report,
     list_publications,
+    list_relevance_assessments,
     pipeline_metrics,
     publish_publication,
     approve_borderline_publication,
@@ -225,7 +229,7 @@ from app.admin import (
     set_reader_session_cookie,
     update_google_access,
 )
-from app import google_auth
+from app import accounts, google_auth
 from app.admin_ui import ADMIN_HTML
 from app.user_ui import USER_HTML
 
@@ -245,6 +249,13 @@ def _inject_inline_nonce(body: str, nonce: str) -> str:
         lambda match: f'<{match.group(1)} nonce="{nonce}"{match.group(2)}>',
         body,
     )
+def _login_document(body: str, portal: str, *, password: bool = False) -> str:
+    """Choose the auth UI before first paint; never expose a password fallback."""
+    mode = "password" if password else "google"
+    attrs = f'data-login-mode="{mode}" data-auth-portal="{portal}" data-google-ready="{str(settings.google_login_ready).lower()}"'
+    return body.replace("<body>", f"<body {attrs}>", 1)
+
+
 from app.security_controls import (
     ADMIN_SESSION_COOKIE,
     CSRF_COOKIE,
@@ -271,6 +282,7 @@ _ADMIN_ASSETS = {
 
 
 settings = get_settings()
+configure_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -312,6 +324,7 @@ class _ClientErrorRateLimiter:
 
 
 _client_error_rate_limiter = _ClientErrorRateLimiter()
+_csp_log_rate_limiter = _ClientErrorRateLimiter(limit=60, window_seconds=60, max_clients=1)
 
 
 def _safe_telemetry_token(value: object, limit: int = 64) -> str:
@@ -353,6 +366,9 @@ async def _read_bounded_request_body(request: Request, limit: int) -> bytes | No
 async def lifespan(_: FastAPI):
     stop = asyncio.Event()
     tasks: list[asyncio.Task] = []
+    from app.contenter import connection_status, sync_loop
+    if connection_status(settings)["configured"]:
+        tasks.append(asyncio.create_task(sync_loop(settings, stop)))
     if settings.scheduler_enabled:
         tasks.append(asyncio.create_task(scheduler_loop(settings, stop)))
     if settings.telegram_ready and settings.telegram_polling_enabled:
@@ -363,6 +379,7 @@ async def lifespan(_: FastAPI):
         stop.set()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        await deployment_lease_engine.dispose()
 
 
 app = FastAPI(
@@ -385,6 +402,17 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts)
 # but that also makes its HTML response large. Compress text responses at the
 # application boundary; browsers that do not advertise gzip are unchanged.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def deployment_admission(request: Request, call_next):
+    if request.method in {"GET", "HEAD", "OPTIONS"} or not settings.deployment_drain_enabled:
+        return await call_next(request)
+    try:
+        async with work_lease(enabled=True):
+            return await call_next(request)
+    except HTTPException as exc:
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code, headers=exc.headers)
 
 # Bee CFO exposes an API/control contract only in phase one.  Its back-office
 # UI is intentionally out of scope; the router remains independently removable
@@ -419,7 +447,6 @@ def _csp_report_items(payload: object) -> list[dict[str, object]]:
         "document-uri",
         "effective-directive",
         "line-number",
-        "original-policy",
         "source-file",
         "violated-directive",
     }
@@ -427,14 +454,38 @@ def _csp_report_items(payload: object) -> list[dict[str, object]]:
     for report in reports[:20]:
         if not isinstance(report, dict):
             continue
+        if isinstance(report.get("body"), dict):
+            report = report["body"]
+        aliases = {
+            "blockedURL": "blocked-uri", "documentURL": "document-uri",
+            "effectiveDirective": "effective-directive", "lineNumber": "line-number",
+            "sourceFile": "source-file", "violatedDirective": "violated-directive",
+        }
+        report = {aliases.get(key, key): value for key, value in report.items()}
         cleaned: dict[str, object] = {}
         for key in allowed:
             if key not in report:
                 continue
             value = report[key]
             if isinstance(value, str):
-                cleaned[key] = redact_sensitive_text(value, limit=300)
-            elif isinstance(value, (int, float)) and key == "line-number":
+                if key in {"blocked-uri", "document-uri", "source-file"}:
+                    try:
+                        parsed = urlsplit(value)
+                    except ValueError:
+                        continue
+                    if parsed.scheme in {"http", "https"} and parsed.hostname:
+                        # Queries/fragments/userinfo may include private search
+                        # text, OAuth codes or credentials. Retain only the
+                        # origin and a known application path, not user IDs.
+                        path = parsed.path if parsed.path in {"/admin", "/user", "/user/settings"} else "/"
+                        cleaned[key] = f"{parsed.scheme}://{parsed.hostname}{path}"[:300]
+                    elif value in {"inline", "eval", "self", "none"}:
+                        cleaned[key] = value
+                    elif parsed.scheme in {"data", "blob"}:
+                        cleaned[key] = parsed.scheme
+                elif re.fullmatch(r"[a-z-]{1,48}", value):
+                    cleaned[key] = value
+            elif isinstance(value, int) and not isinstance(value, bool) and key == "line-number" and 0 <= value <= 1_000_000:
                 cleaned[key] = value
         if cleaned:
             items.append(cleaned)
@@ -464,7 +515,7 @@ async def csp_report(request: Request) -> Response:
     except (UnicodeDecodeError, json.JSONDecodeError):
         return Response(status_code=400)
     items = _csp_report_items(payload)
-    if items:
+    if items and _csp_log_rate_limiter.allow("csp-log"):
         logger.info("csp_report_only_violation count=%d reports=%s", len(items), items)
     return Response(status_code=204)
 
@@ -535,6 +586,10 @@ async def client_error_report(
     return Response(status_code=204)
 
 
+from app.security_controls import USER_CSRF_COOKIE, request_activity, is_trusted_proxy
+from app.admin import canonical_login_identity
+from app.security_events import record_security_event, client_hash
+
 @app.middleware("http")
 async def private_indexing_headers(request: Request, call_next):
     """Keep the control plane private and reject cross-origin mutations."""
@@ -548,12 +603,7 @@ async def private_indexing_headers(request: Request, call_next):
             return JSONResponse(status_code=400, content={"detail": "invalid content length"})
 
     def trusted_proxy() -> bool:
-        client_host = request.client.host if request.client else ""
-        try:
-            address = ipaddress.ip_address(client_host)
-        except ValueError:
-            return False
-        return address.is_private or address.is_loopback
+        return is_trusted_proxy(request.client.host if request.client else "", settings)
 
     def forwarded_value(name: str) -> str:
         return request.headers.get(name, "").split(",", 1)[0].strip()
@@ -581,6 +631,8 @@ async def private_indexing_headers(request: Request, call_next):
     # cross-site requests when browsers send Origin; the double-submit token
     # below closes the common gap where Origin is absent.
     if mutating:
+        if request.headers.get("sec-fetch-site") == "cross-site":
+            return JSONResponse(status_code=403, content={"detail": "cross-origin request blocked"})
         origin = request.headers.get("origin", "").strip()
         if origin:
             parsed_origin = urlsplit(origin)
@@ -607,8 +659,17 @@ async def private_indexing_headers(request: Request, call_next):
                 request.cookies.get(ADMIN_SESSION_COOKIE),
                 settings,
             ):
+                await record_security_event("request.csrf_denied", severity="warning")
                 return JSONResponse(status_code=403, content={"detail": "csrf validation failed"})
-    response = await call_next(request)
+    if mutating and request.url.path.startswith("/user/api/") and request.url.path != "/user/api/login" and request.cookies.get("research_bee_user_session"):
+        if not csrf_token_matches(request.cookies.get(USER_CSRF_COOKIE), request.headers.get("x-csrf-token"), request.cookies.get("research_bee_user_session"), settings):
+            await record_security_event("reader.csrf_denied", severity="warning")
+            return JSONResponse(status_code=403, content={"detail": "csrf validation failed"})
+    activity_token = request_activity.set(mutating or request.headers.get("x-user-activity") == "1")
+    try:
+        response = await call_next(request)
+    finally:
+        request_activity.reset(activity_token)
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
@@ -772,6 +833,12 @@ async def ready() -> JSONResponse:
     )
 
 
+from app.contenter import router as contenter_router
+app.include_router(contenter_router)
+from app.research_context import router as research_context_router
+app.include_router(research_context_router)
+
+
 @app.get("/robots.txt", include_in_schema=False)
 async def robots_txt() -> PlainTextResponse:
     """Explicitly disallow every crawler path for the private backoffice."""
@@ -815,7 +882,7 @@ async def admin_ui(request: Request) -> HTMLResponse:
     # the browser and never receives this nonce.
     nonce = secrets.token_urlsafe(24)
     request.state.csp_nonce = nonce
-    body = _inject_inline_nonce(ADMIN_HTML, nonce)
+    body = _inject_inline_nonce(_login_document(ADMIN_HTML, "admin"), nonce)
     return HTMLResponse(body, headers={"Cache-Control": "no-store"})
 
 
@@ -828,7 +895,7 @@ async def admin_password_login_ui(request: Request) -> HTMLResponse:
     """
     nonce = secrets.token_urlsafe(24)
     request.state.csp_nonce = nonce
-    body = ADMIN_HTML.replace("<body>", '<body data-login-mode="password">', 1)
+    body = _login_document(ADMIN_HTML, "admin", password=True)
     return HTMLResponse(_inject_inline_nonce(body, nonce), headers={"Cache-Control": "no-store"})
 
 
@@ -836,7 +903,7 @@ async def admin_password_login_ui(request: Request) -> HTMLResponse:
 async def user_password_login_ui(request: Request) -> HTMLResponse:
     nonce = secrets.token_urlsafe(24)
     request.state.csp_nonce = nonce
-    body = USER_HTML.replace("<body>", '<body data-login-mode="password">', 1)
+    body = _login_document(USER_HTML, "user", password=True)
     return HTMLResponse(
         _inject_inline_nonce(body, nonce),
         headers={"Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow, noarchive, nosnippet"},
@@ -848,7 +915,7 @@ async def user_ui(request: Request) -> HTMLResponse:
     """Serve the read-only published-news portal."""
     nonce = secrets.token_urlsafe(24)
     request.state.csp_nonce = nonce
-    body = _inject_inline_nonce(USER_HTML, nonce)
+    body = _inject_inline_nonce(_login_document(USER_HTML, "user"), nonce)
     return HTMLResponse(
         body,
         headers={
@@ -863,7 +930,7 @@ async def user_settings_ui(request: Request) -> HTMLResponse:
     """Serve the same reader shell with its personal settings as a page."""
     nonce = secrets.token_urlsafe(24)
     request.state.csp_nonce = nonce
-    body = USER_HTML.replace("<body>", '<body data-user-page="settings">', 1)
+    body = _login_document(USER_HTML, "user").replace('<body ', '<body data-user-page="settings" ', 1)
     body = _inject_inline_nonce(body, nonce)
     return HTMLResponse(
         body,
@@ -887,9 +954,12 @@ async def user_api_logout(response: Response, token: str | None = Cookie(default
 
 
 @app.get("/user/api/me")
-async def user_api_me(token: str | None = Cookie(default=None, alias=USER_SESSION_COOKIE)) -> dict[str, object]:
+async def user_api_me(response: Response, token: str | None = Cookie(default=None, alias=USER_SESSION_COOKIE)) -> dict[str, object]:
     user = await current_reader(token)
-    return {"id": str(user.id), "username": user.username, **user_portal_access_payload(user)}
+    if token:
+        set_reader_session_cookie(response, token)
+    return {"id": str(user.id), "username": user.username, "display_name": user.display_name or user.username,
+            "email": user.email, "login_method": user.login_method, **user_portal_access_payload(user)}
 
 
 @app.get("/user/api/assistants")
@@ -983,7 +1053,7 @@ def _login_client_address(request: Request) -> str:
         peer_address = ipaddress.ip_address(peer)
     except ValueError:
         return peer
-    if peer_address.is_private or peer_address.is_loopback:
+    if is_trusted_proxy(peer, settings):
         forwarded = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
         try:
             candidate = ipaddress.ip_address(forwarded)
@@ -997,8 +1067,12 @@ def _login_client_address(request: Request) -> str:
 async def _rate_limited_password_login(payload: LoginRequest, response: Response, http_request: Request, login_fn) -> dict[str, object]:
     """Apply the shared per-account and per-client budget to a password login."""
     username = payload.username.strip().lower()
+    if "@" in username:
+        username = google_auth.normalize_email(username)
+    username = await canonical_login_identity(username)
     client_address = _login_client_address(http_request)
     if await login_attempts_exceeded(settings, username, client_address):
+        await record_security_event("login.rate_limited", severity="warning", details={"client_hash": client_hash(client_address)})
         raise HTTPException(
             status_code=429,
             detail="too many login attempts",
@@ -1008,6 +1082,7 @@ async def _rate_limited_password_login(payload: LoginRequest, response: Response
         result = await login_fn(payload, response)
     except HTTPException as exc:
         if exc.status_code == 401:
+            await record_security_event("login.failed", severity="warning", details={"client_hash": client_hash(client_address)})
             await record_login_failure(settings, username, client_address)
         raise
     await clear_login_failures(settings, username, client_address)
@@ -1033,17 +1108,20 @@ def _google_login_error(portal: str, code: str) -> RedirectResponse:
 
 
 @app.get("/auth/google/start", include_in_schema=False)
-async def google_login_start(request: Request, portal: str = Query(default="admin", pattern="^(admin|user)$")) -> RedirectResponse:
+async def google_login_start(request: Request, portal: str = Query(default="admin", pattern="^(admin|user)$"), redirectTo: str | None = Query(default=None, max_length=1024)) -> RedirectResponse:
     """Browser navigation target: redirect to Google's account chooser."""
     # The flow cookie must be set on the host Google redirects back to.
     # Start on that canonical host (e.g. from the legacy domain) first.
     callback = urlsplit(settings.google_redirect_uri or "")
     if callback.hostname and (request.url.hostname or "").lower() != callback.hostname.lower():
-        return RedirectResponse(url=f"{callback.scheme}://{callback.netloc}/auth/google/start?portal={portal}", status_code=302)
+        query = {"portal": portal}
+        if redirectTo:
+            query["redirectTo"] = google_auth.safe_redirect(portal, redirectTo)
+        return RedirectResponse(url=f"{callback.scheme}://{callback.netloc}/auth/google/start?{urlencode(query)}", status_code=302)
     try:
         if await login_ip_attempts_exceeded(settings, _login_client_address(request)):
             raise google_auth.GoogleAuthError("rate_limited")
-        url, flow_cookie = google_auth.start_flow(settings, portal)
+        url, flow_cookie = google_auth.start_flow(settings, portal, redirectTo)
     except google_auth.GoogleAuthError as exc:
         return _google_login_error(portal, exc.code)
     except HTTPException:
@@ -1084,10 +1162,11 @@ async def google_login_callback(
             await record_ip_login_failure(settings, client_address)
         if exc.code == "failed":
             logger.warning("google sign-in failed: %s", redact_sensitive_text(str(exc), limit=300))
+        await accounts.admin._audit(None, "auth.google.failed", details={"portal": portal, "reason": exc.code})
         return _google_login_error(portal, exc.code)
     except HTTPException:
         return _google_login_error(portal, "failed")
-    response = RedirectResponse(url="/user" if portal == "user" else "/admin", status_code=302)
+    response = RedirectResponse(url=google_auth.safe_redirect(portal, flow.get("redirect_to")), status_code=302)
     response.delete_cookie(google_auth.FLOW_COOKIE, path=google_auth.FLOW_COOKIE_PATH)
     if portal == "user":
         set_reader_session_cookie(response, raw)
@@ -1119,14 +1198,37 @@ async def admin_api_revoke_google_access(user_id: uuid.UUID, token: str | None =
 @app.post("/admin/api/logout")
 async def admin_api_logout(response: Response, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, str]:
     result = await admin_logout(response, token)
-    response.headers["Clear-Site-Data"] = '"cache", "cookies", "storage"'
+    # Do not delete the independent User portal's cookie on Admin logout.
+    response.headers["Clear-Site-Data"] = '"cache"'
     return result
 
 
 @app.get("/admin/api/me")
-async def admin_api_me(token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
+async def admin_api_me(response: Response, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict[str, object]:
     user = await current_admin(token)
-    return {"id": str(user.id), "username": user.username, "role": effective_user_role(user), "stored_role": user.role, "is_owner": is_owner(user), "login_method": user.login_method, "avatar_url": (user.preferences or {}).get("avatar_url") or default_avatar_data(user.id), "mfa_required": False, **user_portal_access_payload(user)}
+    if token:
+        set_admin_session_cookies(response, token)
+    return {"id": str(user.id), "username": user.username, "role": effective_user_role(user), "stored_role": user.role, "is_owner": is_owner(user), "login_method": user.login_method, "email": user.email, "display_name": user.display_name or user.username, "has_password": bool(user.password_hash), "avatar_url": (user.preferences or {}).get("avatar_url") or default_avatar_data(user.id), "mfa_required": False, **user_portal_access_payload(user)}
+
+
+@app.get("/admin/api/accounts")
+async def account_list(q: str = Query(default="", max_length=120), page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100), token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict:
+    return await accounts.list_accounts(await current_admin(token), q=q, page=page, page_size=page_size)
+
+
+@app.post("/admin/api/accounts")
+async def account_create(payload: accounts.AccountCreate, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict:
+    return await accounts.create_account(payload, await current_admin(token))
+
+
+@app.patch("/admin/api/accounts/{uid}")
+async def account_update(uid: uuid.UUID, payload: accounts.AccountUpdate, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict:
+    return await accounts.update_account(uid, payload, await current_admin(token))
+
+
+@app.delete("/admin/api/accounts/{uid}")
+async def account_remove(uid: uuid.UUID, token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict:
+    return await accounts.remove_account(uid, await current_admin(token))
 
 
 @app.get("/admin/api/account/preferences")
@@ -1670,7 +1772,11 @@ async def metadata(token: str | None = Cookie(default=None, alias="research_bee_
         "publish_max_items_per_run": settings.max_items_per_run,
             "processing_max_items_per_day": settings.processing_max_items_per_day,
         "freshness_window_days": settings.freshness_window_days,
-        "admin_session_idle_hours": min(settings.admin_session_ttl_hours, 6),
+        "admin_session_idle_hours": settings.session_idle_minutes / 60,
+        "session_idle_minutes": settings.session_idle_minutes,
+        "session_absolute_hours": settings.session_absolute_hours,
+        "account_session_ttl_days": settings.account_session_ttl_days,
+        "user_session_cutoff_local": "02:00",
         "ingestion": {
             "adapters": ["rss", "html", "json", "telegram_public", "telegram_private", "instagram_public", "instagram_private", "x_public", "x_private"],
             "max_items_per_source": settings.fetch_max_items_per_source,
@@ -1798,6 +1904,21 @@ async def metrics(
     return await pipeline_metrics(assistant_id=assistant_id)
 
 
+@app.get("/operations/status")
+async def product_operations_status(
+    assistant_id: uuid.UUID,
+    token: str | None = Cookie(default=None, alias="research_bee_admin_session"),
+) -> dict[str, object]:
+    from app.product_status import operations_status
+
+    await require_workspace_scope(token, assistant_id)
+    result = await operations_status(assistant_id=assistant_id)
+    if not is_owner(await current_admin(token)):
+        result.pop("budgets", None)
+        result.pop("budget_day_start", None)
+    return result
+
+
 @app.post("/relevance/rescore")
 async def relevance_rescore(
     limit: int = Query(default=1000, ge=1, le=5000),
@@ -1811,22 +1932,26 @@ async def relevance_rescore(
 @app.post("/analysis/regenerate-fallbacks")
 async def analysis_regenerate_fallbacks(
     limit: int = Query(default=200, ge=1, le=1000),
+    assistant_id: uuid.UUID | None = None,
     token: str | None = Cookie(default=None, alias="research_bee_admin_session"),
 ) -> dict[str, int]:
     if not is_owner(await current_admin(token)):
         raise HTTPException(status_code=403, detail="owner role required")
-    return await regenerate_fallback_analyses(limit=limit)
+    await require_workspace_scope(token, assistant_id, write=True)
+    return await regenerate_fallback_analyses(limit=limit, assistant_id=assistant_id)
 
 
 @app.post("/analysis/reanalyze-fallbacks")
 async def analysis_reanalyze_fallbacks(
     limit: int = Query(default=5, ge=1, le=20),
+    assistant_id: uuid.UUID | None = None,
     token: str | None = Cookie(default=None, alias="research_bee_admin_session"),
 ) -> dict[str, object]:
     if not is_owner(await current_admin(token)):
         raise HTTPException(status_code=403, detail="owner role required")
     try:
-        return await reanalyze_fallback_articles(settings, limit=limit)
+        await require_workspace_scope(token, assistant_id, write=True)
+        return await reanalyze_fallback_articles(settings, limit=limit, assistant_id=assistant_id)
     except Exception as exc:
         logger.exception("fallback reanalysis failed")
         raise HTTPException(status_code=500, detail="fallback reanalysis failed") from exc
@@ -1956,6 +2081,19 @@ async def publications(
     await require_workspace_scope(token, assistant_id)
     rows = await list_publications(status=status, limit=limit, assistant_id=assistant_id, query=query)
     return {"count": len(rows), "publications": rows}
+
+
+@app.get("/publications/relevance-assessments")
+async def relevance_assessments(
+    assistant_id: uuid.UUID,
+    limit: int = Query(default=200, ge=1, le=200),
+    offset: int = Query(default=0, ge=0, le=500),
+    state: str | None = Query(default=None, pattern="^(selected|borderline|rejected|pending)$"),
+    query: str | None = Query(default=None, max_length=200),
+    token: str | None = Cookie(default=None, alias="research_bee_admin_session"),
+) -> dict[str, object]:
+    await require_workspace_scope(token, assistant_id)
+    return await list_relevance_assessments(assistant_id=assistant_id, limit=limit, offset=offset, state=state, query=query)
 
 
 @app.get("/insights")
@@ -2090,6 +2228,7 @@ async def weekly_report_run(
 ) -> dict[str, object]:
     if not is_owner(await current_admin(token)):
         raise HTTPException(status_code=403, detail="owner role required")
+    await require_workspace_scope(token, assistant_id or DEFAULT_ASSISTANT_ID)
     return await generate_weekly_report(assistant_id=assistant_id)
 
 

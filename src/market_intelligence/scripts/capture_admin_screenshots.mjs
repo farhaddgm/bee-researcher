@@ -43,7 +43,7 @@ const results = [];
 // The admin shell keeps a few background requests open, so networkidle is
 // intentionally not used here. DOM readiness plus the explicit UI wait is a
 // more reliable capture boundary.
-await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+await page.goto(new URL("/admin/login-up",baseUrl).href, { waitUntil: 'domcontentloaded', timeout: 30000 });
 await waitForUi();
 await page.locator('#loginUser').fill(username);
 await page.locator('#loginPass').fill(password);

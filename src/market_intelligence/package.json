@@ -3,13 +3,21 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "ui:e2e": "node scripts/verify_backoffice_ui.mjs",
     "admin:inventory": "node scripts/capture_admin_screenshots.mjs",
     "admin:interactions": "node scripts/capture_admin_interactions.mjs",
     "admin:locales": "node scripts/verify_admin_locales.mjs",
     "user:e2e": "node scripts/verify_user_portal.mjs",
-    "admin:support:e2e": "node scripts/verify_admin_support.mjs"
+    "admin:support:e2e": "node scripts/verify_admin_support.mjs",
+    "admin:media:e2e": "node scripts/verify_media_relevance.mjs",
+    "admin:models:e2e": "node scripts/verify_ai_model_settings.mjs",
+    "admin:research-context:e2e": "node scripts/verify_research_context_browser.mjs",
+    "admin:accounts:e2e": "node scripts/verify_account_access_browser.mjs",
+    "admin:accessibility:e2e": "node scripts/verify_admin_accessibility.mjs",
+    "admin:catalog:e2e": "node scripts/verify_admin_catalog_viewports.mjs"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "playwright": "1.55.1"
   }
 }

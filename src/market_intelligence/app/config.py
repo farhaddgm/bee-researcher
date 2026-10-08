@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -16,7 +17,7 @@ NAMESPACE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]{2,63}$")
 
 class Settings(BaseSettings):
     app_name: str = "Bee Researcher"
-    version: str = "3.31.0"
+    version: str = Path(__file__).resolve().parents[1].joinpath("VERSION").read_text(encoding="utf-8").strip()
     build_revision: str = "unknown"
     image_digest: str | None = None
     environment: str = "production"
@@ -24,6 +25,12 @@ class Settings(BaseSettings):
     # the reverse proxy. They are not credentials and may be omitted locally.
     domain: str | None = None
     legacy_domain: str | None = None
+    # Read-only profile display/sync only. Intentionally not a pipeline input.
+    contenter_api_url: str | None = None
+    contenter_web_url: str | None = None
+    contenter_token: SecretStr | None = None
+    contenter_sync_seconds: int = Field(default=900, ge=60, le=86400)
+    contenter_cache_max_age_seconds: int = Field(default=86400, ge=60, le=604800)
 
     postgres_db: str
     postgres_user: str
@@ -38,6 +45,7 @@ class Settings(BaseSettings):
     database_max_overflow: int = Field(default=10, ge=0, le=30)
     database_pool_timeout_seconds: int = Field(default=15, ge=1, le=120)
 
+    redis_username: str = "default"
     redis_password: SecretStr
     redis_host: str = "redis"
     redis_port: int = 6379
@@ -84,8 +92,18 @@ class Settings(BaseSettings):
     model_input_usd_per_million_tokens: float = Field(default=0.2, ge=0)
     model_output_usd_per_million_tokens: float = Field(default=1.2, ge=0)
     external_analysis_approved: bool = False
+    # Discovery has a separate, bounded budget and never sends project data.
+    discovery_model: str = "gpt-4.1-mini"
+    google_search_api_key: SecretStr | None = None
+    google_search_engine_id: str | None = None
+    relevance_batch_size: int = Field(default=8, ge=1, le=20)
+    relevance_max_requests_per_run: int = Field(default=10, ge=0, le=100)
+    relevance_daily_request_cap: int = Field(default=100, ge=0, le=1000)
 
     scheduler_enabled: bool = True
+    # Enable for production and SQL acceptance. Synthetic unit tests can run
+    # without a database. Deployment tooling verifies the live flag explicitly.
+    deployment_drain_enabled: bool = False
     scheduler_poll_seconds: int = Field(default=30, ge=5, le=300)
     # A slot stays due for this many minutes, so a long scheduler tick that
     # crosses the slot minute delivers late instead of silently skipping it.
@@ -111,24 +129,24 @@ class Settings(BaseSettings):
     # account table is empty (first installation).
     admin_bootstrap_password: SecretStr | None = None
     # Google sign-in (OpenID Connect, authorization code + PKCE). The button is
-    # shown only when all three values are configured.
+    # enabled when all three values are configured.
     google_client_id: str | None = None
     google_client_secret: SecretStr | None = None
     google_redirect_uri: str | None = None
-    # Admin sessions use a sliding idle timeout. The security ceiling is
-    # deliberately hard-capped at six hours; activity renews the deadline.
+    # Legacy setting retained for old deployment configuration only.
     admin_session_ttl_hours: int = Field(default=6, ge=1, le=6)
+    # Retained as legacy metadata for existing clients; server deadlines below
+    # are authoritative. Readers also keep their next-local-02:00 boundary.
+    account_session_ttl_days: int = Field(default=30, ge=1, le=30)
+    session_idle_minutes: int = Field(default=30, ge=5, le=60)
+    session_absolute_hours: int = Field(default=12, ge=1, le=24)
+    trusted_proxy_cidrs: str = "127.0.0.1/32,::1/128"
+    telegram_identity_bindings: dict[str, str] = Field(default_factory=dict)
     admin_cookie_secure: bool = True
-    # Prefer a service-only signing key for CSRF tokens. The security module
-    # retains a derived fallback so existing deployments keep their contract
-    # until the owner provisions this independent secret.
+    # Production preflight requires independent signing/encryption keys.
     csrf_signing_secret: SecretStr | None = Field(default=None, min_length=32)
-    # TOTP secrets are encrypted at rest with this dedicated key.  The MFA
-    # module falls back to csrf_signing_secret for existing deployments until
-    # this independent secret is provisioned.
-    mfa_encryption_secret: SecretStr | None = None
-    # A bounded per-username/per-client counter protects the sign-in endpoint
-    # without turning Redis into an authentication dependency.
+    mfa_encryption_secret: SecretStr | None = Field(default=None, min_length=32)
+    # Shared Redis admission is atomic and fails closed on counter failure.
     login_max_attempts: int = Field(default=10, ge=3, le=20)
     login_ip_max_attempts: int = Field(default=30, ge=10, le=200)
     login_window_seconds: int = Field(default=900, ge=60, le=3600)
@@ -307,6 +325,7 @@ class Settings(BaseSettings):
 
     @field_validator(
         "openai_api_key",
+        "google_search_api_key",
         "telegram_bot_token",
         "csrf_signing_secret",
         "mfa_encryption_secret",
@@ -370,7 +389,7 @@ class Settings(BaseSettings):
     def redis_url(self) -> str:
         password = quote(self.redis_password.get_secret_value(), safe="")
         return (
-            f"redis://:{password}@{self.redis_host}:{self.redis_port}/"
+            f"redis://{quote(self.redis_username, safe='')}:{password}@{self.redis_host}:{self.redis_port}/"
             f"{self.redis_database}"
         )
 

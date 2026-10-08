@@ -91,6 +91,8 @@ class AdminUser(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username: Mapped[str] = mapped_column(String(128), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(160))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Normalized Gmail address (see app.google_auth.normalize_gmail). Only the
     # owner can attach an address; the owner is the account whose address
     # equals Settings.owner_email.
@@ -133,16 +135,32 @@ class AssistantMember(Base):
 
 class AdminSession(Base):
     __tablename__ = "admin_sessions"
-    __table_args__ = (Index("ix_mi_admin_sessions_expires", "expires_at"),)
+    __table_args__ = (
+        Index("ix_mi_admin_sessions_expires", "expires_at"),
+        CheckConstraint("portal IN ('admin', 'user')", name="admin_sessions_portal"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.admin_users.id", ondelete="CASCADE"), nullable=False)
     token_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    portal: Mapped[str] = mapped_column(String(16), nullable=False, default="admin", server_default="admin")
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     # Password authentication creates an unverified session when MFA is
     # enforced for the account.  Existing sessions remain trusted through the
     # server default so this additive migration is safe during rollout.
     mfa_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class SecurityEvent(Base):
+    __tablename__ = "security_events"
+    __table_args__ = (Index("ix_mi_security_events_created", "created_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    assistant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    action: Mapped[str] = mapped_column(String(80), nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="info")
+    details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
@@ -345,7 +363,7 @@ class Source(Base):
 class SourceItem(Base):
     __tablename__ = "source_items"
     __table_args__ = (
-        UniqueConstraint("fingerprint", name="uq_mi_source_items_fingerprint"),
+        UniqueConstraint("assistant_id", "fingerprint", name="uq_mi_source_items_assistant_fingerprint"),
         Index("ix_mi_source_items_source_published", "source_id", "published_at"),
     )
 
@@ -398,6 +416,90 @@ class SourceFetchRun(Base):
     items_inserted: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text)
     details: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+
+
+class ContenterBusinessLink(Base):
+    """External display-only context; never substitute the active local AI profile."""
+    __tablename__ = "contenter_business_links"
+    assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"), primary_key=True)
+    external_business_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    business_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    generation: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="healthy")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error_code: Mapped[str | None] = mapped_column(String(48))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ContenterBusinessSnapshot(Base):
+    __tablename__ = "contenter_business_snapshots"
+    __table_args__ = (
+        UniqueConstraint("assistant_id", "version", name="uq_mi_contenter_snapshot_version"),
+        Index("ix_mi_contenter_snapshots_assistant", "assistant_id", "external_business_id"),
+    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"), nullable=False)
+    external_business_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ProjectResearchContext(Base):
+    """Explicit, approved AI context; linking an external profile never creates this row."""
+    __tablename__ = "project_research_contexts"
+    __table_args__ = (
+        CheckConstraint("source IN ('none','local','contenter')", name="research_context_source"),
+        CheckConstraint("mode IN ('topics','contextual','focused')", name="research_context_mode"),
+        CheckConstraint("rollout IN ('shadow','live')", name="research_context_rollout"),
+        CheckConstraint("business_threshold BETWEEN 0 AND 1", name="research_context_threshold"),
+    )
+    assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"), primary_key=True)
+    generation: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    rollout: Mapped[str] = mapped_column(String(8), nullable=False)
+    local_business_id: Mapped[int | None] = mapped_column(SmallInteger)
+    external_business_id: Mapped[str | None] = mapped_column(String(128))
+    link_generation: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    snapshot_version: Mapped[int | None] = mapped_column(Integer)
+    business_threshold: Mapped[float] = mapped_column(Float, nullable=False, default=0.5)
+    brief: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    semantic_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    style: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    previous_live: Mapped[dict | None] = mapped_column(JSONB)
+    activated_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    activated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class ResearchContextPreview(Base):
+    __tablename__ = "research_context_previews"
+    __table_args__ = (Index("ix_mi_research_previews_expiry", "expires_at"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"), nullable=False)
+    actor_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    result: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    input_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class NewsBusinessAssessment(Base):
+    __tablename__ = "news_business_assessments"
+    __table_args__ = (UniqueConstraint("assistant_id", "article_id", "context_hash", "content_hash", name="uq_mi_business_assessment"),)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"), nullable=False)
+    article_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.normalized_articles.id", ondelete="CASCADE"), nullable=False)
+    context_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
 
 class BusinessProfile(Base):
@@ -529,6 +631,8 @@ class ArticleTopic(Base):
         nullable=False,
     )
     lexical_score: Mapped[float] = mapped_column(Float, nullable=False)
+    ai_score: Mapped[float | None] = mapped_column(Float)
+    context_hash: Mapped[str | None] = mapped_column(String(64))
     semantic_score: Mapped[float | None] = mapped_column(Float)
     combined_score: Mapped[float] = mapped_column(Float, nullable=False)
     matched_positive: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
@@ -636,6 +740,7 @@ class ArticleAnalysis(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     estimated_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0)
     error_message: Mapped[str | None] = mapped_column(Text)
+    research_provenance: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -713,7 +818,7 @@ class WeeklyReport(Base):
             "status IN ('preview', 'published', 'failed')",
             name="weekly_reports_status",
         ),
-        UniqueConstraint("period_start", "period_end", name="uq_mi_weekly_reports_period"),
+        UniqueConstraint("assistant_id", "period_start", "period_end", name="uq_mi_weekly_reports_assistant_period"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

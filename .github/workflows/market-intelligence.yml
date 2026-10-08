@@ -1,18 +1,19 @@
 name: Market Intelligence
 
 on:
+  # Required branch checks must exist even for documentation-only PRs;
+  # path-filtered required workflows leave those PRs permanently pending.
   pull_request:
-    paths:
-      - "src/market_intelligence/**"
-      - ".github/workflows/market-intelligence.yml"
   push:
+    branches: [main]
     paths:
       - "src/market_intelligence/**"
+      - "ops/scoped-release/**"
       - ".github/workflows/market-intelligence.yml"
 
 jobs:
   unit-and-contract:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       MARKET_INTELLIGENCE_POSTGRES_DB: assistant_test
       MARKET_INTELLIGENCE_POSTGRES_USER: assistant_test
@@ -21,6 +22,8 @@ jobs:
       MARKET_INTELLIGENCE_SCHEDULER_ENABLED: "false"
       MARKET_INTELLIGENCE_TELEGRAM_POLLING_ENABLED: "false"
       MARKET_INTELLIGENCE_REDIS_PASSWORD: test-password
+      MARKET_INTELLIGENCE_CSRF_SIGNING_SECRET: ci-test-only-signing-secret-at-least-32
+      MARKET_INTELLIGENCE_MFA_ENCRYPTION_SECRET: ci-test-only-encryption-secret-at-least-32
       POSTGRES_DB: assistant_test
       POSTGRES_USER: assistant_test
       POSTGRES_PASSWORD: test-password
@@ -30,8 +33,8 @@ jobs:
       TELEGRAM_BOT_TOKEN: test-token
       ALLOWED_TELEGRAM_USER_ID: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, Node 24
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6, Node 24
         with:
           python-version: "3.13"
           cache: pip
@@ -44,6 +47,7 @@ jobs:
         run: |
           python -m compileall -q src/market_intelligence
           python -m unittest discover -s src/market_intelligence/tests -v
+          python -m unittest discover -s ops/scoped-release/tests -v
       - name: Enforce CSP migration inline budget
         run: python src/market_intelligence/scripts/check_csp_inline_budget.py
       - name: Validate UX-writing locale catalog
@@ -54,7 +58,8 @@ jobs:
 
   browser-smoke:
     name: Required local authenticated browser E2E
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
     needs: unit-and-contract
     services:
       postgres:
@@ -89,8 +94,8 @@ jobs:
       BEE_USER_URL: http://127.0.0.1:8010/user
       CAPTURE_OUTPUT: /tmp/bee-researcher-browser
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, Node 24
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6, Node 24
         with:
           node-version: "22"
           cache: npm
@@ -132,14 +137,100 @@ jobs:
           echo "Application health check did not pass after $attempt attempts."
           cat /tmp/bee-researcher-e2e.log
           exit 1
-      - name: Run required Admin and User E2E suites
+      - name: Capture Admin inventory
+        timeout-minutes: 5
         working-directory: src/market_intelligence
+        run: npm run admin:inventory
+      - name: Required Admin interactions
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:interactions
+      - name: Required eight-locale E2E
+        timeout-minutes: 5
+        working-directory: src/market_intelligence
+        run: npm run admin:locales
+      - name: Required support conversation E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:support:e2e
+      - name: Required user portal E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run user:e2e
+      - name: Required media and relevance E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:media:e2e
+      - name: Required model settings E2E
+        timeout-minutes: 3
+        working-directory: src/market_intelligence
+        run: npm run admin:models:e2e
+      - name: Required backoffice UI E2E
+        # 384 locale/viewport/view combinations plus interaction assertions.
+        # Measured successful runs take ~4 min; retain bounded runner headroom.
+        timeout-minutes: 6
+        working-directory: src/market_intelligence
+        run: npm run ui:e2e
+      - name: Required research context E2E
+        timeout-minutes: 3
+        working-directory: src/market_intelligence
+        run: npm run admin:research-context:e2e
+      - name: Required account access E2E
+        timeout-minutes: 3
+        working-directory: src/market_intelligence
+        run: npm run admin:accounts:e2e
+      - name: Required catalog viewport E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:catalog:e2e
+      - name: Required accessibility E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:accessibility:e2e
+      - name: Preserve isolated E2E failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-browser-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            /tmp/bee-researcher-e2e.log
+            /tmp/bee-researcher-browser/**/manifest.json
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Run isolated account and signed Google OIDC integration
+        working-directory: src/market_intelligence
+        env:
+          PYTHONPATH: .
+          MARKET_INTELLIGENCE_OPENAI_API_KEY: ""
+          MARKET_INTELLIGENCE_TELEGRAM_BOT_TOKEN: ""
+          MARKET_INTELLIGENCE_GOOGLE_CLIENT_ID: ""
+          MARKET_INTELLIGENCE_GOOGLE_CLIENT_SECRET: ""
+          MARKET_INTELLIGENCE_GOOGLE_REDIRECT_URI: ""
         run: |
-          npm run admin:inventory
-          npm run admin:interactions
-          npm run admin:locales
-          npm run admin:support:e2e
-          npm run user:e2e
+          python scripts/verify_account_access_sql.py
+          # The browser suite is finished; avoid concurrent access during rollback.
+          kill "$(cat /tmp/bee-researcher-e2e.pid)"
+          python scripts/verify_account_migration.py
+      - name: Run isolated SQL media and publication integration
+        env:
+          PYTHONPATH: src/market_intelligence
+          MARKET_INTELLIGENCE_OPENAI_API_KEY: ""
+          MARKET_INTELLIGENCE_TELEGRAM_BOT_TOKEN: ""
+        run: |
+          python src/market_intelligence/scripts/verify_media_pipeline.py
+          python src/market_intelligence/scripts/verify_product_reliability.py
+          python src/market_intelligence/scripts/verify_job_recovery.py
+          python src/market_intelligence/scripts/verify_deployment_drain.py
+          MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED=true python ops/scoped-release/verify_http_drain.py
+      - name: Run isolated business research context SQL integration
+        env:
+          PYTHONPATH: src/market_intelligence
+          MARKET_INTELLIGENCE_OPENAI_API_KEY: ""
+          MARKET_INTELLIGENCE_TELEGRAM_BOT_TOKEN: ""
+          MARKET_INTELLIGENCE_CONTENTER_API_URL: https://contenter-review.invalid/api
+          MARKET_INTELLIGENCE_CONTENTER_WEB_URL: https://contenter-review.invalid
+          MARKET_INTELLIGENCE_CONTENTER_TOKEN: synthetic-ci-contenter-token-0123456789
+        run: python src/market_intelligence/scripts/verify_research_context_sql.py
       - name: Stop isolated application
         if: always()
         run: |
@@ -148,12 +239,12 @@ jobs:
 
   static-analysis:
     name: Static analysis and policy gates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, Node 24
         with:
           fetch-depth: 2
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6, Node 24
         with:
           python-version: "3.13"
       - name: Install pinned analysis tools
@@ -163,9 +254,9 @@ jobs:
       - name: Ruff
         run: ruff check --config src/market_intelligence/ruff.toml src/market_intelligence/app src/market_intelligence/tests
       - name: Bandit
-        # admin_ui.py is a static HTML/CSS/JS template, not executable Python
+        # Both UI files are static HTML/CSS/JS templates, not executable Python
         # SQL; Bandit's SQL-string rule otherwise scans embedded browser code.
-        run: bandit -q -r src/market_intelligence/app -ll -x '*/admin_ui.py'
+        run: bandit -q -r src/market_intelligence/app -ll -x '*/admin_ui.py,*/user_ui.py'
       - name: Mypy
         # Keep the type checker blocking: the service is currently at zero
         # diagnostics. The baseline comparison adds a clear regression summary.
@@ -175,12 +266,12 @@ jobs:
 
   security-supply-chain:
     name: Supply-chain security gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, Node 24
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6, Node 24
         with:
           python-version: "3.13"
           cache: pip
@@ -228,7 +319,7 @@ jobs:
 
   publish-sign:
     name: Publish and sign verified release candidate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     needs: [unit-and-contract, browser-smoke, static-analysis, security-supply-chain]
     permissions:
@@ -236,7 +327,7 @@ jobs:
       id-token: write
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6, Node 24
         with:
           persist-credentials: false
       - name: Download the exact scanned image and SBOM

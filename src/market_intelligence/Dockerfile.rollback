@@ -1,0 +1,11 @@
+# Previous application plus the minimum password-format compatibility bridge.
+# The release gate verifies this tag against OLD_IMAGE before either build.
+FROM bee-researcher-direct:3.38.2-operational
+ARG SOURCE_REVISION
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" org.opencontainers.image.version="3.38.2-security-rollback"
+COPY --chown=10002:10002 app/password_security.py ./app/password_security.py
+COPY --chown=10002:10002 app/common-passwords.txt ./app/common-passwords.txt
+COPY --chown=10002:10002 app/common-passwords.source.json ./app/common-passwords.source.json
+COPY --chown=10002:10002 app/common-passwords.LICENSE ./app/common-passwords.LICENSE
+COPY --chown=10002:10002 security-rollback.py ./security-rollback.py
+CMD ["python", "security-rollback.py"]

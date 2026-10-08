@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 import httpx
+from app.public_network import PublicHTTPTransport
 
 from app.article_extraction import ArticleFetcher
 from app.config import Settings
@@ -282,6 +283,7 @@ async def _fetch_json(
         timeout=httpx.Timeout(settings.fetch_timeout_seconds),
         follow_redirects=False,
         headers={"User-Agent": settings.fetch_user_agent},
+        transport=PublicHTTPTransport(), trust_env=False,
     ) as client:
         allowed, robots_status = await helper._robots_allowed(client, spec)
         if not allowed:

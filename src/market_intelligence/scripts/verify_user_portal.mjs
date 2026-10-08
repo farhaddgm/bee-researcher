@@ -24,7 +24,7 @@ page.setDefaultTimeout(12_000);
 const errors = [];
 page.on('pageerror', error => errors.push(error.message));
 
-await page.goto(baseUrl, { waitUntil: 'domcontentloaded', timeout: 30_000 });
+await page.goto(new URL('/user/login-up',baseUrl).href, { waitUntil: 'domcontentloaded', timeout: 30_000 });
 await page.locator('#login:not(.hidden)').waitFor({ state: 'visible' });
 await page.locator('#username').fill(username);
 await page.locator('#password').fill(password);

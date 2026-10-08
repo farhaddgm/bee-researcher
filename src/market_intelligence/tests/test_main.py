@@ -20,6 +20,7 @@ from app.main import (  # noqa: E402
     _redact_http_detail,
     _reader_assistant_is_accessible,
     _safe_telemetry_token,
+    _csp_report_items,
     app,
     settings,
 )
@@ -249,7 +250,10 @@ class MainTest(unittest.TestCase):
         self.assertEqual(settings.version, body["version"])
         self.assertEqual(settings.build_revision, body["source_revision"])
         self.assertEqual(settings.image_digest, body["image_digest"])
-        self.assertEqual(6, body["admin_session_idle_hours"])
+        self.assertEqual(0.5, body["admin_session_idle_hours"])
+        self.assertEqual(12, body["session_absolute_hours"])
+        self.assertEqual(30, body["account_session_ttl_days"])
+        self.assertEqual("02:00", body["user_session_cutoff_local"])
         self.assertEqual(3, body["freshness_window_days"])
         self.assertEqual(settings.pilot_mode, body["pipeline"]["pilot_mode"])
         self.assertEqual(settings.auto_publish, body["pipeline"]["auto_publish"])
@@ -360,6 +364,28 @@ class MainTest(unittest.TestCase):
         self.assertEqual(400, client.post("/admin/api/security/csp-report", content=b"not-json").status_code)
         self.assertEqual(413, client.post("/admin/api/security/csp-report", content=b"x" * 64_001).status_code)
 
+    def test_csp_telemetry_discards_nonce_queries_fragments_and_user_paths(self):
+        payload = {"csp-report": {
+            "original-policy": "script-src 'nonce-private-nonce'",
+            "document-uri": "https://user:private-pass@example.org/admin?query=private-search#private-fragment",
+            "source-file": "https://example.org/user/private-user-id",
+            "blocked-uri": "data:text/plain,private-content",
+            "effective-directive": "style-src-attr", "line-number": 42,
+        }}
+        result = _csp_report_items(payload)
+        self.assertEqual([{"document-uri": "https://example.org/admin", "source-file": "https://example.org/", "blocked-uri": "data", "effective-directive": "style-src-attr", "line-number": 42}], result)
+        self.assertNotIn("private", str(result))
+
+    def test_csp_modern_reporting_api_is_supported_without_collecting_samples(self):
+        result = _csp_report_items([{"type": "csp-violation", "body": {
+            "documentURL": "https://example.org/user?private=1",
+            "effectiveDirective": "script-src-elem", "blockedURL": "inline",
+            "lineNumber": 8, "sample": "private body", "originalPolicy": "nonce-private",
+        }}])
+        self.assertEqual("https://example.org/user", result[0]["document-uri"])
+        self.assertEqual("script-src-elem", result[0]["effective-directive"])
+        self.assertNotIn("private", str(result))
+
     def test_csp_report_endpoint_stays_public_with_an_admin_cookie(self):
         client = TestClient(app)
         # Browsers include the admin cookie on report-only POSTs. Telemetry is
@@ -400,10 +426,10 @@ class MainTest(unittest.TestCase):
         operational_missing = client.post("/pipeline/run", json={"force_ingestion": False})
         self.assertEqual(403, operational_missing.status_code)
         self.assertEqual("csrf validation failed", operational_missing.json()["detail"])
+        client.cookies.set("research_bee_admin_csrf", "server-value")
         mismatched = client.post(
             "/admin/api/logout",
             headers={"X-CSRF-Token": "attacker-value"},
-            cookies={"research_bee_admin_csrf": "server-value"},
         )
         self.assertEqual(403, mismatched.status_code)
         self.assertEqual("csrf validation failed", mismatched.json()["detail"])
@@ -1073,7 +1099,7 @@ class MainTest(unittest.TestCase):
         self.assertIn('id="media-workflow-v2"', body)
         self.assertIn("mediaDraftName", body)
         self.assertIn("mediaReviewHomepage", body)
-        self.assertIn("SourceFetcher(get_settings()).fetch", Path(__file__).resolve().parents[1].joinpath("app", "admin.py").read_text())
+        self.assertIn("fetcher.fetch(SourceSpec(", Path(__file__).resolve().parents[1].joinpath("app", "admin.py").read_text())
         self.assertIn("Business name (optional)", body)
         self.assertIn("const catalogHandlers={source:'openCreateSourceModal',topic:'openCreateTopicModal'}", body)
         self.assertIn("window.__researchBeeReconcileWorkspaceActions=run", body)

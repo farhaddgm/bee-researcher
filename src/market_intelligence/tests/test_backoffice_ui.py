@@ -1,0 +1,57 @@
+import unittest
+from pathlib import Path
+
+from app.admin_ui import ADMIN_HTML
+from app.user_ui import USER_HTML
+
+
+class BackofficePresentationTest(unittest.TestCase):
+    def test_both_portals_embed_the_same_contract_once(self):
+        for html in (ADMIN_HTML, USER_HTML):
+            self.assertEqual(html.count('id="backoffice-ui-contract"'), 1)
+            self.assertEqual(html.count('id="backoffice-ui-controller"'), 1)
+            self.assertIn("window.__beeShowToast", html)
+            self.assertIn("#beeUiTooltip", html)
+
+    def test_shared_controller_has_no_paid_or_polling_work(self):
+        source = Path(__file__).parents[1].joinpath("app/backoffice_ui.js").read_text()
+        for prohibited in ("fetch(", "setInterval(", "MutationObserver(", ".innerHTML=", "onclick="):
+            self.assertNotIn(prohibited, source)
+        self.assertIn("copy.textContent=message", source)
+        self.assertIn("if(!error)node._timer", source)
+        self.assertIn("document.activeElement===anchor||pinned", source)
+        self.assertIn("anchor.matches(':hover')", source)
+        self.assertIn("innerHeight-tip.height-12", source)
+
+    def test_loading_hosts_are_actually_cleaned_up(self):
+        self.assertNotIn("layer.remove();layer.parentElement?", ADMIN_HTML)
+        self.assertIn("host.classList.remove('admin-ux-skeleton-host')", ADMIN_HTML)
+        self.assertIn(".assistant-card,#app .view.active .support-v4-card", ADMIN_HTML)
+        self.assertNotIn(".sidebar-foot span{display:none}", ADMIN_HTML)
+        self.assertNotIn("avatar.innerHTML='<img", ADMIN_HTML)
+        self.assertNotIn("preview.innerHTML='<img", ADMIN_HTML)
+
+    def test_schedule_controls_keep_native_toggle_button_semantics(self):
+        self.assertNotIn('role="gridcell" class="schedule-slot', ADMIN_HTML)
+        self.assertIn('aria-pressed="${on}"', ADMIN_HTML)
+
+    def test_accessible_field_names_use_the_existing_localized_label(self):
+        self.assertIn("label.htmlFor=control.id", ADMIN_HTML)
+        self.assertIn("text('وضعیت انتشار')", ADMIN_HTML)
+
+    def test_deleted_projects_are_not_nested_in_the_active_grid(self):
+        self.assertIn("state.assistants.filter(x=>!x.deleted_at).map", ADMIN_HTML)
+        self.assertIn("insertAdjacentElement('afterend',section)", ADMIN_HTML)
+        self.assertNotIn("$('assistantGrid').appendChild(section)", ADMIN_HTML)
+        self.assertIn("querySelector(':scope > .deleted-assistants-section')?.remove()", ADMIN_HTML)
+
+    def test_minimal_settings_and_news_direction_contract_retained(self):
+        self.assertIn('id="saveSettingsButton"', USER_HTML)
+        self.assertEqual(USER_HTML.count('class="setting"'), 8)
+        self.assertIn('class="setting setting-notification"', USER_HTML)
+        self.assertIn('Text direction (news only)', USER_HTML)
+        self.assertIn("@media(prefers-reduced-motion:reduce)", USER_HTML)
+
+
+if __name__ == "__main__":
+    unittest.main()
