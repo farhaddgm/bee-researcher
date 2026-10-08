@@ -22,6 +22,7 @@ from sqlalchemy import delete, func, select
 from app.admin import current_admin, is_owner, _require_assistant_access
 from app.config import Settings, get_settings
 from app.database import SessionLocal
+from app.deployment_drain import protected_work
 from app.models import AdminAuditLog, AdminUser, AssistantWorkspace, ContenterBusinessLink, ContenterBusinessSnapshot
 
 LOGGER = logging.getLogger(__name__)
@@ -229,6 +230,7 @@ async def _store_export(session: Any, link: ContenterBusinessLink, payload: dict
     link.error_code = None
 
 
+@protected_work
 async def sync_link(assistant_id: uuid.UUID, settings: Settings, *, actor: uuid.UUID | None = None) -> None:
     async with SessionLocal() as session:
         link = await session.get(ContenterBusinessLink, assistant_id)

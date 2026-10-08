@@ -14,6 +14,7 @@ import re
 import select
 import subprocess
 import time
+import urllib.error
 import urllib.request
 
 APP = "ai-market-intelligence"
@@ -67,19 +68,26 @@ def compose_command(current, extra=None):
     return command
 
 
-def wait_health(revision, version, *, timeout=120):
+def wait_health(revision, version, *, timeout=120, ready_required=True):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         container = inspect(APP)
         if container["State"].get("Health", {}).get("Status") == "healthy":
-            for path in ("/health", "/ready"):
-                with urllib.request.urlopen("https://researcher.beeproject.ir" + path, timeout=15) as response:
-                    payload = json.load(response)
-                    if payload.get("version") != version:
-                        raise RuntimeError("public route is serving the wrong version")
             if container["Config"]["Labels"].get("org.opencontainers.image.revision") != revision:
                 raise RuntimeError("running source binding mismatch")
-            return
+            try:
+                paths = ("/health", "/ready") if ready_required else ("/health",)
+                for path in paths:
+                    with urllib.request.urlopen("https://researcher.beeproject.ir" + path, timeout=15) as response:
+                        payload = json.load(response)
+                        if payload.get("version") != version:
+                            raise RuntimeError("public route is serving the wrong version")
+                return
+            except urllib.error.HTTPError as exc:
+                if exc.code != 503:
+                    raise
+            except (urllib.error.URLError, TimeoutError):
+                pass
         time.sleep(2)
     raise TimeoutError("Researcher health did not pass")
 
@@ -157,7 +165,11 @@ def deploy(args):
         if inspect(APP)["State"]["ExitCode"] != 0:
             raise RuntimeError("graceful shutdown did not finish; refusing replacement")
         run(command + ["up", "-d", "--no-deps", "--force-recreate", "market-intelligence"], timeout=180)
-        wait_health(args.revision, args.version)
+        # A new scheduler cannot emit its first successful heartbeat while
+        # admission is closed. Verify liveness/source/image before releasing
+        # the barrier, then require full readiness; waiting for /ready while
+        # holding the barrier would deadlock every subsequent atomic release.
+        wait_health(args.revision, args.version, ready_required=controller is None)
         live = inspect(APP)
         if live["Image"] != image_id or live["Config"]["User"] != current["Config"]["User"]:
             raise RuntimeError("runtime image/user changed unexpectedly")
@@ -165,6 +177,7 @@ def deploy(args):
             controller.communicate("release\n", timeout=30)
             if controller.returncode:
                 raise RuntimeError("drain controller did not confirm release")
+            wait_health(args.revision, args.version)
         save(artifact / "deployment-receipt.json", {
             "version": args.version, "revision": args.revision, "registry_image": args.image,
             "image_id": image_id, "previous_revision": old_revision, "previous_version": old_version,

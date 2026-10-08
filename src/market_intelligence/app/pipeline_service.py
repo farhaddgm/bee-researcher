@@ -471,6 +471,7 @@ async def _finish_job(
         await session.commit()
 
 
+@protected_work
 async def expire_abandoned_job_runs(*, now: datetime | None = None) -> int:
     """Reconcile orphaned history, never retry work or reset its budget ledger.
 
