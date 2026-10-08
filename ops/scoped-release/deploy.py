@@ -117,7 +117,6 @@ def deploy(args):
         raise RuntimeError("review current security posture before deployment")
     old_version = labels["org.opencontainers.image.version"]
     old_revision = labels["org.opencontainers.image.revision"]
-    rollback = compose_command(current)
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     artifact = ROOT / "ops/bee-researcher-direct/artifacts" / (args.version + "-completion-" + stamp)
     artifact.mkdir(mode=0o755)
@@ -129,6 +128,10 @@ def deploy(args):
     # to be escaped. The complete override contains secrets: private 0600 only.
     environment = {key: value.replace("$", "$$") for key, value in values.items()
                    if key.startswith("MARKET_INTELLIGENCE_")}
+    rollback_override = private / "rollback.override.json"
+    save(rollback_override, {"services": {"market-intelligence": {
+        "image": current["Image"], "stop_grace_period": "600s", "environment": dict(environment)}}}, private=True)
+    rollback = compose_command(current, rollback_override)
     environment.update({
         "MARKET_INTELLIGENCE_VERSION": args.version,
         "MARKET_INTELLIGENCE_BUILD_REVISION": args.revision,
@@ -196,6 +199,14 @@ def deploy(args):
     except BaseException:
         if stopped:
             run(rollback + ["up", "-d", "--no-deps", "--force-recreate", "market-intelligence"], timeout=180)
+            # The restored scheduler has the same cold-heartbeat constraint.
+            # Restore liveness and original private configuration first, then
+            # release admission before awaiting its first successful tick.
+            if controller and controller.poll() is None:
+                wait_health(old_revision, old_version, ready_required=False)
+                controller.communicate("release\n", timeout=30)
+                if controller.returncode:
+                    raise RuntimeError("rollback drain controller did not confirm release")
             wait_health(old_revision, old_version)
         raise
     finally:

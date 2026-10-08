@@ -145,6 +145,48 @@ class ScopedReleaseTests(unittest.TestCase):
             self.assertNotIn("UNRELATED_SERVICE_TOKEN", env)
             self.assertEqual(env["MARKET_INTELLIGENCE_VERSION"], "3.39.1")
             self.assertEqual(list((root / "ops/bee-researcher-direct/artifacts").glob("*/production.override.json")), [])
+            rollback = json.loads(overrides[0].with_name("rollback.override.json").read_text())["services"]["market-intelligence"]
+            self.assertEqual(rollback["image"], "old-image")
+            self.assertEqual(rollback["environment"]["MARKET_INTELLIGENCE_POSTGRES_PASSWORD"], "synthetic$$not-a-real-secret")
+            self.assertNotIn("MARKET_INTELLIGENCE_VERSION", rollback["environment"])
+
+    def test_atomic_rollback_releases_admission_before_restored_scheduler_readiness(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "ops/bee-researcher-direct/artifacts").mkdir(parents=True)
+            (root / "ops/bee-researcher-direct/private").mkdir(parents=True)
+            current = {"Image": "old-image", "Config": {"User": "market-intelligence", "Labels": {
+                "org.opencontainers.image.version": "3.39.0", "org.opencontainers.image.revision": REV}, "Env": [
+                "MARKET_INTELLIGENCE_POSTGRES_USER=bee_researcher_runtime", "MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED=true"]},
+                "HostConfig": {"ReadonlyRootfs": True, "CapDrop": ["ALL"]}}
+            controller = Mock(returncode=None)
+            controller.stdout.readline.return_value = "RESEARCHER_DRAINED\n"
+            controller.poll.side_effect = lambda: controller.returncode
+            gate = {"closed": True}
+            observations = []
+
+            def released(*args, **kwargs):
+                gate["closed"], controller.returncode = False, 0
+
+            def readiness(revision, version, *, ready_required=True, **kwargs):
+                observations.append((version, ready_required, gate["closed"]))
+                if version == "3.39.1":
+                    raise RuntimeError("candidate verification failed")
+                if ready_required and gate["closed"]:
+                    raise AssertionError("rollback scheduler is blocked by its own barrier")
+
+            controller.communicate.side_effect = released
+            args = SimpleNamespace(image=REF, revision=REV, version="3.39.1", expected_current_revision=REV)
+            with patch.object(release, "ROOT", root), patch.object(release, "candidate", return_value="new-image"), \
+                    patch.object(release, "inspect", side_effect=[current, {"State": {"ExitCode": 0}}]), \
+                    patch.object(release, "compose_command", return_value=["docker", "compose"]), \
+                    patch.object(release, "run", return_value=""), patch.object(release, "wait_health", side_effect=readiness), \
+                    patch.object(release.subprocess, "Popen", return_value=controller), \
+                    patch.object(release.select, "select", return_value=([controller.stdout], [], [])):
+                with self.assertRaisesRegex(RuntimeError, "candidate verification failed"):
+                    release.deploy(args)
+            self.assertEqual(observations, [("3.39.1", False, True), ("3.39.0", False, True), ("3.39.0", True, False)])
+            controller.communicate.assert_called_once_with("release\n", timeout=30)
 
 
 if __name__ == "__main__":

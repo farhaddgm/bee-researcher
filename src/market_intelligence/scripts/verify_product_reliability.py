@@ -1,6 +1,5 @@
 """SQL product regression; isolated DB only, mock AI, never send Telegram."""
 import asyncio
-import json
 import uuid
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
@@ -9,6 +8,7 @@ from pydantic import SecretStr
 from sqlalchemy import delete, func, select
 
 from app import pipeline_service as p
+from app.ai_relevance import classify_articles
 from app.config import get_settings
 from app.database import SessionLocal, engine
 from app.models import ArticleAnalysis, ArticleTopic, AssistantWorkspace, BusinessProfile, NormalizedArticle, Publication, Source, SourceItem, Topic
@@ -52,10 +52,21 @@ async def main():
                     db.add(Publication(id=pid,assistant_id=aid,analysis_id=rid,idempotency_key=str(pid),status="published" if "published" in title else "preview",message_text="immutable published receipt" if "published" in title else "old preview",audit={}))
             await db.commit()
 
-        async def classify(client,*,articles,topics,business,mission):
-            return {(a["id"],t["topic_key"]):(.02 if "rejected" in a["title"] else .91,json.dumps({"revision":p.SCORER_REVISION,"reason":"Verified fixture evidence","confidence":.9,"evidence":[a["title"]],"excluded":False,"content_hash":p.article_digest(a["title"],a["text"],False)})) for a in articles for t in topics}
+        async def classify(client,*,articles,topics,business,mission,max_input_chars=6000):
+            transport=AsyncMock()
+            transport.draft_json.return_value={"scores":[
+                {"article_id":a["id"],"topic_key":t["topic_key"],
+                 "score":.02 if "rejected" in a["title"] else .91,
+                 "reason":"Verified fixture evidence","confidence":.9,
+                 "evidence":[f"a{index}-title-0"],"excluded":False}
+                for index,a in enumerate(articles) for t in topics
+            ]}
+            return await classify_articles(transport,articles=articles,topics=topics,
+                                           business=business,mission=mission,max_input_chars=max_input_chars)
         with patch.object(p,"classify_articles",side_effect=classify):
-            for aid in aids:await p.score_pending_articles(paid,limit=20,assistant_id=aid)
+            for aid in aids:
+                result=await p.score_pending_articles(paid,limit=20,assistant_id=aid)
+                assert result["semantic"]=="succeeded",f"Isolated classifier failed: {result['semantic']}"
         async with SessionLocal() as db:
             await db.execute(delete(ArticleTopic).where(ArticleTopic.article_id==articles[2]))
             await db.commit()
