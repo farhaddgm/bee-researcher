@@ -1,11 +1,9 @@
 name: Market Intelligence
 
 on:
+  # Required branch checks must exist even for documentation-only PRs;
+  # path-filtered required workflows leave those PRs permanently pending.
   pull_request:
-    paths:
-      - "src/market_intelligence/**"
-      - "ops/scoped-release/**"
-      - ".github/workflows/market-intelligence.yml"
   push:
     branches: [main]
     paths:
