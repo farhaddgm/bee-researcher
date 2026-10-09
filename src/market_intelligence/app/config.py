@@ -196,6 +196,7 @@ class Settings(BaseSettings):
         env_prefix="MARKET_INTELLIGENCE_",
         case_sensitive=False,
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     @field_validator("database_schema")

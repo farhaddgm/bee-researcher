@@ -79,6 +79,26 @@ def compose_environment(current):
     return result
 
 
+def runtime_preflight(ref, env_path):
+    # Use the verified new package to check the additive schema/privileges.
+    # The old release's hard-coded schema check cannot understand 0045.
+    run(["docker", "run", "--rm", "--network", "ai-assistant-backend", "--env-file", str(env_path),
+         "--read-only", "--tmpfs", "/tmp:size=32m,mode=1777", "--cap-drop", "ALL",
+         "--security-opt", "no-new-privileges:true", "--entrypoint", "python", ref,
+         "-m", "app.runtime_permissions"], timeout=60)
+
+
+def rollback_service(current, environment, version):
+    service = {"image": current["Image"], "stop_grace_period": "600s", "environment": dict(environment)}
+    old = current["Config"]["Labels"]["org.opencontainers.image.version"]
+    if old in {"3.39.0", "3.39.1"} and version == "3.40.0":
+        # Auth configuration is still checked. A separate candidate-package
+        # preflight verifies least privilege before the legacy app is restored.
+        # Never downgrade 0045 or ask the 0044-only preflight to read it.
+        service["command"] = ["sh", "-c", "python -m app.auth_deployment && exec uvicorn app.main:app --host 0.0.0.0 --port 8010 --no-access-log --no-proxy-headers"]
+    return service
+
+
 def verify_shutdown(stopped, since):
     state = stopped["State"]
     if state.get("Running") or state.get("OOMKilled") or state.get("Error") or state.get("ExitCode") not in {0, 143}:
@@ -160,14 +180,18 @@ def deploy(args):
     environment = {key: value.replace("$", "$$") for key, value in values.items()
                    if key.startswith("MARKET_INTELLIGENCE_")}
     rollback_override = private / "rollback.override.json"
-    save(rollback_override, {"services": {"market-intelligence": {
-        "image": current["Image"], "stop_grace_period": "600s", "environment": dict(environment)}}}, private=True)
+    save(rollback_override, {"services": {"market-intelligence": rollback_service(current, environment, args.version)}}, private=True)
+    if any("\n" in value or "\r" in value for value in values.values()):
+        raise RuntimeError("multiline runtime values require secret-file provisioning")
+    runtime_env = private / "runtime-preflight.env"
+    save(runtime_env, "".join(f"{key}={value}\n" for key, value in values.items()
+                             if key.startswith("MARKET_INTELLIGENCE_")), private=True)
     rollback = compose_command(current, rollback_override)
     compose_env = compose_environment(current)
     environment.update({
         "MARKET_INTELLIGENCE_VERSION": args.version,
         "MARKET_INTELLIGENCE_BUILD_REVISION": args.revision,
-        "MARKET_INTELLIGENCE_IMAGE_DIGEST": image_id,
+        "MARKET_INTELLIGENCE_IMAGE_DIGEST": args.image.split("@", 1)[1],
         "MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED": "true",
     })
     override = private / "production.override.json"
@@ -177,9 +201,11 @@ def deploy(args):
     run(command + ["config", "--quiet"], env=compose_env)
     controller = None
     stopped = False
-    phase = "drain"
+    phase = "runtime_preflight"
     atomic = values.get("MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED", "false").lower() == "true"
     try:
+        runtime_preflight(args.image, runtime_env)
+        phase = "drain"
         if atomic:
             env = {key: value for key, value in values.items() if key.startswith("MARKET_INTELLIGENCE_")}
             if any("\n" in value or "\r" in value for value in env.values()):
@@ -245,6 +271,7 @@ def deploy(args):
             "other_services_restarted": False,
         })
         if stopped:
+            runtime_preflight(args.image, runtime_env)
             run(rollback + ["up", "-d", "--no-deps", "--force-recreate", "market-intelligence"], timeout=180, env=compose_env)
             # The restored scheduler has the same cold-heartbeat constraint.
             # Restore liveness and original private configuration first, then
@@ -258,6 +285,7 @@ def deploy(args):
             save(artifact / "rollback-receipt.json", {
                 "restored_revision": old_revision, "restored_version": old_version,
                 "healthy": True, "other_services_restarted": False,
+                "runtime_privilege_preflight_verified": True,
             })
         raise
     finally:

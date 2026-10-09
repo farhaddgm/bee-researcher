@@ -15,6 +15,26 @@ REF = "ghcr.io/farhaddgm/bee-researcher-market-intelligence@sha256:" + "b" * 64
 
 
 class ScopedReleaseTests(unittest.TestCase):
+    def test_legacy_rollback_keeps_auth_and_forward_schema_without_migrating(self):
+        current={"Image":"old-image","Config":{"Labels":{"org.opencontainers.image.version":"3.39.1"}}}
+        service=release.rollback_service(current,{"MARKET_INTELLIGENCE_VERSION":"3.39.1"},"3.40.0")
+        self.assertIn('python -m app.auth_deployment',service['command'][-1])
+        self.assertIn('exec uvicorn',service['command'][-1])
+        self.assertNotIn('alembic',service['command'][-1])
+        self.assertNotIn('runtime_permissions',service['command'][-1])
+        self.assertEqual(service['environment']['MARKET_INTELLIGENCE_VERSION'],'3.39.1')
+        self.assertNotIn('command',release.rollback_service(current,{},'3.39.1'))
+
+    def test_runtime_preflight_uses_verified_candidate_and_scoped_private_env(self):
+        with patch.object(release,'run') as run:
+            release.runtime_preflight(REF,Path('/private/synthetic.env'))
+        command=run.call_args.args[0]
+        self.assertIn(REF,command)
+        self.assertIn('/private/synthetic.env',command)
+        self.assertIn('app.runtime_permissions',command)
+        self.assertIn('--read-only',command)
+        self.assertIn('no-new-privileges:true',command)
+
     def test_compose_interpolation_uses_only_own_actual_runtime(self):
         current = {"Image": "sha256:previous", "Config": {"Env": [
             "MARKET_INTELLIGENCE_GOOGLE_CLIENT_SECRET=synthetic$literal",
@@ -188,6 +208,7 @@ class ScopedReleaseTests(unittest.TestCase):
             self.assertEqual(env["MARKET_INTELLIGENCE_POSTGRES_PASSWORD"], "synthetic$$not-a-real-secret")
             self.assertNotIn("UNRELATED_SERVICE_TOKEN", env)
             self.assertEqual(env["MARKET_INTELLIGENCE_VERSION"], "3.39.1")
+            self.assertEqual(env["MARKET_INTELLIGENCE_IMAGE_DIGEST"],REF.split('@')[1])
             self.assertEqual(list((root / "ops/bee-researcher-direct/artifacts").glob("*/production.override.json")), [])
             rollback = json.loads(overrides[0].with_name("rollback.override.json").read_text())["services"]["market-intelligence"]
             self.assertEqual(rollback["image"], "old-image")
