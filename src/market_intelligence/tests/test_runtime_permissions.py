@@ -2,6 +2,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from app import runtime_permissions as preflight
+from app.config import Settings
 
 
 class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
@@ -30,6 +31,14 @@ class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
 
     def test_packaged_head_is_derived_from_actual_image_migrations(self):
         self.assertEqual(preflight.packaged_schema_head(),'0045_news_chat')
+
+    def test_startup_configuration_errors_never_print_secret_inputs(self):
+        marker='PRIVATE_CONFIG_CANARY_secret_value_1234567890'
+        with self.assertRaises(ValueError) as error:
+            Settings(postgres_db='assistant_test',postgres_user='test',postgres_password=marker,
+                     redis_password=marker+'redis',environment='production',admin_cookie_secure=False)
+        self.assertNotIn(marker,str(error.exception))
+        self.assertNotIn('input_value',str(error.exception))
 
     async def test_restricted_production_with_all_individual_grants_starts(self):
         connection=await self.check()
