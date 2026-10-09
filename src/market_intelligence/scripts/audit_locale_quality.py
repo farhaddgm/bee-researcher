@@ -11,6 +11,8 @@ from pathlib import Path
 import sys
 import uuid
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from sqlalchemy import select
 from app.config import get_settings
 from app.database import SessionLocal, engine
@@ -19,7 +21,7 @@ from app.openai_client import OpenAIClient
 from app.pipeline_service import settings_for_assistant, _finish_job
 
 LOCALES = ('fa','en','tr','ar','es','it','de','fr')
-ROOT = Path('/app/app')
+ROOT = Path(__file__).resolve().parents[1] / 'app'
 SCHEMA = {'type':'object','properties':{'corrections':{'type':'array','items':{
     'type':'object','properties':{'id':{'type':'integer'},'locale':{'type':'string','enum':list(LOCALES)},
     'replacement':{'type':'string'},'reason':{'type':'string'}},
