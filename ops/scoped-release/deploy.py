@@ -177,6 +177,7 @@ def deploy(args):
     run(command + ["config", "--quiet"], env=compose_env)
     controller = None
     stopped = False
+    phase = "drain"
     atomic = values.get("MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED", "false").lower() == "true"
     try:
         if atomic:
@@ -203,23 +204,28 @@ def deploy(args):
         # SIGTERM lets Uvicorn finish HTTP/background work and its scheduler
         # lifespan. Only this container is stopped; no dependent service is.
         stop_since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        phase = "graceful_shutdown"
         run(["docker", "stop", "--time", "600", APP], timeout=630)
         stopped = True
         shutdown = verify_shutdown(inspect(APP), stop_since)
+        phase = "recreate_researcher"
         run(command + ["up", "-d", "--no-deps", "--force-recreate", "market-intelligence"], timeout=180, env=compose_env)
         # A new scheduler cannot emit its first successful heartbeat while
         # admission is closed. Verify liveness/source/image before releasing
         # the barrier, then require full readiness; waiting for /ready while
         # holding the barrier would deadlock every subsequent atomic release.
+        phase = "verify_liveness_and_binding"
         wait_health(args.revision, args.version, ready_required=controller is None)
         live = inspect(APP)
         if live["Image"] != image_id or live["Config"]["User"] != current["Config"]["User"]:
             raise RuntimeError("runtime image/user changed unexpectedly")
         if controller:
+            phase = "release_admission"
             controller.communicate("release\n", timeout=30)
             if controller.returncode:
                 raise RuntimeError("drain controller did not confirm release")
             wait_health(args.revision, args.version)
+        phase = "receipt"
         save(artifact / "deployment-receipt.json", {
             "version": args.version, "revision": args.revision, "registry_image": args.image,
             "image_id": image_id, "previous_revision": old_revision, "previous_version": old_version,
@@ -229,7 +235,15 @@ def deploy(args):
             "compose_interpolation_bound_to_runtime": True, "shutdown": shutdown,
         })
         print(json.dumps({"healthy": True, "version": args.version, "receipt": str(artifact / "deployment-receipt.json")}))
-    except BaseException:
+    except BaseException as exc:
+        # Actionable stage/type/state without command output, credentials,
+        # compose env, HTTP response bodies or application/customer logs.
+        save(artifact / "failure-receipt.json", {
+            "version": args.version, "revision": args.revision,
+            "phase": phase, "exception_type": type(exc).__name__,
+            "researcher_stopped": stopped, "rollback_required": stopped,
+            "other_services_restarted": False,
+        })
         if stopped:
             run(rollback + ["up", "-d", "--no-deps", "--force-recreate", "market-intelligence"], timeout=180, env=compose_env)
             # The restored scheduler has the same cold-heartbeat constraint.
@@ -241,6 +255,10 @@ def deploy(args):
                 if controller.returncode:
                     raise RuntimeError("rollback drain controller did not confirm release")
             wait_health(old_revision, old_version)
+            save(artifact / "rollback-receipt.json", {
+                "restored_revision": old_revision, "restored_version": old_version,
+                "healthy": True, "other_services_restarted": False,
+            })
         raise
     finally:
         if controller and controller.poll() is None:

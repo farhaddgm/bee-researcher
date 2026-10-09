@@ -1,0 +1,32 @@
+
+    /* MI-211: keep list toolbars in normal document flow.  The earlier UX
+       layer made these bars sticky for long tables; on short/first paints that
+       could reserve an oversized area or overlap the first table row. */
+    #view-content>.section-card,#view-sources>.section-card,#view-topics>.section-card{overflow:visible}
+    #view-content .filter-bar,#view-sources .filter-bar,#view-topics .filter-bar{position:relative!important;top:auto!important;z-index:1!important;display:grid!important;align-items:center!important;gap:8px!important;margin:0 0 14px!important;padding:0!important;width:100%!important;min-height:40px;background:transparent!important;border-radius:0!important;box-shadow:none!important;backdrop-filter:none!important}
+    #view-content .filter-bar{grid-template-columns:minmax(240px,1fr) minmax(150px,180px) auto minmax(70px,auto) auto}
+    #view-sources .filter-bar,#view-topics .filter-bar{grid-template-columns:minmax(240px,1fr) minmax(70px,auto) auto}
+    #view-content .filter-bar input,#view-content .filter-bar select,#view-sources .filter-bar input,#view-topics .filter-bar input{width:100%;min-width:0!important;margin:0!important}
+    #view-content .filter-bar .admin-ux-filter-summary,#view-sources .filter-bar .admin-ux-filter-summary,#view-topics .filter-bar .admin-ux-filter-summary{grid-column:1/-1;margin:0!important;min-height:0}
+    /* Clear is a compact inline action.  Do not allow the generic .btn/grid
+       rules to stretch it into the large pale bar seen under the search row. */
+    #view-content .filter-bar .admin-ux-filter-clear:not(.is-visible),#view-sources .filter-bar .admin-ux-filter-clear:not(.is-visible),#view-topics .filter-bar .admin-ux-filter-clear:not(.is-visible){display:none!important}
+    #view-content .filter-bar .admin-ux-filter-clear.is-visible,#view-sources .filter-bar .admin-ux-filter-clear.is-visible,#view-topics .filter-bar .admin-ux-filter-clear.is-visible{display:inline-flex!important;width:auto!important;justify-self:start!important;margin-inline-start:0!important}
+    #view-content .filter-bar .admin-ux-filter-summary:empty,#view-sources .filter-bar .admin-ux-filter-summary:empty,#view-topics .filter-bar .admin-ux-filter-summary:empty{display:none!important}
+    #view-content .table-wrap,#view-sources .table-wrap,#view-topics .table-wrap{clear:both;position:relative;display:block;width:100%;overflow:auto;max-height:none}
+    #view-content .table-wrap table,#view-sources .table-wrap table,#view-topics .table-wrap table{margin:0}
+
+    /* MI-211: one stable two-column Support workspace on desktop, collapsing
+       cleanly on narrow screens without inherited legacy widths. */
+    #view-support.support-shell{width:100%;max-width:1320px;margin-inline:auto;box-sizing:border-box}
+    #view-support.support-shell .support-v2-head{width:100%;box-sizing:border-box}
+    #view-support.support-shell .support-v2-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;align-items:stretch!important;gap:16px!important;width:100%!important;margin:0!important}
+    #view-support.support-shell .support-v2-grid>.section-card{width:100%!important;min-width:0!important;height:auto!important;min-height:360px;box-sizing:border-box;margin:0!important;overflow:visible}
+    #view-support.support-shell .support-compose-card,#view-support.support-shell .support-queue-card{display:flex;flex-direction:column;box-sizing:border-box}
+    #view-support.support-shell .support-compose-card form{display:grid!important;grid-template-columns:1fr!important;gap:14px!important;align-content:start!important;width:100%!important}
+    #view-support.support-shell .support-compose-card input,#view-support.support-shell .support-compose-card select,#view-support.support-shell .support-compose-card textarea{width:100%;box-sizing:border-box}
+    #view-support.support-shell .support-queue-card .support-ticket-list{flex:1;min-height:140px;width:100%;box-sizing:border-box}
+    #view-support.support-shell .support-owner-card{width:100%!important;box-sizing:border-box;margin-top:16px!important}
+    #view-support.support-shell .support-owner-card[hidden]{display:none!important}
+    @media(max-width:1120px){#view-content .filter-bar{grid-template-columns:minmax(180px,1fr) minmax(140px,180px) auto minmax(70px,auto) auto}#view-support.support-shell .support-v2-grid{grid-template-columns:1fr!important}}
+    @media(max-width:780px){#view-content .filter-bar,#view-sources .filter-bar,#view-topics .filter-bar{grid-template-columns:1fr!important;align-items:stretch!important}#view-content .filter-bar>* ,#view-sources .filter-bar>* ,#view-topics .filter-bar>*{width:100%!important;justify-self:stretch!important}#view-content .filter-bar .admin-ux-filter-summary,#view-sources .filter-bar .admin-ux-filter-summary,#view-topics .filter-bar .admin-ux-filter-summary{grid-column:auto}.admin-ux-filter-clear{margin-inline-start:0!important}}

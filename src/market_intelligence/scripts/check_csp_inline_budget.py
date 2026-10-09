@@ -1,9 +1,7 @@
-"""Guard the legacy-attribute transformer from regressing its known input set.
+"""Forbid executable event attributes and inline styles in the Admin shell.
 
-The active CSP is strict by default and does not authorize inline event or
-style attributes. The shell still contains legacy markup which is transformed
-before execution; this count is a regression budget for that migration input,
-not an allow-list of CSP exceptions.
+Declarative data attributes are converted into allowlisted normal listeners;
+all CSS selectors are self-hosted assets. The zero ceiling is enforced by CI.
 """
 
 from __future__ import annotations
@@ -13,15 +11,14 @@ import re
 from pathlib import Path
 
 
-DEFAULT_MAX_ONCLICK = 132
-# The transformer currently covers this bounded legacy input. Keep the number
-# explicit so new inline markup cannot silently grow the conversion surface.
-DEFAULT_MAX_STYLE = 54
+DEFAULT_MAX_ONCLICK = 0
+# No new inline markup may silently grow a legacy conversion surface.
+DEFAULT_MAX_STYLE = 0
 _ATTR_PATTERNS = {
     # Do not count DOM property assignments such as ``button.onclick =``;
     # CSP's unsafe-inline exception applies to HTML event attributes only.
-    "onclick": re.compile(r"(?<![.\w])\bonclick\s*=", re.IGNORECASE),
-    "style": re.compile(r"(?<![.\w])\bstyle\s*=", re.IGNORECASE),
+    "onclick": re.compile(r"(?<![.\w])\bon(?:click|change|input|submit|keydown|keyup|focus|blur|load|error)\s*=", re.IGNORECASE),
+    "style": re.compile(r"(?<![.\w])\bstyle\s*=\s*['\"]", re.IGNORECASE),
 }
 
 
@@ -59,7 +56,9 @@ def main() -> int:
     args = parser.parse_args()
 
     counts = check_budget(
-        args.source.read_text(encoding="utf-8"),
+        ''.join(path.read_text(encoding="utf-8") for path in
+                [args.source, *sorted((args.source.parent / 'admin_ui_modules').glob('*'))]
+                if path.is_file()),
         max_onclick=args.max_onclick,
         max_style=args.max_style,
     )

@@ -231,6 +231,15 @@ class ScopedReleaseTests(unittest.TestCase):
                     release.deploy(args)
             self.assertEqual(observations, [("3.39.1", False, True), ("3.39.0", False, True), ("3.39.0", True, False)])
             controller.communicate.assert_called_once_with("release\n", timeout=30)
+            failure = next((root / "ops/bee-researcher-direct/artifacts").glob("*/failure-receipt.json"))
+            details = json.loads(failure.read_text())
+            self.assertEqual(details['phase'], 'verify_liveness_and_binding')
+            self.assertEqual(details['exception_type'], 'RuntimeError')
+            self.assertTrue(details['rollback_required'])
+            self.assertNotIn('candidate verification failed', failure.read_text())
+            restored = json.loads(failure.with_name('rollback-receipt.json').read_text())
+            self.assertTrue(restored['healthy'])
+            self.assertEqual(restored['restored_version'], '3.39.0')
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# Bee Researcher — 3.37.0
+# Bee Researcher — 3.40.0
 
 A private, multi-workspace news collection, evidence-based AI relevance and
 publication service. The administration portal is `/admin`; authorized readers
@@ -60,7 +60,7 @@ Measured test evidence: `docs/RESEARCH-CONTEXT-VERIFICATION-fa.md`.
 ## Runtime boundaries
 
 - Python 3.13, FastAPI, PostgreSQL schema `market_intelligence`, private Redis
-  database/namespace. Current Alembic revision: `0042_research_context`.
+  database/namespace. Current Alembic revision: `0045_news_chat`.
 - Never restore the shared database, restart the entire compose project, or edit
   Consultant/other services to publish Researcher. Only the Researcher service
   may be recreated. The reports migration changes one unique constraint and
@@ -74,6 +74,25 @@ Measured test evidence: `docs/RESEARCH-CONTEXT-VERIFICATION-fa.md`.
   URLs. No implementation can promise exhaustive coverage of the entire web.
 - Existing configured models are preserved; releases do not silently substitute
   a cheaper model, raise budgets or change schedules.
+
+## Private news conversations (opt-in)
+
+Authorized readers can study one published report with OpenAI, Claude or Gemini
+models approved by the owner. Chat has its own account grant, project/model
+allowlist, daily budgets, concurrency cap and private history. It never invokes
+collection, analysis, publication or a Contenter business. Brand changes start a
+new conversation; existing history is not passed to the new brand.
+
+The server feature flag defaults to **off**. Provider keys remain secure server
+settings. Owner must verify model access, token prices and data terms, register
+the API ID/prices and enable project access in Account. API configuration is not
+proof that a real provider call succeeds. Citations validate report segment IDs,
+not the semantic truth of an AI answer; model accuracy still needs an explicitly
+budgeted live evaluation. Full original-source retrieval is not part of this UI.
+
+Implementation, safe activation, acceptance results and remaining limits:
+`docs/NEWS-CHAT-IMPLEMENTATION-fa.md` (repository root). Isolated gate:
+`python3 ops/scoped-release/verify_news_chat.py --image <candidate-image>`.
 
 ## Verification
 

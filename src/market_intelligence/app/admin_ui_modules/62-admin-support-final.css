@@ -1,0 +1,56 @@
+
+    /* Final Support layer: independent of color-mix/legacy rules, so a CSP
+       or an older browser can never leave native controls as unstyled text. */
+    /* Keep the dedicated Support route hidden until the router explicitly
+       marks it active.  The previous `display:block` here overrode the
+       shared `.view{display:none}` contract, so the support surface leaked
+       into every page after the final hardening pass added `support-final`.
+       The active variant is intentionally explicit and wins this late rule. */
+    #view-support.support-final{display:none!important;width:100%;max-width:1320px;margin-inline:auto;box-sizing:border-box}
+    #view-support.support-final.active{display:block!important}
+    #view-support.support-final,#view-support.support-final *{box-sizing:border-box}
+    #view-support.support-final .support-v2-head{display:flex;align-items:flex-start;justify-content:space-between;gap:24px;margin:0 0 20px;padding:0}
+    #view-support.support-final .support-title-wrap{display:flex;align-items:flex-start;gap:10px;min-width:0}
+    #view-support.support-final .support-title-wrap h2{margin:0 0 6px;font-size:24px;line-height:1.3;color:var(--ink,#192b49)}
+    #view-support.support-final .support-title-wrap p{margin:0;color:var(--muted,#6c7e99);font-size:12px;line-height:1.8}
+    #view-support.support-final .support-page-mark{display:grid;place-items:center;width:20px;height:20px;flex:0 0 20px;border:1px solid var(--muted,#8da0ba);border-radius:50%;color:var(--muted,#6c7e99);font:italic 700 12px Georgia,serif;cursor:help}
+    #view-support.support-final .support-summary{display:grid;grid-template-columns:minmax(190px,1.25fr) repeat(4,minmax(110px,1fr));gap:12px;margin:0 0 18px}
+    #view-support.support-final .support-summary-head,#view-support.support-final .support-summary-item{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:66px;padding:14px 16px;border:1px solid var(--line,#dbe4f0);border-radius:12px;background:var(--panel,#fff)}
+    #view-support.support-final .support-summary-head{display:grid;align-content:center;justify-items:start;background:#f1f5fd;border-color:#d9e5fb}
+    #view-support.support-final .support-summary-head span,#view-support.support-final .support-summary-item span{font-size:11px;color:var(--muted,#6c7e99)}
+    #view-support.support-final .support-summary-head b,#view-support.support-final .support-summary-item strong{font-size:18px;color:var(--ink,#192b49)}
+    #view-support.support-final .support-v2-grid{display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:18px!important;align-items:stretch!important;width:100%!important;margin:0!important}
+    #view-support.support-final .support-compose-card,#view-support.support-final .support-queue-card,#view-support.support-final .support-owner-card{width:100%!important;min-width:0!important;margin:0!important;padding:22px!important;border:1px solid var(--line,#dbe4f0);border-top:3px solid var(--primary,#2457d6);border-radius:14px;background:var(--panel,#fff);box-shadow:0 8px 26px rgba(24,44,76,.06);overflow:visible}
+    #view-support.support-final .support-compose-card,#view-support.support-final .support-queue-card{min-height:420px}
+    #view-support.support-final .support-queue-card{border-top-color:#0b9f8d}
+    #view-support.support-final .support-owner-card{margin-top:18px!important}
+    #view-support.support-final .section-title{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
+    #view-support.support-final .section-title h3{margin:0;color:var(--ink,#192b49);font-size:16px;line-height:1.4}
+    #view-support.support-final .support-compose-hint,#view-support.support-final .support-queue-hint{margin:5px 0 0;color:var(--muted,#6c7e99);font-size:11px;line-height:1.8;font-weight:400}
+    #view-support.support-final .support-compose-card form{display:grid!important;gap:15px!important;align-content:start!important;width:100%!important}
+    #view-support.support-final .support-compose-card .field{display:grid;gap:7px;min-width:0}
+    #view-support.support-final .support-compose-card label,#view-support.support-final .support-field-label{font-size:12px;font-weight:700;color:var(--ink,#192b49)}
+    #view-support.support-final .support-compose-card input,#view-support.support-final .support-compose-card select,#view-support.support-final .support-compose-card textarea,#view-support.support-final .support-queue-card input,#view-support.support-final .support-queue-card select{width:100%;max-width:100%;min-width:0;border:1px solid var(--line,#dbe4f0);border-radius:9px;background:#fbfcfe;color:var(--ink,#192b49);font:inherit}
+    #view-support.support-final .support-compose-card textarea{min-height:142px;resize:vertical;line-height:1.75}
+    #view-support.support-final .support-counter{color:var(--muted,#6c7e99);font-size:10px;text-align:end;margin-top:-3px}
+    #view-support.support-final .support-priority-buttons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+    #view-support.support-final .support-priority-button{min-height:36px;border:1px solid var(--line,#dbe4f0);border-radius:9px;background:var(--panel,#fff);color:var(--muted,#6c7e99);font:inherit;font-size:11px;cursor:pointer}
+    #view-support.support-final .support-priority-button:hover,#view-support.support-final .support-priority-button.active{border-color:var(--primary,#2457d6);background:#edf3ff;color:var(--primary,#2457d6);font-weight:700}
+    #view-support.support-final .support-submit-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:2px}
+    #view-support.support-final .support-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:9px;margin:0 0 10px}
+    #view-support.support-final .support-search{display:block;position:relative;min-width:0}
+    #view-support.support-final .support-search input{padding-inline-end:38px}
+    #view-support.support-final .support-filter-tabs{display:flex;align-items:center;gap:3px;overflow:auto;margin:0 0 12px;border-bottom:1px solid var(--line,#dbe4f0)}
+    #view-support.support-final .support-filter-tab{flex:0 0 auto;padding:8px 9px;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted,#6c7e99);font:inherit;font-size:11px;cursor:pointer;white-space:nowrap}
+    #view-support.support-final .support-filter-tab:hover,#view-support.support-final .support-filter-tab.active{border-bottom-color:var(--primary,#2457d6);color:var(--primary,#2457d6);font-weight:700}
+    #view-support.support-final .support-ticket-list{display:grid;gap:9px;max-height:620px;overflow:auto;padding:1px 2px 2px}
+    #view-support.support-final .support-ticket{padding:14px;border:1px solid var(--line,#dbe4f0);border-radius:11px;background:var(--panel,#fff)}
+    #view-support.support-final .support-ticket:hover{border-color:#a9bee8;box-shadow:0 5px 16px rgba(24,44,76,.06)}
+    #view-support.support-final .support-ticket-title h4{margin:0;font-size:13px;line-height:1.55;overflow-wrap:anywhere;color:var(--ink,#192b49)}
+    #view-support.support-final .support-ticket-meta,#view-support.support-final .support-ticket-body{color:var(--muted,#6c7e99);font-size:11px;line-height:1.75}
+    #view-support.support-final .support-ticket-body{margin:9px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+    #view-support.support-final .support-state{display:grid;place-items:center;min-height:130px;padding:24px 16px;border:1px dashed var(--line,#dbe4f0);border-radius:10px;color:var(--muted,#6c7e99);font-size:12px;text-align:center;line-height:2}
+    #view-support.support-final .support-state .btn{margin-inline-start:8px}
+    @media(max-width:1120px){#view-support.support-final .support-summary{grid-template-columns:repeat(4,minmax(110px,1fr))}#view-support.support-final .support-summary-head{grid-column:1/-1}}
+    @media(max-width:900px){#view-support.support-final .support-v2-grid{grid-template-columns:1fr!important}#view-support.support-final .support-compose-card,#view-support.support-final .support-queue-card{min-height:0}}
+    @media(max-width:620px){#view-support.support-final .support-v2-head{display:grid;gap:12px}#view-support.support-final .support-summary{grid-template-columns:repeat(2,minmax(0,1fr))}#view-support.support-final .support-summary-head{grid-column:1/-1}#view-support.support-final .support-compose-card,#view-support.support-final .support-queue-card,#view-support.support-final .support-owner-card{padding:16px!important}#view-support.support-final .support-toolbar{grid-template-columns:1fr}#view-support.support-final .support-priority-buttons{grid-template-columns:repeat(2,minmax(0,1fr))}}

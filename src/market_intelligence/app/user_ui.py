@@ -237,7 +237,7 @@ USER_HTML = r'''<!doctype html>
     function toggleRead(id){const key=String(id);state.read.has(key)?state.read.delete(key):state.read.add(key);persistLocal();renderNews()}
     async function toggleSaved(id){const key=String(id),next=!state.saved.has(key);const draft=readingStateFor(key);draft.read_later=next;state.annotations[key]=draft;if(next)state.saved.add(key);else state.saved.delete(key);persistLocal();renderNews();toast(next?'Saved for later.':'Removed from saved items.');await saveReaderState(key,draft,{announce:false})}
     function openDialog(id){const item=findItem(id);if(!item)return;state.dialogId=String(id);state.annotationDraft=readingStateFor(id);state.lastFocused=document.activeElement;const body=plainText(item.message_text||'News update');$('dialogTitle').textContent=body.split(/\n/)[0]||'News update';$('dialogMeta').textContent=`${plainText(item.source_name||'Source')} · ${formatDate(item.published_at||item.created_at||'')}`;$('dialogBody').textContent=body;$('newsDialog').dataset.newsDir=state.preferences.text_direction||'auto';syncDialogReadingTools();$('readingStateMessage').textContent='';$('dialogBackdrop').classList.remove('hidden');$('closeDialog').focus();window.__beeReaderSyncFeedback?.(id)}
-    function closeDialog(){state.annotationDraft=null;$('dialogBackdrop').classList.add('hidden');if(state.lastFocused?.isConnected)state.lastFocused.focus()}
+    function closeDialog(){window.__beeNewsChatClose?.();state.annotationDraft=null;$('dialogBackdrop').classList.add('hidden');if(state.lastFocused?.isConnected)state.lastFocused.focus()}
     function trapNewsDialogFocus(event){if($('dialogBackdrop').classList.contains('hidden'))return;if(event.key==='Escape'){event.preventDefault();closeDialog();return}if(event.key!=='Tab')return;const dialog=$('newsDialog'),items=[...dialog.querySelectorAll('button:not([disabled]),a[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(node=>!node.hidden&&node.getAttribute('aria-hidden')!=='true'&&node.getClientRects().length);if(!items.length){event.preventDefault();dialog.focus();return}const first=items[0],last=items[items.length-1];if(event.shiftKey&&(document.activeElement===first||!dialog.contains(document.activeElement))){event.preventDefault();last.focus()}else if(!event.shiftKey&&(document.activeElement===last||!dialog.contains(document.activeElement))){event.preventDefault();first.focus()}}
     function exportNews(){const rows=visibleItems();if(!rows.length){toast('There is no news to export.',true);return}const header=['id','source','published_at','message'];const csv=[header,...rows.map(item=>[item.id,item.source_name,item.published_at||item.created_at,item.message_text])].map(row=>row.map(value=>'"'+String(value??'').replace(/"/g,'""')+'"').join(',')).join('\n');const blob=new Blob([csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download='bee-researcher-news.csv';anchor.click();URL.revokeObjectURL(url);toast('News exported.')}
     async function copyDialog(){const item=findItem(state.dialogId);if(!item)return;const text=plainText(item.message_text||'');try{await navigator.clipboard.writeText(text);toast('News copied to clipboard.')}catch(_){toast('Clipboard access is not available.',true)}}
@@ -258,6 +258,14 @@ USER_HTML = r'''<!doctype html>
        before the global shortcut handler below, so typing punctuation in a
        search or setting field never navigates away from the current page. */
     document.addEventListener('keydown',event=>{if(event.key==='?'&&['INPUT','TEXTAREA','SELECT'].includes(document.activeElement?.tagName))event.stopImmediatePropagation()},true);
+    /* Narrow bridge: the chat module cannot read other users, hidden articles,
+       credentials, or business data from the legacy reader state. */
+    window.BeeReader={
+      current:()=>({id:state.dialogId,assistantId:findItem(state.dialogId)?.assistant_id||state.assistantId,item:findItem(state.dialogId)}),
+      open:item=>{if(!findItem(item.id))state.rawItems.push(item);openDialog(item.id)},
+      appendNote:async text=>{if(!state.dialogId||!state.annotationDraft)return false;const note=$('dialogNote').value;const next=note+(note?'\n\n':'')+text;if(next.length>6000)return false;const draft={...state.annotationDraft,note:next};const saved=await saveReaderState(state.dialogId,draft,{announce:false});if(saved){state.annotationDraft=draft;syncDialogReadingTools()}return saved},
+      close:closeDialog
+    };
     restoreUrlState();
     (async()=>{try{const user=await request('/user/api/me');await startApp(user)}catch(_){document.documentElement.classList.remove('session-checking')}})();
   </script>
@@ -319,3 +327,6 @@ USER_HTML = r'''<!doctype html>
 
 from app.auth_ui import decorate_auth_html
 USER_HTML = decorate_auth_html(USER_HTML, admin=False)
+USER_HTML = USER_HTML.replace('</head>', '<link rel="stylesheet" href="/assets/news-chat/chat.css"></head>', 1).replace(
+    '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-chat/chat.js"></script></body>', 1,
+)

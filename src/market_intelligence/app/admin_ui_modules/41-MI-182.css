@@ -1,0 +1,98 @@
+
+    /* MI-182—205: final UX contracts for the approved roadmap batch. */
+    #login input{font-size:16px!important;line-height:1.5!important;min-height:46px;transition:none!important}
+    html[lang="en"] #login input{direction:ltr;text-align:left}
+    html[lang="fa"] #login input{direction:rtl;text-align:right}
+    #view-overview .progress{display:none!important}
+    .info-tip{position:relative;display:inline-grid;place-items:center;width:18px;height:18px;margin-inline-start:6px;border:1px solid currentColor;border-radius:50%;background:transparent;color:var(--muted);font-size:11px;font-weight:800;vertical-align:middle;cursor:help}
+    .info-tip-popup{position:absolute;z-index:80;inset-inline-start:0;top:calc(100% + 7px);width:min(280px,70vw);padding:8px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);box-shadow:var(--shadow);color:var(--ink);font-size:11px;font-weight:400;line-height:1.6;text-align:start;opacity:0;pointer-events:none;transform:translateY(-3px);transition:opacity .12s ease,transform .12s ease}
+    .info-tip:hover .info-tip-popup,.info-tip:focus .info-tip-popup{opacity:1;pointer-events:auto;transform:none}
+    .label-info-row{display:flex;align-items:center;gap:6px;margin-block-end:8px}
+    .label-info-row label{margin:0}
+    /* Page guidance is available on demand beside the heading so long
+       explanatory subtitles never stretch or shift the page header. */
+    .page-head-title{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+    .page-head-title h2{display:inline-flex;align-items:center}
+    .page-head-description{display:none!important}
+    .page-info-tip{margin-inline-start:0;flex:0 0 auto}
+    .page-info-tip .info-tip-popup{width:min(360px,calc(100vw - 48px));font-size:12px}
+    @media(max-width:780px){.page-info-tip .info-tip-popup{width:min(300px,calc(100vw - 42px))}}
+    /* Support: give both cards the same desktop width and let the ticket
+       form breathe so labels, controls and the submit action stay distinct. */
+    #view-support .two-col{grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch}
+    #view-support .two-col>.section-card{min-width:0}
+    #view-support .section-card{padding:24px}
+    #view-support .section-title{margin-bottom:18px}
+    #view-support .section-title h3{font-size:17px}
+    #view-support [data-support-form]{display:grid;gap:16px}
+    #view-support [data-support-form] .field{gap:7px}
+    #view-support [data-support-form] textarea{min-height:150px;resize:vertical}
+    #view-support [data-support-form] .btn{justify-self:start;margin-top:2px}
+    @media(max-width:1100px){#view-support .two-col{grid-template-columns:1fr}}
+    /* Support redesign: match the visual rhythm of a modern help desk while
+       keeping the existing endpoint and role model unchanged. */
+    #view-support .support-layout{grid-template-columns:minmax(360px,.92fr) minmax(440px,1.08fr);align-items:start;gap:18px}
+    #view-support .support-compose-card,#view-support .support-inbox-card{height:auto;min-height:0;padding:22px}
+    #view-support .support-compose-card{border-top:3px solid var(--primary)}
+    #view-support .support-inbox-card{border-top:3px solid var(--teal)}
+    #view-support .support-compose-card .section-title,#view-support .support-inbox-card .section-title{margin-bottom:7px}
+    #view-support .support-compose-card .section-title h3,#view-support .support-inbox-card .section-title h3{font-size:17px;letter-spacing:-.01em}
+    #view-support .support-compose-hint,#view-support .support-queue-hint{margin:0 0 18px;color:var(--muted);font-size:12px;line-height:1.8}
+    #view-support .support-compose-hint{max-width:56ch}
+    #view-support .support-queue-hint{margin-bottom:12px}
+    #view-support [data-support-form]{gap:14px}
+    #view-support [data-support-form] .field{gap:7px}
+    #view-support [data-support-form] .field label{font-size:12px;color:var(--ink)}
+    #view-support [data-support-form] textarea{min-height:136px;line-height:1.75}
+    #view-support [data-support-form] input,#view-support [data-support-form] select,#view-support [data-support-form] textarea{background:color-mix(in srgb,var(--panel) 94%,var(--primary) 6%)}
+    #view-support [data-support-other]{margin-top:8px}
+    #view-support .support-char-count{display:block;color:var(--muted);font-size:10px;text-align:end;margin-top:-3px}
+    #view-support .support-priority-options{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
+    #view-support .support-priority-option{min-height:36px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--muted);font:inherit;font-size:11px;cursor:pointer;transition:background-color .16s ease,border-color .16s ease,color .16s ease}
+    #view-support .support-priority-option:hover{border-color:var(--primary);color:var(--primary)}
+    #view-support .support-priority-option[aria-pressed="true"]{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 12%,var(--panel));color:var(--primary);font-weight:700}
+    #view-support .support-submit-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:3px;padding-top:4px}
+    #view-support .support-submit-row .btn{min-width:132px}
+    #view-support .support-submit-note{flex:1;min-width:180px;color:var(--muted);font-size:10px;line-height:1.7}
+    #view-support .support-filters{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 13px;padding:3px;border-bottom:1px solid var(--line)}
+    #view-support .support-filter{border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);padding:8px 10px;font:inherit;font-size:11px;cursor:pointer}
+    #view-support .support-filter:hover{color:var(--primary)}
+    #view-support .support-filter.active{border-bottom-color:var(--primary);color:var(--primary);font-weight:700}
+    #view-support [data-support-list]{display:grid;gap:9px;max-height:560px;overflow:auto;padding-inline-end:2px}
+    #view-support .support-ticket-item{display:block;padding:14px 15px;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:none;transition:border-color .16s ease,box-shadow .16s ease}
+    #view-support .support-ticket-item:hover{border-color:color-mix(in srgb,var(--primary) 38%,var(--line));box-shadow:0 8px 22px rgba(24,44,76,.07)}
+    #view-support .support-ticket-item>div:first-child{align-items:flex-start}
+    #view-support .support-ticket-item>div:first-child b{font-size:13px;line-height:1.6;color:var(--ink)}
+    #view-support .support-ticket-item>small{display:block;margin-top:5px;color:var(--muted);font-size:10px}
+    #view-support .support-ticket-item>p{margin:10px 0 0;color:var(--muted);font-size:12px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}
+    #view-support .support-ticket-item textarea{width:100%;min-height:70px;margin-top:11px;resize:vertical}
+    #view-support .support-ticket-item .actions{justify-content:flex-start;margin-top:10px!important}
+    #view-support .support-ticket-item .actions select{min-width:160px}
+    #view-support .support-ticket-item[hidden]{display:none}
+    #view-support .support-inbox-card .empty{padding:46px 22px;border:1px dashed var(--line);border-radius:12px;background:color-mix(in srgb,var(--panel) 95%,var(--primary) 5%)}
+    #view-support .support-submitted-card{grid-column:1/-1;border-top:3px solid var(--primary);margin-top:0}
+    #view-support .support-submitted-card[hidden]{display:none}
+    #view-support .support-submitted-hint{margin:0 0 14px;color:var(--muted);font-size:12px;line-height:1.8}
+    #view-support .support-submitted-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px}
+    #view-support .support-submitted-ticket{padding:14px 15px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+    #view-support .support-submitted-ticket-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+    #view-support .support-submitted-ticket-head>div{min-width:0;display:grid;gap:4px}
+    #view-support .support-submitted-ticket-head b{font-size:13px;line-height:1.6;overflow-wrap:anywhere}
+    #view-support .support-ticket-number{color:var(--primary);font-size:10px;font-weight:700;letter-spacing:.04em}
+    #view-support .support-submitted-ticket-meta{margin-top:7px;color:var(--muted);font-size:10px}
+    #view-support .support-submitted-ticket>p{margin:10px 0;color:var(--muted);font-size:12px;line-height:1.8;white-space:pre-wrap;overflow-wrap:anywhere}
+    #view-support .support-owner-controls{display:grid;gap:8px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}
+    #view-support .support-owner-controls textarea{width:100%;min-height:62px;resize:vertical}
+    #view-support .support-owner-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    #view-support .support-owner-actions select{flex:1;min-width:160px}
+    @media(max-width:520px){#view-support .support-submitted-list{grid-template-columns:1fr}#view-support .support-owner-actions{display:grid;grid-template-columns:1fr}#view-support .support-owner-actions .btn{width:100%}}
+    @media(max-width:1100px){#view-support .support-layout{grid-template-columns:1fr}#view-support [data-support-list]{max-height:none}}
+    @media(max-width:520px){#view-support .support-compose-card,#view-support .support-inbox-card{padding:16px}#view-support .support-priority-options{grid-template-columns:repeat(2,minmax(0,1fr))}#view-support .support-submit-row{display:grid;grid-template-columns:1fr}#view-support .support-submit-row .btn{width:100%}}
+    .template-builder-panel .template-spacing-note{margin-top:8px;padding:7px 9px;font-size:11px}
+    .shell.sidebar-collapsed .sidebar-account-menu{position:fixed;inset-inline-start:88px;inset-inline-end:auto;bottom:14px;z-index:120;max-height:calc(100vh - 28px);overflow:auto}
+    html[dir="rtl"] .shell.sidebar-collapsed .sidebar-account-menu{inset-inline-start:auto;inset-inline-end:88px}
+    #view-template-content .template-builder-panel{margin:0;max-width:none}
+    #view-template-content .page-head{margin-bottom:14px}
+    #view-template-content .template-empty{padding:28px;text-align:center}
+    .nav-btn[data-view="template-content"]{display:flex}
+    @media(max-width:780px){.shell.sidebar-collapsed .sidebar-account-menu{inset-inline-start:12px;inset-inline-end:12px;bottom:12px;width:auto}.shell.sidebar-collapsed .sidebar-account-menu{position:fixed}}

@@ -380,7 +380,7 @@ class AdminWorkspaceSecurityTest(unittest.TestCase):
             self.assertFalse(user_portal_access_allowed(viewer))
             self.assertTrue(user_portal_access_allowed(granted))
             self.assertTrue(user_feedback_access_allowed(granted))
-            self.assertEqual({"user_portal_access": False, "user_feedback_access": False}, user_portal_access_payload(viewer))
+            self.assertEqual({"user_portal_access": False, "user_feedback_access": False, "news_chat_access": False}, user_portal_access_payload(viewer))
 
     def test_user_portal_access_update_requires_feedback_dependency(self):
         with self.assertRaises(ValidationError):

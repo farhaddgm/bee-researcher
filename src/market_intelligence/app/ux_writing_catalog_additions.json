@@ -1210,10 +1210,10 @@
   "نمایش": {
     "fa": "نمایش",
     "en": "Show",
-    "tr": "Göstermek",
-    "ar": "يعرض",
-    "it": "Spettacolo",
-    "es": "Espectáculo",
+    "tr": "Göster",
+    "ar": "إظهار",
+    "it": "Mostra",
+    "es": "Mostrar",
     "de": "Zeigen",
     "fr": "Montrer"
   },
@@ -2974,5 +2974,7 @@
   "نوع اتصال، روش دریافت داده از رسانه را تعیین می‌کند.": {"fa":"نوع اتصال، روش دریافت داده از رسانه را تعیین می‌کند.","en":"The connection type determines how data is fetched from the source.","tr":"Bağlantı türü, verilerin kaynaktan nasıl alınacağını belirler.","ar":"يحدد نوع الاتصال طريقة جلب البيانات من المصدر.","it":"Il tipo di connessione determina come acquisire i dati dalla fonte.","es":"El tipo de conexión determina cómo se obtienen los datos de la fuente.","de":"Der Verbindungstyp bestimmt, wie Daten aus der Quelle abgerufen werden.","fr":"Le type de connexion détermine comment les données sont récupérées de la source."},
   "این نام برای شناسایی نمای ذخیره‌شده استفاده می‌شود.": {"fa":"این نام برای شناسایی نمای ذخیره‌شده استفاده می‌شود.","en":"This name identifies the saved view.","tr":"Bu ad, kaydedilen görünümü tanımlar.","ar":"يعرّف هذا الاسم العرض المحفوظ.","it":"Questo nome identifica la vista salvata.","es":"Este nombre identifica la vista guardada.","de":"Dieser Name identifiziert die gespeicherte Ansicht.","fr":"Ce nom identifie la vue enregistrée."},
   "راهنمای صفحه": {"fa":"راهنمای صفحه","en":"Page information","tr":"Sayfa bilgisi","ar":"معلومات الصفحة","it":"Informazioni sulla pagina","es":"Información de la página","de":"Seiteninformationen","fr":"Informations sur la page"},
-  "موضوع تیکت": {"fa":"موضوع تیکت","en":"Ticket topic","tr":"Talep konusu","ar":"موضوع التذكرة","it":"Oggetto del ticket","es":"Asunto del ticket","de":"Ticket-Thema","fr":"Objet du ticket"}
+  "موضوع تیکت": {"fa":"موضوع تیکت","en":"Ticket topic","tr":"Talep konusu","ar":"موضوع التذكرة","it":"Oggetto del ticket","es":"Asunto del ticket","de":"Ticket-Thema","fr":"Objet du ticket"},
+  "جمع‌آوری و تحلیل اخبار به تأخیر افتاده است.": {"fa":"جمع‌آوری و تحلیل اخبار به تأخیر افتاده است.","en":"News collection and analysis are delayed.","tr":"Haber toplama ve analizi gecikiyor.","ar":"تأخر جمع الأخبار وتحليلها.","it":"La raccolta e l’analisi delle notizie sono in ritardo.","es":"La recopilación y el análisis de noticias se han retrasado.","de":"Die Erfassung und Analyse von Nachrichten verzögert sich.","fr":"La collecte et l’analyse des actualités ont pris du retard."},
+  "جمع‌آوری و تحلیل اخبار دوباره برقرار شد.": {"fa":"جمع‌آوری و تحلیل اخبار دوباره برقرار شد.","en":"News collection and analysis have resumed.","tr":"Haber toplama ve analizi yeniden başladı.","ar":"استؤنف جمع الأخبار وتحليلها.","it":"La raccolta e l’analisi delle notizie sono riprese.","es":"Se han reanudado la recopilación y el análisis de noticias.","de":"Die Erfassung und Analyse von Nachrichten wurde wieder aufgenommen.","fr":"La collecte et l’analyse des actualités ont repris."}
 }

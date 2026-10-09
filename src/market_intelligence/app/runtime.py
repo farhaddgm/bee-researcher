@@ -672,9 +672,13 @@ async def scheduler_loop(settings: Settings, stop: asyncio.Event) -> None:
                 now = datetime.now(timezone.utc)
                 if reconciled_at is None or now - reconciled_at >= timedelta(hours=1):
                     expired = await expire_abandoned_job_runs(now=now)
+                    from app.freshness_notifications import deliver_freshness_notifications
+                    delivered = await deliver_freshness_notifications()
                     reconciled_at = now
                     if expired:
                         _log_runtime_event("abandoned_jobs_reconciled", count=expired)
+                    if delivered:
+                        _log_runtime_event("freshness_alert_delivered", count=delivered)
                 result = await scheduler_tick(settings)
                 STATUS.last_scheduler_tick = datetime.now(timezone.utc).isoformat()
                 STATUS.last_scheduler_error = None

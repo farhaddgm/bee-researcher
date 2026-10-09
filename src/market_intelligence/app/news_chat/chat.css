@@ -1,0 +1,32 @@
+/* Scoped to the news study surface and its owner policy form. */
+#newsDialog:has(#newsChat){width:min(1320px,calc(100vw - 40px));max-width:100%;min-width:0;box-sizing:border-box;max-height:90vh;display:flex;flex-direction:column;overflow:hidden;padding:0}
+#newsDialog:has(#newsChat)>.dialog-head{flex-shrink:0;min-width:0;padding:18px 24px;margin:0;border-bottom:1px solid var(--line);background:var(--panel)}
+#newsDialog:has(#newsChat)>.dialog-head h2{min-width:0;overflow-wrap:anywhere;font-size:18px;line-height:1.6;margin:0;max-height:4.8em;overflow:hidden}
+#newsDialog:has(#newsChat) #closeDialog{flex-shrink:0}
+.news-study-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:24px;padding:24px;min-height:0;overflow:auto;overscroll-behavior:contain}
+.news-study-layout[data-chat-enabled=false]{grid-template-columns:minmax(0,1fr)}
+#newsChat[hidden],#newsChat [hidden],.chat-tabs[hidden],#chat-selection[hidden]{display:none!important}
+.news-study-layout>.deep-reading-layout{display:flex;flex-direction:column;min-width:0}
+#newsChat{min-width:0;border-inline-start:1px solid var(--line);padding-inline-start:24px;display:flex;flex-direction:column;gap:14px}
+.chat-heading{display:flex;align-items:center;gap:8px;position:relative}
+.chat-heading h3{margin:0;font-size:18px;flex:1}.chat-info{border:1px solid var(--muted);border-radius:50%;background:transparent;color:var(--muted);width:24px;height:24px;cursor:help}
+.chat-tip{position:absolute;inset-inline-end:0;top:100%;max-width:340px;padding:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;z-index:30;box-shadow:var(--shadow);font-size:12px;line-height:1.8;opacity:0;pointer-events:none}
+.chat-info:focus+.chat-tip,.chat-info:hover+.chat-tip{opacity:1}
+.chat-controls{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.chat-controls label{display:grid;gap:5px;font-size:12px;color:var(--muted)}
+#newsChat select,#newsChat textarea,#newsChatAdmin input,#newsChatAdmin select{width:100%;min-width:0;box-sizing:border-box;border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--ink);padding:10px;font:inherit}
+#newsChat textarea{resize:vertical;min-height:100px;max-height:250px;line-height:1.8}#newsChat button:disabled{opacity:.5;cursor:not-allowed}
+#newsChat :focus-visible,#newsChatAdmin :focus-visible{outline:3px solid var(--primary);outline-offset:3px}
+.chat-messages{display:flex;flex-direction:column;gap:16px;max-height:45vh;overflow:auto;overscroll-behavior:contain;padding:4px;scrollbar-gutter:stable}
+.chat-turn{display:grid;gap:9px;border-bottom:1px solid var(--line);padding-bottom:16px}.chat-question{background:var(--soft);border-radius:12px;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere}
+.chat-answer{white-space:pre-wrap;line-height:1.9;overflow-wrap:anywhere;font-size:15px}.chat-meta,.chat-status{font-size:12px;color:var(--muted);line-height:1.8}.chat-error{color:var(--danger);font-size:13px;line-height:1.8;white-space:pre-wrap}
+.chat-actions,.chat-suggestions{display:flex;gap:8px;flex-wrap:wrap}.chat-actions .btn,.chat-suggestions .btn{font-size:12px;min-height:36px;width:auto;max-width:100%;height:auto;white-space:normal;overflow-wrap:anywhere}
+.chat-citation{border:1px solid var(--line);border-radius:8px;padding:5px 9px;background:var(--soft);font:inherit;color:var(--primary);cursor:pointer}
+.chat-segment{scroll-margin:30px;border-radius:8px;padding:5px;white-space:pre-wrap}.chat-segment:focus{background:var(--primary-soft);outline:2px solid var(--primary)}
+.chat-tabs{display:none;flex-shrink:0;padding:12px 24px 0}.chat-composer{display:grid;gap:10px}.chat-composer label{font-size:13px;font-weight:600}
+#newsChatAdmin{display:grid;gap:16px;min-width:0;overflow-wrap:anywhere}#newsChatAdmin .chat-model{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));min-width:0;gap:12px;padding:16px;background:var(--soft);border-radius:14px}
+#newsChatAdmin label{display:grid;gap:5px;font-size:12px}#newsChatAdmin label:has(input[type=checkbox]){display:flex;align-items:center}#newsChatAdmin input[type=checkbox]{width:auto}
+#newsChatAdmin .chat-policy-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px}
+#newsChatAdmin .chat-usage{white-space:pre-wrap;font-size:12px;line-height:1.8;max-height:220px;overflow:auto}
+@media(max-width:900px){.news-study-layout{grid-template-columns:minmax(0,1fr)}#newsChat{border-inline-start:0;padding-inline-start:0;border-top:1px solid var(--line);padding-top:18px}.chat-tabs{display:flex;gap:8px;margin-bottom:14px}.news-study-layout[data-chat-enabled=true][data-mobile-tab=chat]>.deep-reading-layout{display:none}.news-study-layout[data-mobile-tab=news]>#newsChat{display:none}.chat-messages{max-height:42vh}#newsChatAdmin .chat-model,#newsChatAdmin .chat-policy-grid{grid-template-columns:minmax(0,1fr)}}
+@media(prefers-reduced-motion:reduce){#newsChat *{scroll-behavior:auto!important}}
+@media print{#newsChat,.chat-tabs,#chat-selection{display:none!important}#newsDialog:has(#newsChat){display:block;max-height:none;overflow:visible}.news-study-layout{display:block;padding:0;overflow:visible}}

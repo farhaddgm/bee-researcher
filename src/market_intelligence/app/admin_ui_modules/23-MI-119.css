@@ -1,0 +1,7 @@
+
+    /* MI-119: account and security are one compact management surface. */
+    #view-account .section-card{padding:14px}
+    #view-account #themeChoices{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))!important;gap:8px!important}
+    #view-account .theme-choice{padding:10px!important;min-height:68px}
+    #accountSecurityPanel{margin-top:12px}
+    #accountSecurityPanel .page-head{margin-bottom:12px}

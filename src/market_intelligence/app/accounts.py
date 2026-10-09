@@ -41,6 +41,7 @@ class AccountCreate(BaseModel):
     assistant_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
     user_portal_access: bool = False
     user_feedback_access: bool = False
+    news_chat_access: bool = False
 
     _password_policy = field_validator("password")(validate_new_password)
     _email = field_validator("email")(valid_email)
@@ -72,6 +73,7 @@ class AccountUpdate(BaseModel):
     assistant_ids: list[uuid.UUID] | None = Field(default=None, max_length=100)
     user_portal_access: bool | None = None
     user_feedback_access: bool | None = None
+    news_chat_access: bool | None = None
 
     @field_validator("email")
     @classmethod
@@ -191,6 +193,12 @@ async def create_account(payload: AccountCreate, actor: AdminUser) -> dict:
         await _memberships(s, item, payload.assistant_ids, actor)
         if payload.user_portal_access or payload.user_feedback_access:
             _portal(item, payload.user_portal_access or item.role == "admin", payload.user_feedback_access, actor)
+        if payload.news_chat_access:
+            if not admin.is_owner(actor):
+                raise HTTPException(403, "owner_required")
+            if not admin.user_portal_access_allowed(item):
+                raise HTTPException(422, "user_portal_required")
+            item.preferences = {**(item.preferences or {}), "news_chat_enabled": True}
         try:
             await s.commit()
         except IntegrityError:
@@ -210,7 +218,7 @@ async def update_account(uid: uuid.UUID, payload: AccountUpdate, actor: AdminUse
         if not own:
             await admin._ensure_user_manage_scope(s, uid, actor)
         admin.ensure_can_manage_account(actor, item)
-        if own and any(v is not None for v in (payload.role, payload.active, payload.assistant_ids, payload.user_portal_access, payload.user_feedback_access)):
+        if own and any(v is not None for v in (payload.role, payload.active, payload.assistant_ids, payload.user_portal_access, payload.user_feedback_access, payload.news_chat_access)):
             raise HTTPException(403, "self-service cannot change privileges")
         if admin.is_owner(item) and (payload.active is False or payload.role is not None):
             raise HTTPException(403, "the owner account is protected")
@@ -245,6 +253,12 @@ async def update_account(uid: uuid.UUID, payload: AccountUpdate, actor: AdminUse
         if payload.active is not None:
             item.active = payload.active
         _portal(item, payload.user_portal_access, payload.user_feedback_access, actor)
+        if payload.news_chat_access is not None:
+            if not admin.is_owner(actor):
+                raise HTTPException(403, "owner_required")
+            if payload.news_chat_access and not admin.user_portal_access_allowed(item):
+                raise HTTPException(422, "user_portal_required")
+            item.preferences = {**(item.preferences or {}), "news_chat_enabled": payload.news_chat_access}
         if payload.assistant_ids is not None:
             await _memberships(s, item, payload.assistant_ids, actor)
         elif payload.role is not None:
@@ -252,7 +266,7 @@ async def update_account(uid: uuid.UUID, payload: AccountUpdate, actor: AdminUse
             current = (await s.execute(select(AssistantMember.assistant_id).where(AssistantMember.user_id == uid))).scalars().all()
             await _memberships(s, item, [aid for aid in current if scope is None or aid in scope], actor)
         # No JWT grace period: all credentials and privileges change in the same transaction.
-        if any(v is not None for v in (payload.password, payload.login_method, payload.active, payload.role, payload.email, payload.assistant_ids, payload.user_portal_access, payload.user_feedback_access)):
+        if any(v is not None for v in (payload.password, payload.login_method, payload.active, payload.role, payload.email, payload.assistant_ids, payload.user_portal_access, payload.user_feedback_access, payload.news_chat_access)):
             await s.execute(delete(AdminSession).where(AdminSession.user_id == uid))
         try:
             await s.commit()

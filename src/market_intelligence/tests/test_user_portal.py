@@ -1,4 +1,5 @@
 import unittest
+from tests.ui_source import document_source
 
 from fastapi.testclient import TestClient
 
@@ -12,14 +13,14 @@ class UserPortalContractTest(unittest.TestCase):
     def test_read_only_portal_is_available_and_non_indexable(self):
         response = self.client.get("/user")
         self.assertEqual(200, response.status_code)
-        self.assertIn("News reader", response.text)
-        self.assertIn("read-only news portal", response.text)
-        self.assertIn("/user/api/assistants", response.text)
-        self.assertNotIn("/admin/api/assistants", response.text)
+        self.assertIn("News reader", document_source(response.text))
+        self.assertIn("read-only news portal", document_source(response.text))
+        self.assertIn("/user/api/assistants", document_source(response.text))
+        self.assertNotIn("/admin/api/assistants", document_source(response.text))
         self.assertEqual("noindex, nofollow, noarchive, nosnippet", response.headers["x-robots-tag"])
         self.assertEqual("no-store", response.headers["cache-control"])
-        self.assertIn('<meta name="googlebot" content="noindex,nofollow,noarchive,nosnippet">', response.text)
-        self.assertIn('<meta name="bingbot" content="noindex,nofollow,noarchive,nosnippet">', response.text)
+        self.assertIn('<meta name="googlebot" content="noindex,nofollow,noarchive,nosnippet">', document_source(response.text))
+        self.assertIn('<meta name="bingbot" content="noindex,nofollow,noarchive,nosnippet">', document_source(response.text))
         self.assertIn("nonce-", response.headers["content-security-policy"])
 
     def test_portal_data_requires_its_own_authenticated_session(self):
@@ -40,7 +41,7 @@ class UserPortalContractTest(unittest.TestCase):
     def test_portal_feedback_is_explicit_and_separate_from_reading_state(self):
         paths = {route.path for route in app.routes if hasattr(route, "path")}
         self.assertIn("/user/api/publications/{publication_id}/feedback", paths)
-        body = self.client.get("/user").text
+        body = document_source(self.client.get("/user").text)
         self.assertIn("reader-feedback-ui", body)
         self.assertIn("user_feedback_access", body)
         self.assertIn("/user/api/publications/", body)
@@ -52,15 +53,15 @@ class UserPortalContractTest(unittest.TestCase):
 
     def test_portal_login_does_not_expose_mfa_challenge(self):
         response = self.client.get("/user")
-        self.assertNotIn("Two-step verification", response.text)
-        self.assertNotIn("mfaChallenge", response.text)
-        self.assertNotIn("/user/api/mfa/verify", response.text)
-        self.assertIn("Reader settings", response.text)
-        self.assertNotIn("Page ${state.page} of ${totalPages}", response.text)
-        self.assertIn("plainText", response.text)
+        self.assertNotIn("Two-step verification", document_source(response.text))
+        self.assertNotIn("mfaChallenge", document_source(response.text))
+        self.assertNotIn("/user/api/mfa/verify", document_source(response.text))
+        self.assertIn("Reader settings", document_source(response.text))
+        self.assertNotIn("Page ${state.page} of ${totalPages}", document_source(response.text))
+        self.assertIn("plainText", document_source(response.text))
 
     def test_portal_login_uses_the_same_authentication_composition_as_admin(self):
-        body = self.client.get("/user").text
+        body = document_source(self.client.get("/user").text)
         self.assertIn('<html lang="en" dir="ltr" data-theme="honey"', body)
         self.assertIn('rel="preload" as="image" href="/assets/bee-researcher-grey.svg"', body)
         self.assertIn('rel="preload" as="font" href="/assets/Vazirmatn-Regular.woff2"', body)
@@ -79,7 +80,7 @@ class UserPortalContractTest(unittest.TestCase):
         self.assertIn("function setLoginLocale", body)
 
     def test_priority_queue_and_deep_reading_tools_are_present(self):
-        body = self.client.get("/user").text
+        body = document_source(self.client.get("/user").text)
         self.assertIn('value="priority"', body)
         self.assertIn('id="priorityFilter"', body)
         self.assertIn("priorityScore", body)
@@ -95,7 +96,7 @@ class UserPortalContractTest(unittest.TestCase):
         self.assertIn("/user/api/publications/", body)
 
     def test_reader_navigation_and_numbered_pagination_are_present(self):
-        body = self.client.get("/user").text
+        body = document_source(self.client.get("/user").text)
         self.assertIn('id="sidebarSettingsButton"', body)
         self.assertIn('id="sidebarUserName"', body)
         self.assertIn('id="sidebarAccountTrigger"', body)
@@ -109,7 +110,7 @@ class UserPortalContractTest(unittest.TestCase):
         self.assertNotIn('id="pageStatus"', body)
 
     def test_reader_settings_has_reset_and_aligned_layout_hooks(self):
-        body = self.client.get("/user/settings").text
+        body = document_source(self.client.get("/user/settings").text)
         self.assertIn('id="resetSettingsButton"', body)
         self.assertIn('id="saveSettingsButton"', body)
         self.assertIn('id="settingsSaveNote"', body)
@@ -122,7 +123,7 @@ class UserPortalContractTest(unittest.TestCase):
         self.assertIn('class="switch-track"', body)
 
     def test_reader_skeleton_covers_a_full_grid_and_news_help_is_compact(self):
-        body = self.client.get("/user").text
+        body = document_source(self.client.get("/user").text)
         self.assertIn("Array.from({length:count}", body)
         self.assertIn('class="info-button page-info"', body)
         self.assertIn('data-tooltip="Read the same published content selected for your accessible assistants."', body)
@@ -131,14 +132,14 @@ class UserPortalContractTest(unittest.TestCase):
     def test_reader_settings_is_a_dedicated_page(self):
         response = self.client.get("/user/settings")
         self.assertEqual(200, response.status_code)
-        self.assertIn('data-user-page="settings"', response.text)
-        self.assertIn('id="settingsPanel"', response.text)
-        self.assertIn('href="/user/settings"', response.text)
-        self.assertIn("isSettingsPage", response.text)
+        self.assertIn('data-user-page="settings"', document_source(response.text))
+        self.assertIn('id="settingsPanel"', document_source(response.text))
+        self.assertIn('href="/user/settings"', document_source(response.text))
+        self.assertIn("isSettingsPage", document_source(response.text))
 
     def test_reader_pages_share_content_width_and_safe_loading_hooks(self):
-        feed = self.client.get("/user").text
-        settings = self.client.get("/user/settings").text
+        feed = document_source(self.client.get("/user").text)
+        settings = document_source(self.client.get("/user/settings").text)
         for body in (feed, settings):
             self.assertIn('.layout{width:min(1320px,100%);max-width:1320px}', body)
             self.assertIn('.settings-route .layout{max-width:1320px}', body)
@@ -151,7 +152,7 @@ class UserPortalContractTest(unittest.TestCase):
         self.assertIn("if(state.source)params.set('source',state.source)", feed)
 
     def test_text_direction_is_scoped_to_news_content(self):
-        body = self.client.get("/user").text
+        body = document_source(self.client.get("/user").text)
         self.assertIn('data-news-dir', body)
         self.assertIn('grid.dataset.newsDir', body)
         self.assertNotIn('document.documentElement.dataset.dir', body)

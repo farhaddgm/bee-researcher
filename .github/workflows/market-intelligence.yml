@@ -12,6 +12,18 @@ on:
       - ".github/workflows/market-intelligence.yml"
 
 jobs:
+  news-chat-browser:
+    name: Required isolated news-chat acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    needs: unit-and-contract
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Build candidate without runtime secrets
+        run: docker build --tag bee-researcher-chat-ci src/market_intelligence
+      - name: Required real SQL and browser gates with synthetic providers
+        run: python3 ops/scoped-release/verify_news_chat.py --image bee-researcher-chat-ci
+
   unit-and-contract:
     runs-on: ubuntu-24.04
     env:
@@ -321,7 +333,7 @@ jobs:
     name: Publish and sign verified release candidate
     runs-on: ubuntu-24.04
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-    needs: [unit-and-contract, browser-smoke, static-analysis, security-supply-chain]
+    needs: [unit-and-contract, browser-smoke, news-chat-browser, static-analysis, security-supply-chain]
     permissions:
       contents: read
       id-token: write

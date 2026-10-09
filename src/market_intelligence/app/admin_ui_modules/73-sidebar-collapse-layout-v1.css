@@ -1,0 +1,21 @@
+
+    /* Desktop sidebar collapse is a shell reflow, not a page variant. Keep
+       every active view's intrinsic grid/table sizing intact while allowing
+       the header controls to shrink at compact desktop widths. */
+    @media(min-width:781px){
+      .shell.sidebar-collapsed .main,.shell.sidebar-collapsed .content{width:100%;min-width:0}
+      .shell.sidebar-collapsed .content{max-width:1600px}
+      .shell.sidebar-collapsed .view,.shell.sidebar-collapsed .grid,.shell.sidebar-collapsed .card{min-width:0}
+      .shell.sidebar-collapsed .table-wrap{width:100%;max-width:100%;min-width:0}
+    }
+    @media(min-width:781px) and (max-width:1100px){
+      body.assistant-header-reference .shell.sidebar-collapsed .topbar-main{flex:0 1 120px!important;width:120px!important;min-width:100px!important}
+      body.assistant-header-reference .shell.sidebar-collapsed .workspace-select{flex:1 1 170px!important;width:auto!important;min-width:140px!important}
+      body.assistant-header-reference .shell.sidebar-collapsed .global-search{flex:1 1 170px!important;width:auto!important;min-width:120px!important;max-width:none!important}
+      body.assistant-header-reference .shell.sidebar-collapsed .top-actions{gap:6px!important;min-width:0}
+      body.assistant-header-reference .shell.sidebar-collapsed .language-choice{max-width:112px}
+      body.assistant-header-reference .shell.sidebar-collapsed .language-select{min-width:100px}
+      body.assistant-header-reference .shell.sidebar-collapsed .top-actions .user-chip{max-width:80px;overflow:hidden}
+      body.assistant-header-reference .shell.sidebar-collapsed .top-actions #logoutBtn{width:40px;min-width:40px;padding-inline:0}
+      body.assistant-header-reference .shell.sidebar-collapsed .top-actions #logoutBtn .btn-label{display:none}
+    }

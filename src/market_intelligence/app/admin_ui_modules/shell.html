@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en" dir="ltr" data-theme="honey">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow,noarchive,nosnippet">
+  <meta name="googlebot" content="noindex,nofollow,noarchive,nosnippet">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg"><link rel="preload" as="image" href="/assets/bee-researcher-grey.svg" type="image/svg+xml">
+  <link rel="preload" as="font" href="/assets/Vazirmatn-Regular.woff2" type="font/woff2" crossorigin>
+  __ADMIN_BLOCK_0__
+  __ADMIN_BLOCK_1__
+  __ADMIN_BLOCK_2__
+  <title>Bee Researcher | Control center</title>
+  __ADMIN_BLOCK_3__
+</head>
+<body>
+  <section id="login" class="login-shell"><div class="login-card"><div class="logo"><span class="logo-mark">R</span><span>Bee Researcher</span></div><a id="googleLoginBtn" class="btn primary login-submit w-full-mt-15 google-login" href="/auth/google/start?portal=admin" hidden>Sign in with Google</a><form id="loginForm" novalidate><input id="loginUser" autocomplete="username" placeholder="Username" aria-describedby="loginUserError"><p id="loginUserError" class="field-error" role="alert"></p><input id="loginPass" type="password" autocomplete="current-password" placeholder="Password" aria-describedby="loginPassError"><p id="loginPassError" class="field-error" role="alert"></p><button id="loginSubmit" type="submit" class="btn primary login-submit w-full-mt-15">Secure sign in</button></form><label id="loginLanguage" class="language-choice" aria-label="Language"><select class="language-select" data-language-select aria-label="Language"><option value="en">English</option><option value="fa">فارسی</option><option value="tr">Türkçe</option><option value="ar">العربية</option><option value="es">Español</option><option value="it">Italiano</option><option value="de">Deutsch</option><option value="fr">Français</option></select></label><p id="loginMsg" class="error" role="alert"></p></div></section>
+  <div id="app" class="shell hidden">
+      <aside id="sidebar" class="sidebar"><div class="logo"><span class="logo-mark">R</span><span>Bee Researcher</span></div><nav class="nav-group"><div class="nav-label" data-label-fa="مرکز کار" data-label-en="Workspace">مرکز کار</div><button class="nav-btn active" data-view="assistants" data-label-fa="دستیارها" data-label-en="Assistants"><span class="nav-icon" data-icon="bot" aria-hidden="true"></span><span class="nav-text">دستیارها</span></button><button class="nav-btn" data-view="overview" data-label-fa="نمای کلی" data-label-en="Overview"><span class="nav-icon" data-icon="layout-dashboard" aria-hidden="true"></span><span class="nav-text">نمای کلی</span></button><button class="nav-btn" data-view="content" data-label-fa="لیست خبرها" data-label-en="News list"><span class="nav-icon" data-icon="newspaper" aria-hidden="true"></span><span class="nav-text">لیست خبرها</span></button></nav><nav class="nav-group"><div class="nav-label" data-label-fa="پیکربندی" data-label-en="Configuration">پیکربندی</div><button class="nav-btn" data-view="businesses" data-label-fa="کسب‌وکار" data-label-en="Business"><span class="nav-icon" data-icon="briefcase-business" aria-hidden="true"></span><span class="nav-text">کسب‌وکار</span></button><button class="nav-btn" data-view="sources" data-label-fa="رسانه" data-label-en="Media"><span class="nav-icon" data-icon="rss" aria-hidden="true"></span><span class="nav-text">رسانه</span></button><button class="nav-btn" data-view="topics" data-label-fa="موضوع" data-label-en="Topics"><span class="nav-icon" data-icon="tags" aria-hidden="true"></span><span class="nav-text">موضوع</span></button><button class="nav-btn" data-view="schedule" data-label-fa="کانال" data-label-en="Channels"><span class="nav-icon" data-icon="send" aria-hidden="true"></span><span class="nav-text">کانال</span></button><button class="nav-btn" data-view="template-content" data-label-fa="محتوا" data-label-en="Content"><span class="nav-icon" data-icon="layout-template" aria-hidden="true"></span><span class="nav-text">محتوا</span></button></nav><nav class="nav-group"><div class="nav-label" data-label-fa="تنظیمات حساب" data-label-en="Account settings">تنظیمات حساب</div><button class="nav-btn" data-view="team" data-label-fa="امنیت" data-label-en="Security"><span class="nav-icon" data-icon="shield-check" aria-hidden="true"></span><span class="nav-text">امنیت</span></button><button class="nav-btn" data-view="quality" data-label-fa="بازخورد" data-label-en="Feedback"><span class="nav-icon" data-icon="message-circle" aria-hidden="true"></span><span class="nav-text">بازخورد</span></button><button class="nav-btn" data-view="operations" data-label-fa="عملیات" data-label-en="Operations"><span class="nav-icon" data-icon="activity" aria-hidden="true"></span><span class="nav-text">عملیات</span></button></nav><div class="sidebar-foot"><span data-label-fa="نسخه" data-label-en="Version"></span><b id="sidebarVersion" aria-hidden="true"></b></div></aside><div id="sidebarOverlay" class="sidebar-overlay" aria-hidden="true"></div>
+    <main class="main"><header class="topbar"><button id="mobileToggle" type="button" class="icon-btn mobile-toggle" aria-controls="sidebar" aria-expanded="false"><span class="ui-icon" data-icon="menu" aria-hidden="true"></span></button><div class="topbar-main"><h1 id="pageTitle">Overview</h1></div><select id="workspaceSelect" class="workspace-select" aria-label="Select assistant"></select><div class="global-search"><span class="ui-icon" data-icon="search" aria-hidden="true"></span><input id="globalSearch" placeholder="Search news, media or topics" autocomplete="off"></div><div class="top-actions"><label id="languageSelect" class="language-choice" aria-label="Language"><select class="language-select" data-language-select aria-label="Language"><option value="en">English</option><option value="fa">فارسی</option><option value="tr">Türkçe</option><option value="ar">العربية</option><option value="es">Español</option><option value="it">Italiano</option><option value="de">Deutsch</option><option value="fr">Français</option></select></label><button class="icon-btn" title="Notifications" aria-label="Notifications" id="notificationBtn"><span class="ui-icon" data-icon="bell" aria-hidden="true"></span></button><button class="icon-btn" title="Refresh" aria-label="Refresh" id="refreshBtn"><span class="ui-icon" data-icon="refresh-cw" aria-hidden="true"></span></button><div class="user-chip"><span id="userName">—</span></div><button class="btn small" id="logoutBtn"><span class="ui-icon" data-icon="log-out" aria-hidden="true"></span><span class="btn-label">Sign out</span></button></div></header>
+      <div class="content">
+        <section id="view-overview" class="view"><div class="page-head"><div><h2>نمای کلی</h2><p>امروز چه چیزی نیازمند توجه شماست؟</p></div><div class="actions"><button class="btn" id="healthProbeBtn">بررسی سلامت رسانه‌ها</button><button class="btn primary" id="runPipelineBtn">اجرای pipeline</button></div></div><div class="grid kpis"><div class="card kpi"><div class="kpi-label">رسانه‌های فعال <span class="up">●</span></div><div id="kpiSources" class="kpi-value">—</div><div class="kpi-note muted">در دسترس و متصل</div></div><div class="card kpi"><div class="kpi-label">تحلیل‌های امروز <span class="up">●</span></div><div id="kpiAnalyses" class="kpi-value">—</div><div class="kpi-note muted">از آخرین اجرا</div></div><div class="card kpi"><div class="kpi-label">انتشارها <span class="up">●</span></div><div id="kpiPubs" class="kpi-value">—</div><div class="kpi-note muted">پیش‌نویس و منتشرشده</div></div><div class="card kpi"><div class="kpi-label">بازخورد <span class="warn">●</span></div><div id="kpiFeedback" class="kpi-value">—</div><div class="kpi-note muted">سیگنال ثبت‌شده</div></div><div class="card kpi"><div class="kpi-label">وضعیت سرویس <span id="kpiHealthDot" class="up">●</span></div><div id="kpiHealth" class="kpi-value kpi-health-value">در حال بررسی</div><div id="kpiHealthNote" class="kpi-note muted">—</div></div></div><div class="grid two-col mt-14"><div class="card section-card"><div class="section-title"><h3>جریان امروز</h3><span id="pipelineUpdated">—</span></div><div class="timeline"><div class="timeline-row"><i id="stepIngest" class="dot"></i><div><b>دریافت محتوا</b><small> جمع‌آوری از رسانه‌های انتخاب‌شده</small><div class="progress"><i id="progressIngest" class="progress-zero"></i></div></div><strong id="stepIngestText" class="muted">—</strong></div><div class="timeline-row"><i id="stepAnalyze" class="dot"></i><div><b>تحلیل و ارتباط‌سنجی</b><small> تفکیک واقعیت، خلاصه و ارتباط با بیزینس</small><div class="progress"><i id="progressAnalyze" class="progress-zero"></i></div></div><strong id="stepAnalyzeText" class="muted">—</strong></div><div class="timeline-row"><i id="stepPublish" class="dot"></i><div><b>بررسی و انتشار</b><small> صف تأیید و کانال تلگرام</small><div class="progress"><i id="progressPublish" class="progress-zero"></i></div></div><strong id="stepPublishText" class="muted">—</strong></div></div></div><div class="card section-card"><div class="section-title"><h3>اقدام‌های پیشنهادی</h3><span>اولویت امروز</span></div><div id="nextActions" class="detail-list"></div></div></div><div class="grid two-col mt-14"><div class="card section-card"><div class="section-title"><h3>سلامت رسانه‌ها</h3><button class="btn small" data-view="sources">مشاهده همه</button></div><div class="table-wrap"><table><thead><tr><th>رسانه</th><th>وضعیت</th><th>آخرین خطا</th></tr></thead><tbody id="healthRows"></tbody></table></div></div><div class="card section-card"><div class="section-title"><h3>آخرین انتشارها</h3><button class="btn small" data-view="content">صف بررسی</button></div><div class="table-wrap"><table><thead><tr><th>خبر</th><th>وضعیت</th><th>زمان</th></tr></thead><tbody id="recentRows"></tbody></table></div></div></div></section>
+        <section id="view-assistants" class="view active"><div class="page-head"><div><h2>دستیارها</h2><p>هر دستیار یک workspace مستقل برای بیزینس، رسانه و موضوعات خودش است.</p></div><div class="actions"><button class="btn primary" id="newAssistantBtn">＋ ساخت دستیار</button><button class="btn" id="quickAssistantBtn">⚡ ساخت سریع با توضیح کوتاه</button></div></div><div id="assistantGrid" class="grid assistant-grid"></div></section>
+        <section id="view-content" class="view"><div class="page-head"><div><h2>صف بررسی خبر</h2><p>قبل از انتشار، خلاصه و ارتباط هر خبر را بررسی و تأیید کنید.</p></div><div class="actions"><button class="btn" id="refreshPreviewsBtn">بازسازی پیش‌نمایش‌ها</button><button class="btn primary" id="openWeeklyBtn">گزارش هفتگی</button></div></div><div class="card section-card"><div class="filter-bar"><input id="publicationSearch" placeholder="جست‌وجو در عنوان و متن"><select id="publicationStatus"><option value="">همه وضعیت‌ها</option><option value="preview">نیازمند بررسی</option><option value="published">منتشرشده</option><option value="review_only">رد مرزی — بررسی دستی</option><option value="failed">ناموفق</option><option value="archived">بایگانی</option><option value="rejected">ردشده</option></select><button class="btn small" id="publicationFilterBtn">اعمال فیلتر</button><span id="publicationCount" class="muted push-end">—</span></div><div class="table-wrap"><table><thead><tr><th data-publication-column="0">خبر</th><th data-publication-column="1">وضعیت انتشار</th><th data-publication-column="2">امتیاز ارتباط</th><th data-publication-column="3">منبع خبر</th><th data-publication-column="4">تاریخ خبر</th><th data-publication-column="5">انتشار در تلگرام</th></tr></thead><tbody id="publicationRows"></tbody></table></div><div id="publicationPager" class="actions centered mt-14"></div></div></section>
+        <section id="view-businesses" class="view"><div class="page-head"><div><h2>بیزینس‌ها</h2><p>برای هر دستیار چند پروفایل کسب‌وکار بسازید و یکی را برای تحلیل فعال کنید.</p></div><div class="actions"><button class="btn primary" id="newBusinessBtn">＋ افزودن بیزینس</button></div></div><div class="card section-card"><div class="notice">هر بیزینس مستقل از رسانه، موضوع، کانال و تنظیمات اجرایی است؛ secret در پروفایل ذخیره نمی‌شود.</div><div id="businessGrid" class="grid assistant-grid"></div></div></section>
+        <section id="view-sources" class="view"><div class="page-head"><div><h2>رسانه‌ها</h2><p>سه گام برای رسانه‌ها: سلامت منابع ثبت‌شده، کشف پیشنهادهای مناسب و افزودنِ بررسی‌شده.</p></div><div class="actions"><button class="btn" id="sourceProbeBtn">بررسی سلامت رسانه‌ها</button><button class="btn" id="sourceSuggestionBtn">پیشنهاد رسانه</button><button type="button" class="btn primary" id="addSourceBtn" data-catalog-create="source">＋ افزودن رسانه</button></div></div><div class="card section-card"><div class="filter-bar"><input id="sourceSearch" placeholder="جست‌وجوی رسانه" data-ui-input="renderSources()"><span id="sourceCount" class="muted push-end">—</span></div><div class="table-wrap"><table><thead><tr><th>رسانه</th><th>نوع اتصال</th><th>سلامت</th><th>اولویت</th><th>آخرین موفقیت</th><th>عملیات</th></tr></thead><tbody id="sourceRows"></tbody></table></div></div><div id="sourceSuggestionsCard" class="card section-card hidden"><div class="section-title"><h3>پیشنهادهای رسانه</h3><span>تا زمان تأیید مالک، هیچ رسانه‌ای ثبت نمی‌شود.</span></div><div id="sourceSuggestionsRows"></div></div></section>
+        <section id="view-topics" class="view"><div class="page-head"><div><h2>موضوعات</h2><p>موضوعات هدف و آستانه ارتباط با بیزینس را تنظیم کنید.</p></div><div class="actions"><button type="button" class="btn primary" id="addTopicBtn" data-catalog-create="topic">＋ افزودن موضوع</button></div></div><div class="card section-card"><div class="filter-bar"><input id="topicSearch" placeholder="جست‌وجوی موضوع" data-ui-input="renderTopics()"><span id="topicCount" class="muted push-end">—</span></div><div class="table-wrap"><table><thead><tr><th>موضوع</th><th>اهمیت</th><th>آستانه ارتباط</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody id="topicRows"></tbody></table></div></div></section>
+        <section id="view-schedule" class="view"><div class="page-head"><div><h2>زمان‌بندی و کانال</h2><p>روزها و ساعت‌های انتشار هر پروژه را مستقیماً از جدول هفتگی انتخاب کنین.</p></div></div><div class="schedule-layout"><div class="card section-card schedule-matrix-card"><div class="section-title"><h3>جدول هفتگی اجرای pipeline</h3><span id="scheduleTimezone">—</span></div><p class="schedule-note">همهٔ ۲۴ ساعت و ۷ روز هفته یکجا نمایش داده می‌شوند. برای انتخاب کل روز روی نام روز و برای انتخاب ساعت در همهٔ روزها روی ساعت بالای جدول بزنین.</p><div class="schedule-grid-wrap"><table id="scheduleGrid" class="schedule-grid" role="grid" aria-label="جدول ۷ روز و ۲۴ ساعت"></table></div><div id="scheduleSelection" class="schedule-selection" aria-live="polite"></div><div class="schedule-settings"><div class="field"><label>سقف انتشار در هر نوبت</label><input id="maxItemsPerRun" type="text" inputmode="numeric" min="1" max="7" value="۲"></div><div class="field"><label>پنجره تازگی خبر (روز)</label><input id="freshnessWindowDays" type="text" inputmode="numeric" min="۱" max="۷" value="۳" aria-describedby="freshnessWindowHelp"></div><div class="field"><label>اعلان تلگرام</label><select id="telegramSilentNotifications"><option value="false">اعلان عادی</option><option value="true">اعلان بی‌صدا</option></select></div><div class="field"><label>کاربران مجاز فیدبک (username با کاما)</label><input id="allowedFeedbackUsers" placeholder="farhaad"></div><small id="freshnessWindowHelp" class="muted">فقط خبرهای منتشرشده در این تعداد روز اخیر برای تحلیل و انتشار معتبر در نظر گرفته می‌شوند.</small><small id="dailyProcessingCapHelp" class="muted">سقف پردازش: حداکثر ۱۰۰۰ خبر جدید در روز برای هر پروژه.</small></div><button class="btn primary" id="saveScheduleBtn" data-ui-css="declaration-1">ذخیره زمان‌بندی و تنظیمات</button><p id="scheduleMsg" class="muted"></p></div><div class="card section-card"><div class="section-title"><h3>آمادگی انتشار تلگرام</h3><span id="telegramStatus" class="status">در حال بررسی</span></div><div id="telegramDetails" class="detail-list"></div></div><div id="channelSettingsCard" class="card section-card channel-settings-card"><div class="section-title channel-section-title"><div><h3>ربات و کانال‌های مقصد پروژه</h3><span>جزئیات اتصال و انتشار هر کانال</span></div><button class="btn small primary" type="button" data-edit-telegram>ویرایش اطلاعات</button></div><div id="channelGrid" class="channel-grid"><div class="empty">در حال دریافت اطلاعات ربات و کانال‌ها…</div></div></div></div></section>
+        <section id="view-template-content" class="view"><div class="page-head"><div><h2 data-template-page-title>قالب محتوا</h2><p data-template-page-subtitle>قالب انتشار هر مقصد را فقط از این صفحه مدیریت کنین.</p></div></div><div id="templateContentMount"><div class="card template-empty empty">برای ویرایش قالب محتوا یک پروژه را انتخاب کنین.</div></div></section>
+        <section id="view-operations" class="view"><div class="page-head"><div><h2>عملیات و سلامت</h2><p>وضعیت سرویس‌ها و پارامترهای اجرای pipeline.</p></div><div class="actions"><button class="btn" id="systemRefreshBtn">بازخوانی</button><button class="btn primary" id="operationsRunBtn">اجرای تست pipeline</button></div></div><div class="grid three-col"><div class="card section-card"><div class="section-title"><h3>سرویس</h3><span id="operationHealth" class="status">—</span></div><div id="operationMeta" class="detail-list"></div></div><div class="card section-card"><div class="section-title"><h3>پیکربندی تحلیل</h3></div><div id="analysisMeta" class="detail-list"></div></div><div class="card section-card"><div class="section-title"><h3>صف‌ها</h3></div><div id="queueMeta" class="detail-list"></div></div></div><div class="card section-card" data-ui-css="declaration-1"><div class="section-title"><h3>خروجی آخرین اجرا</h3><span id="runResultTime">—</span></div><pre id="runResult" class="article-body">هنوز اجرایی ثبت نشده است.</pre></div></section>
+        <section id="view-quality" class="view"><div class="page-head"><div><h2>بازخورد و کیفیت</h2><p>بازخورد کاربران را به سیگنال قابل بررسی برای بهبود relevance تبدیل کنید.</p></div><div class="actions"><button class="btn primary" id="feedbackReportBtn">بازخوانی گزارش ۳۰ روزه</button></div></div><div class="notice">اعمال تغییرات رتبه‌بندی خودکار نیست. ابتدا گزارش را بررسی کنید و سپس از مسیر کنترل‌شده تأیید کنید.</div><div class="grid three-col"><div class="card section-card"><div class="section-title"><h3>تعداد سیگنال</h3></div><div id="qualityTotal" class="kpi-value">۰</div></div><div class="card section-card"><div class="section-title"><h3>مرتبط</h3></div><div id="qualityRelevant" class="kpi-value up">۰</div></div><div class="card section-card"><div class="section-title"><h3>نامرتبط</h3></div><div id="qualityIrrelevant" class="kpi-value down">۰</div></div></div><div class="card section-card" data-ui-css="declaration-1"><div class="section-title feedback-report-head"><div><h3>بازخورد به تفکیک کاربر</h3><span id="feedbackReportPeriod">۳۰ روز اخیر</span></div><span id="feedbackUniqueActors" class="status">۰ کاربر</span></div><div id="qualityReportError" class="notice hidden"></div><div class="table-wrap"><table><thead><tr><th>کاربر</th><th>کل بازخورد</th><th>مرتبط</th><th>نامرتبط</th><th>روند زمانی</th></tr></thead><tbody id="feedbackActorRows"><tr><td colspan="5" class="empty">در حال دریافت گزارش…</td></tr></tbody></table></div></div></section>
+        <section id="view-team" class="view"><div class="page-head"><div><h2>تیم و امنیت</h2><p>کاربران، نقش‌ها و نشست‌های فعال را مدیریت کنید.</p></div><div class="actions"><button class="btn primary" id="newUserBtn">＋ افزودن کاربر</button></div></div><div class="grid two-col"><div class="card section-card"><div class="section-title"><h3>کاربران</h3><button class="btn small" id="reloadUsersBtn">بازخوانی</button></div><div class="table-wrap"><table><thead><tr><th>کاربر</th><th>نقش</th><th>وضعیت</th><th>عملیات</th></tr></thead><tbody id="userRows"></tbody></table></div></div><div class="card section-card"><div class="section-title"><h3>نشست‌های فعال</h3><button class="btn small danger" id="revokeOtherSessionsBtn">بستن همهٔ نشست‌های دیگر</button></div><div class="table-wrap"><table><thead><tr><th>کاربر</th><th>شروع</th><th>انقضا</th><th>عملیات</th></tr></thead><tbody id="sessionRows"></tbody></table></div></div></div></section>
+      </div>
+    </main>
+  </div>
+  <div id="modalRoot" class="hidden"></div><div id="drawerOverlay" class="drawer-overlay hidden"></div><aside id="articleDrawer" class="drawer"><div class="modal-head"><h3>جزئیات خبر</h3><button class="modal-close" id="closeDrawer">×</button></div><div id="articleDetail"></div></aside><div id="toast" class="toast hidden" role="alert" aria-live="assertive"></div>
+  __ADMIN_BLOCK_4__
+  <!-- A small, isolated login guard keeps the sign-in action usable even if a
+       later optional UI enhancement fails during boot.  When the main shell
+       handler is present it dispatches the same form event (so there is still
+       only one request); otherwise it performs the minimal JSON login and
+       reloads into the authenticated shell. -->
+  __ADMIN_BLOCK_5__
+  __ADMIN_BLOCK_6__
+  __ADMIN_BLOCK_7__
+  __ADMIN_BLOCK_8__
+  __ADMIN_BLOCK_9__
+  __ADMIN_BLOCK_10__
+  __ADMIN_BLOCK_11__
+  __ADMIN_BLOCK_12__
+  __ADMIN_BLOCK_13__
+  __ADMIN_BLOCK_14__
+  __ADMIN_BLOCK_15__
+  __ADMIN_BLOCK_16__
+  __ADMIN_BLOCK_17__
+  __ADMIN_BLOCK_18__
+  __ADMIN_BLOCK_19__
+  __ADMIN_BLOCK_20__
+  __ADMIN_BLOCK_21__
+  __ADMIN_BLOCK_22__
+  __ADMIN_BLOCK_23__
+  __ADMIN_BLOCK_24__
+  __ADMIN_BLOCK_25__
+  __ADMIN_BLOCK_26__
+  __ADMIN_BLOCK_27__
+  __ADMIN_BLOCK_28__
+  __ADMIN_BLOCK_29__
+  __ADMIN_BLOCK_30__
+  __ADMIN_BLOCK_31__
+  __ADMIN_BLOCK_32__
+  __ADMIN_BLOCK_33__
+  __ADMIN_BLOCK_34__
+  __ADMIN_BLOCK_35__
+  __ADMIN_BLOCK_36__
+  __ADMIN_BLOCK_37__
+  __ADMIN_BLOCK_38__
+  __ADMIN_BLOCK_39__
+  __ADMIN_BLOCK_40__
+  __ADMIN_BLOCK_41__
+  __ADMIN_BLOCK_42__
+  __ADMIN_BLOCK_43__
+  __ADMIN_BLOCK_44__
+  __ADMIN_BLOCK_45__
+  __ADMIN_BLOCK_46__
+  __ADMIN_BLOCK_47__
+  __ADMIN_BLOCK_48__
+  __ADMIN_BLOCK_49__
+  __ADMIN_BLOCK_50__
+  __ADMIN_BLOCK_51__
+  <div id="adminUxLoadingBar" class="admin-ux-loading-bar" aria-hidden="true"></div>
+  <div id="adminUxCommandPalette" class="admin-ux-palette hidden" aria-hidden="true">
+    <div class="admin-ux-palette-backdrop" data-admin-ux-close-palette></div>
+      <section class="admin-ux-palette-dialog" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="admin-ux-palette-head"><span class="ui-icon" data-icon="search" aria-hidden="true"></span><input id="adminUxCommandSearch" type="search" autocomplete="off" placeholder="Search pages and actions" aria-label="Search pages and actions"><button type="button" class="icon-btn" data-admin-ux-close-palette aria-label="Close">×</button></div>
+      <div id="adminUxCommandList" class="admin-ux-palette-list" role="listbox"></div>
+      <div class="admin-ux-palette-foot"><span><kbd>↑</kbd><kbd>↓</kbd> Navigate</span><span><kbd>Enter</kbd> Open</span><span><kbd>Esc</kbd> Close</span></div>
+    </section>
+  </div>
+  __ADMIN_BLOCK_52__
+  __ADMIN_BLOCK_53__
+  __ADMIN_BLOCK_54__
+  __ADMIN_BLOCK_55__
+  __ADMIN_BLOCK_56__
+  __ADMIN_BLOCK_57__
+  __ADMIN_BLOCK_58__
+  __ADMIN_BLOCK_59__
+  __ADMIN_BLOCK_60__
+  __ADMIN_BLOCK_61__
+  __ADMIN_BLOCK_62__
+  __ADMIN_BLOCK_63__
+  __ADMIN_BLOCK_64__
+  __ADMIN_BLOCK_65__
+  __ADMIN_BLOCK_66__
+  __ADMIN_BLOCK_67__
+  __ADMIN_BLOCK_68__
+  __ADMIN_BLOCK_69__
+  __ADMIN_BLOCK_70__
+  __ADMIN_BLOCK_71__
+  __ADMIN_BLOCK_72__
+  __ADMIN_BLOCK_73__
+  __ADMIN_BLOCK_74__
+  __ADMIN_BLOCK_75__
+  __ADMIN_BLOCK_76__
+  __ADMIN_BLOCK_77__
+__ADMIN_BLOCK_78__
+__ADMIN_BLOCK_79__
+__ADMIN_BLOCK_80__
+</body>
+</html>

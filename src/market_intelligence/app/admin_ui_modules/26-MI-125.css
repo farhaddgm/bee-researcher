@@ -1,0 +1,112 @@
+
+    /* MI-125: screenshot-matched Assistants surface. The same surface is used
+       for every locale; language must change copy, never the page geometry. */
+    body.assistant-reference{
+      --bg:#f6f8fb;--panel:#fff;--ink:#15243a;--muted:#687c97;--line:#e5eaf1;
+      --primary:#2457d6;--primary-dark:#1d46af;--teal:#0a8f83;
+      background:#f6f8fb
+    }
+    body.assistant-reference .main{background:#f6f8fb}
+    body.assistant-reference .sidebar{background:#132b57;color:#cedefa}
+    body.assistant-reference .nav-label{color:#cedefa}
+    body.assistant-reference .nav-btn{color:#cedefa}
+    body.assistant-reference .nav-btn:hover,
+    body.assistant-reference .nav-btn.active{background:#294f9f;color:#fff}
+    body.assistant-reference .sidebar-foot{border-top-color:#2a426f;color:#cedefa}
+    body.assistant-reference .topbar{
+      position:sticky;top:0;padding:0;gap:0;background:#fff;
+      border-bottom-color:#e5eaf1;backdrop-filter:none
+    }
+    body.assistant-reference .topbar #mobileToggle{
+      position:absolute;left:58px;top:16px;width:40px;height:40px
+    }
+    body.assistant-reference .topbar .topbar-main{
+      position:absolute;left:112px;top:0;width:180px;min-width:180px;
+      height:72px;justify-content:center
+    }
+    body.assistant-reference .topbar .workspace-select{
+      position:absolute;left:564px;top:16px;width:300px;min-width:300px;
+      height:40px;background:#f3f6fc;border-color:#e5eaf1;padding:0 12px
+    }
+    body.assistant-reference .topbar .global-search{
+      position:absolute;left:875px;top:15px;width:300px;max-width:300px;
+      height:40px;flex:0 0 300px
+    }
+    body.assistant-reference .topbar .global-search input{
+      height:40px;background:#fff;border-color:#e5eaf1;padding-left:44px!important;
+      padding-right:12px!important
+    }
+    body.assistant-reference .topbar .global-search span{left:10px;right:auto}
+    body.assistant-reference .topbar .top-actions{
+      position:absolute;left:1186px;top:16px;height:40px;margin:0;
+      display:flex;align-items:center;gap:10px;flex-wrap:nowrap
+    }
+    body.assistant-reference .topbar .language-choice{
+      width:134px;height:40px;padding:3px;border-color:#e5eaf1;background:#fff
+    }
+    body.assistant-reference .topbar .language-select{width:126px;min-width:126px;height:32px}
+    body.assistant-reference .topbar .icon-btn{
+      width:40px;height:40px;min-width:40px;background:#fff;border:1px solid #e5eaf1
+    }
+    body.assistant-reference .topbar .user-chip{
+      width:67px;height:40px;padding:0;justify-content:center;border-color:#e5eaf1
+    }
+    body.assistant-reference .topbar #logoutBtn{
+      width:88px;min-width:88px;height:40px;padding:0;background:#f3f6fc
+    }
+    body.assistant-reference .topbar #logoutBtn .ui-icon{display:none}
+    body.assistant-reference .content{
+      max-width:none;margin:0;padding:32px 70px 32px 58px;background:#f6f8fb
+    }
+    body.assistant-reference #view-assistants .page-head{margin-bottom:20px}
+    body.assistant-reference #view-assistants .page-head h2{font-size:26px}
+    body.assistant-reference #view-assistants .page-head p{font-size:13px}
+    body.assistant-reference #view-assistants .page-head .actions{margin-inline-start:auto}
+      /* The approved quick-setup action remains available on the Assistant
+         page; it creates an editable draft and never bypasses review. */
+      body.assistant-reference #view-assistants #quickAssistantBtn{display:inline-flex}
+    body.assistant-reference #view-assistants #newAssistantBtn{width:170px;min-width:170px}
+    body.assistant-reference #view-assistants .assistant-grid{
+      grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:14px
+    }
+    body.assistant-reference #view-assistants .assistant-card{
+      min-height:363px;height:363px;padding:16px;border-radius:16px;
+      box-shadow:0 8px 22px rgba(22,46,88,.08)
+    }
+    body.assistant-reference #view-assistants .assistant-card p{
+      margin:14px 0 0;min-height:35px;line-height:1.8
+    }
+    body.assistant-reference #view-assistants .assistant-meta{
+      height:89px;margin:12px 0 14px;gap:8px
+    }
+    body.assistant-reference #view-assistants .assistant-meta div{
+      height:89px;padding:12px;background:#f3f6fc;border-radius:10px
+    }
+    body.assistant-reference #view-assistants .card-actions{
+      display:grid;grid-template-columns:124px 132px;gap:8px;width:265px
+    }
+    body.assistant-reference #view-assistants .card-actions .btn{
+      width:100%;min-width:0;height:34px;min-height:34px;padding:0 8px
+    }
+    @media(max-width:1100px){
+      body.assistant-reference .topbar #mobileToggle{left:28px}
+      body.assistant-reference .topbar .topbar-main{left:82px}
+      body.assistant-reference .topbar .workspace-select{left:276px;width:190px;min-width:190px}
+      body.assistant-reference .topbar .global-search{left:480px;width:300px;max-width:300px}
+      body.assistant-reference .topbar .top-actions{left:auto;right:28px}
+      body.assistant-reference .content{padding-inline:28px}
+    }
+    @media(max-width:780px){
+      body.assistant-reference .topbar{position:sticky;padding:0 16px;gap:8px}
+      body.assistant-reference .topbar #mobileToggle,
+      body.assistant-reference .topbar .topbar-main,
+      body.assistant-reference .topbar .workspace-select,
+      body.assistant-reference .topbar .global-search,
+      body.assistant-reference .topbar .top-actions{position:static;left:auto;right:auto;top:auto}
+      body.assistant-reference .topbar .topbar-main{width:auto;min-width:0;height:auto;display:flex}
+      body.assistant-reference .topbar .workspace-select{width:100%;min-width:0}
+      body.assistant-reference .topbar .global-search{display:none}
+      body.assistant-reference .topbar .top-actions{margin-left:auto;flex-wrap:wrap;height:auto}
+      body.assistant-reference .content{padding:18px 14px}
+      body.assistant-reference #view-assistants .assistant-card{height:auto;min-height:363px}
+    }

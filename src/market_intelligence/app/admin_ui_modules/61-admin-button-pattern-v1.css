@@ -1,0 +1,37 @@
+
+    /* Shared controls: one 8px rhythm and one predictable action hierarchy
+       across every admin screen.  The selectors are intentionally scoped to
+       the content/modal areas so navigation icons keep their own geometry. */
+    :root{--admin-space-1:8px;--admin-space-2:16px;--admin-space-3:24px;--admin-control-h:40px;--admin-control-radius:10px;--admin-control-gap:8px}
+    .main .btn,.modal .btn,.toast .btn{box-sizing:border-box;min-height:var(--admin-control-h);padding:0 14px;border-radius:var(--admin-control-radius);display:inline-flex;align-items:center;justify-content:center;gap:var(--admin-control-gap);line-height:1.25;white-space:nowrap;transition:background-color .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+    .main .btn.small,.modal .btn.small,.toast .btn.small{min-height:34px;padding:0 12px;font-size:12px;border-radius:9px}
+    .main .btn.primary,.modal .btn.primary{background:#2457d6;color:#fff;border-color:#2457d6;box-shadow:0 3px 8px rgba(36,87,214,.16)}
+    .main .btn.primary:hover,.modal .btn.primary:hover{background:#1d49b6;border-color:#1d49b6;transform:translateY(-1px)}
+    .main .btn.danger,.modal .btn.danger{background:#fdebed;color:#b4233c;border-color:#f7cbd3}
+    .main .btn.danger:hover,.modal .btn.danger:hover{background:#fbd9df;border-color:#efabb8}
+    .main .actions,.main .card-actions,.main .table-actions,.modal .actions{display:flex;align-items:center;gap:var(--admin-control-gap);flex-wrap:wrap}
+    .main .page-head>.actions{justify-content:flex-end}
+    /* Action hierarchy: each page-level group has one shared grid.  Equal
+       tracks prevent labels from creating arbitrary button widths, while
+       minmax keeps the group usable when a translation is longer.  The final
+       hardening pass places the primary action last in both the DOM and the
+       visual order, including controls created after the first render. */
+    .main .page-head>.actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(156px,1fr));align-items:stretch;width:min(100%,760px);margin-inline-start:auto}
+    .main .page-head>.actions>.btn,.main .page-head>.actions>.btn.small{width:100%;min-width:0;height:var(--admin-control-h);min-height:var(--admin-control-h);padding:0 14px;border-radius:var(--admin-control-radius);white-space:normal;overflow-wrap:anywhere}
+    .main .page-head>.actions>.btn.primary{order:99}
+    .main .page-head>.btn{min-width:160px}
+    .main .card-actions:not(.table-actions){display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));align-items:stretch;width:100%;gap:var(--admin-control-gap)}
+    .main .card-actions:not(.table-actions)>.btn{width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere}
+    .main .assistant-card .card-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch;width:100%;gap:var(--admin-control-gap)}
+    .main .assistant-card .card-actions>.btn{width:100%;min-width:0;white-space:normal;overflow-wrap:anywhere}
+    .main .page-head>.actions>.btn:not(.primary):not(.danger):not(.teal),.main .assistant-card .card-actions>.btn:not(.primary):not(.danger):not(.teal),.main .table-actions>.btn:not(.primary):not(.danger):not(.teal){background:#eef2f7;color:#445a79;border-color:#dbe4f0}
+    .main .page-head>.actions>.btn:not(.primary):not(.danger):not(.teal):hover,.main .assistant-card .card-actions>.btn:not(.primary):not(.danger):not(.teal):hover,.main .table-actions>.btn:not(.primary):not(.danger):not(.teal):hover{background:#e3eaf4;border-color:#c8d6e9}
+    .main .btn:disabled,.modal .btn:disabled{opacity:.58;cursor:not-allowed;transform:none!important;box-shadow:none}
+    /* The English reference skin has a more specific legacy selector.  Keep
+       the same contract there too, so its fixed 124/132px tracks cannot make
+       Create assistant, Sandbox and Quick setup look mismatched. */
+    body.assistant-reference #view-assistants .page-head>.actions{display:grid;width:min(100%,760px);grid-template-columns:repeat(auto-fit,minmax(156px,1fr));align-items:stretch}
+    body.assistant-reference #view-assistants .page-head>.actions>.btn,body.assistant-reference #view-assistants .page-head>.actions>.btn.small{width:100%;min-width:0;height:var(--admin-control-h);min-height:var(--admin-control-h);padding:0 14px}
+    body.assistant-reference #view-assistants .assistant-card .card-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));width:100%;gap:var(--admin-control-gap)}
+    body.assistant-reference #view-assistants .assistant-card .card-actions>.btn{width:100%;min-width:0}
+    @media(max-width:780px){.main .page-head>.actions{justify-content:flex-start;width:100%;margin-inline-start:0;grid-template-columns:1fr}.main .actions,.main .card-actions,.main .table-actions{width:100%}.main .table-actions .btn{flex:1 1 auto}.main .assistant-card .card-actions,.main .card-actions:not(.table-actions){grid-template-columns:1fr}}

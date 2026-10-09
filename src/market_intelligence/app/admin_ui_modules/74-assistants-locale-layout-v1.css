@@ -1,0 +1,46 @@
+
+    /* MI-215: one deterministic Assistants layout for every supported
+       language.  The old English reference skin forced page actions to
+       width:100%; the shared button normalizer then persisted that measured
+       width inline, producing stacked English actions while Turkish kept
+       text-sized controls.  These final rules deliberately win that legacy
+       cascade and keep copy length from changing the shell geometry. */
+    #app .main #view-assistants .page-head>.actions{
+      display:flex!important;align-items:center!important;justify-content:flex-end!important;
+      flex-wrap:wrap!important;gap:8px!important;width:auto!important;max-width:100%!important;
+      margin-inline-start:auto!important
+    }
+    #app .main #view-assistants .page-head>.actions>.btn,
+    #app .main #view-assistants .page-head>.actions>.btn.small{
+      width:auto!important;min-width:0!important;max-width:100%!important;flex:0 1 auto!important;
+      height:40px!important;min-height:40px!important;padding:0 14px!important;
+      white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;
+      order:0!important
+    }
+    #app .main #view-assistants .page-head>.actions>.btn.primary{order:99!important}
+    #app .main #view-assistants .assistant-card .card-actions{
+      display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;
+      align-items:stretch!important;width:100%!important;gap:8px!important;
+      margin-top:auto!important
+    }
+    /* A translated description or a draft-only action adds a little vertical
+       content.  The former fixed height (363px) let the final action row
+       protrude beyond the card by 8px in English/German/Turkish.  Let the
+       grid row size to its tallest card while keeping a stable minimum; the
+       auto margin above then pins actions to a shared baseline. */
+    #app .main #view-assistants .assistant-card{
+      height:auto!important;min-height:363px!important;display:flex!important;
+      flex-direction:column!important;overflow:visible!important
+    }
+    #app .main #view-assistants .assistant-card .card-actions>.btn{
+      width:100%!important;min-width:0!important;max-width:100%!important;flex:none!important;
+      height:40px!important;min-height:40px!important;padding:0 8px!important;
+      white-space:normal!important;overflow:hidden!important;text-overflow:ellipsis!important;
+      overflow-wrap:anywhere!important;line-height:1.2!important;order:0!important
+    }
+    #app .main #view-assistants .assistant-card .card-actions>.btn.primary{order:99!important}
+    @media(max-width:780px){
+      #app .main #view-assistants .page-head>.actions{display:grid!important;grid-template-columns:1fr!important;width:100%!important;justify-content:stretch!important}
+      #app .main #view-assistants .page-head>.actions>.btn{width:100%!important;flex:none!important}
+      #app .main #view-assistants .assistant-card .card-actions{grid-template-columns:1fr!important}
+    }

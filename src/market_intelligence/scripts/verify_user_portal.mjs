@@ -101,13 +101,15 @@ if (await articleDialog.getAttribute('aria-modal') !== 'true'
   || !(await articleDialog.getAttribute('aria-labelledby'))) {
   throw new Error('The reader article dialog is missing its accessible modal semantics.');
 }
-const dialogFocusables = articleDialog.locator('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+// Optional, permission-gated chat controls are present but hidden. Only
+// visible controls participate in the actual dialog's keyboard sequence.
+const dialogFocusables = articleDialog.locator('button:not([disabled]):visible, a[href]:visible, input:not([disabled]):visible, select:not([disabled]):visible, textarea:not([disabled]):visible, [tabindex]:not([tabindex="-1"]):visible');
 const firstDialogControl = dialogFocusables.first();
 const lastDialogControl = dialogFocusables.last();
 await lastDialogControl.focus();
 await page.keyboard.press('Tab');
 if (!(await firstDialogControl.evaluate(element => element === document.activeElement))) {
-  throw new Error('Reader dialog focus did not wrap from the last control to the first.');
+  throw new Error('Reader dialog focus did not wrap from the last control to the first: '+JSON.stringify(await articleDialog.evaluate(n=>({active:document.activeElement?.outerHTML.slice(0,240),controls:[...n.querySelectorAll('button,input,select,textarea')].filter(el=>el.getClientRects().length).map(el=>({id:el.id,hidden:el.hidden,disabled:el.disabled,text:el.textContent.slice(0,40)}))}))));
 }
 await page.keyboard.press('Shift+Tab');
 if (!(await lastDialogControl.evaluate(element => element === document.activeElement))) {

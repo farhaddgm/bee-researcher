@@ -2,6 +2,7 @@ import json
 import re
 import time
 import unittest
+from tests.ui_source import document_source
 from pathlib import Path
 from unittest.mock import patch
 
@@ -53,7 +54,7 @@ class AccountContracts(unittest.TestCase):
     def test_auth_mode_is_server_rendered_for_both_portals(self):
         with TestClient(app) as client:
             for portal in ("admin", "user"):
-                body = client.get("/" + portal).text
+                body = document_source(client.get("/" + portal).text)
                 self.assertIn('data-login-mode="google"', body)
                 self.assertIn('body[data-login-mode="google"] #loginForm{display:none!important}', body)
                 self.assertNotIn('id="google-login-layer"', body)
