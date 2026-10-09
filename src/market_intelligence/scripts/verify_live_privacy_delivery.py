@@ -57,8 +57,14 @@ async def main(args):
             assert response.status_code==204,'authenticated_canary_refused'
             response=await client.get('/admin/api/notifications');assert response.status_code==200
             rows=response.json()['notifications']; assert any(r['id']==notice_id for r in rows)
+            response=await client.get('/meta');assert response.status_code==200
+            metadata=response.json()
+            assert metadata['version']==cfg.version
+            assert metadata['source_revision']==cfg.build_revision
+            assert metadata['image_digest']==cfg.image_digest
         print(json.dumps({'https_authenticated_canary':True,'owner_inbox_delivery':True,
-            'notice_marked_as_test':True,'canary_marker':marker,'temporary_session_cleanup':True}))
+            'notice_marked_as_test':True,'canary_marker':marker,'temporary_session_cleanup':True,
+            'authenticated_metadata_binding_verified':True}))
     finally:
         async with SessionLocal() as session:
             await session.execute(delete(AdminSession).where(AdminSession.token_hash==hashed))
