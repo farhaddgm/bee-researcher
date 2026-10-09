@@ -79,6 +79,9 @@ asyncio.run(main())"""
             '--env-file',str(pgfile),'--entrypoint','pg_dump','postgres:17.10-alpine',
             '--format=custom','--schema=market_intelligence','--no-owner','--no-acl'],
             stdout=output,stderr=subprocess.PIPE,timeout=180)
+        if result.returncode == 0:
+            output.flush()
+            os.fsync(output.fileno())
     if result.returncode or backup.stat().st_size<100:
         raise RuntimeError('Private scoped backup failed; no migration performed')
     run(common+['--entrypoint','alembic',args.image,'upgrade','0045_news_chat'],timeout=180)
