@@ -231,7 +231,7 @@ jobs:
         run: |
           python src/market_intelligence/scripts/verify_media_pipeline.py
           python src/market_intelligence/scripts/verify_product_reliability.py
-          python src/market_intelligence/scripts/verify_job_recovery.py
+          MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED=true python src/market_intelligence/scripts/verify_job_recovery.py
           python src/market_intelligence/scripts/verify_deployment_drain.py
           MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED=true python ops/scoped-release/verify_http_drain.py
       - name: Run isolated business research context SQL integration

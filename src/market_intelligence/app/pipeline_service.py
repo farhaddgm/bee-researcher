@@ -26,7 +26,7 @@ from app.ai_relevance import SCORER_REVISION, RelevanceAssessmentError, article_
 from app.business_context import CompiledBusinessProfile, assess_business, business_context_hash, full_article_hash
 from app.research_context import resolve_context, apply_context_decisions
 from app.database import SessionLocal
-from app.deployment_drain import maintenance_barrier, protected_work
+from app.deployment_drain import maintenance_barrier, protected_work, unavailable
 from app.fetchers import FetchFailure
 from app.ingestion_service import DEFAULT_ASSISTANT_ID, run_ingestion, run_sources_independently
 from app.models import (
@@ -468,29 +468,34 @@ async def _finish_job(
         await session.commit()
 
 
-@protected_work
 async def expire_abandoned_job_runs(*, now: datetime | None = None) -> int:
     """Reconcile orphaned history, never retry work or reset its budget ledger.
 
     A process can die without reaching _finish_job. Slot-specific keys mean
     those rows are never reclaimed and otherwise remain 'running' forever.
-    A conservative 24-hour boundary does not confuse normal model/collection
-    latency with an abandoned execution. Delivery claims and publications are
-    intentionally untouched: an uncertain external send must not be replayed.
+    Even a 24-hour execution can still be live. Prove exclusive absence of
+    admitted work before changing history; without the barrier, defer cleanup.
+    Delivery claims/publications and cost/attempt ledgers remain untouched.
     """
     timestamp = now or _utcnow()
-    async with SessionLocal() as session:
-        result = await session.execute(
-            update(JobRun)
-            .where(
-                JobRun.status == "running",
-                JobRun.finished_at.is_(None),
-                func.coalesce(JobRun.started_at, JobRun.created_at) < timestamp - timedelta(days=1),
-            )
-            .values(status="failed", finished_at=timestamp, error_message="abandoned_execution_expired")
-        )
-        await session.commit()
-    return int(result.rowcount or 0)
+    if not get_settings().deployment_drain_enabled:
+        return 0
+    try:
+        async with maintenance_barrier(timeout=0.1):
+            async with SessionLocal() as session:
+                result = await session.execute(
+                    update(JobRun)
+                    .where(
+                        JobRun.status == "running",
+                        JobRun.finished_at.is_(None),
+                        func.coalesce(JobRun.started_at, JobRun.created_at) < timestamp - timedelta(days=1),
+                    )
+                    .values(status="failed", finished_at=timestamp, error_message="abandoned_execution_expired")
+                )
+                await session.commit()
+                return int(result.rowcount or 0)
+    except TimeoutError:
+        raise unavailable() from None
 
 
 async def reconcile_jobs_before_startup(*, started_before: datetime) -> int:

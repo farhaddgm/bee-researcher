@@ -8,6 +8,7 @@ import uuid
 from sqlalchemy import select
 from app.config import get_settings
 from app.database import SessionLocal
+from app.deployment_drain import protected_work
 from app.models import AdminUser
 
 
@@ -35,6 +36,7 @@ def reconcile_inbox(preferences: dict, incidents: list[dict], *, now: datetime) 
     return preferences, delivered
 
 
+@protected_work
 async def deliver_freshness_notifications() -> int:
     from app.admin import list_admin_incidents
     async with SessionLocal() as session:

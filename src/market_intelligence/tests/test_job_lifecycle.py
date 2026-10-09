@@ -4,12 +4,45 @@ from datetime import datetime, timezone
 import unittest
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
+from fastapi import HTTPException
 
 from app import pipeline_service as pipeline
+from app import runtime
 from app.config import Settings
 
 
 class JobLifecycleTest(unittest.IsolatedAsyncioTestCase):
+    async def test_deferred_cleanup_does_not_starve_scheduler(self):
+        stop = asyncio.Event()
+        async def tick(_):
+            stop.set()
+            return {}
+        with patch.object(runtime, "expire_abandoned_job_runs", AsyncMock(side_effect=HTTPException(503, 'busy'))), \
+             patch('app.freshness_notifications.deliver_freshness_notifications', AsyncMock(return_value=0)), \
+             patch.object(runtime, "STATUS", MagicMock()), \
+             patch.object(runtime, "scheduler_tick", AsyncMock(side_effect=tick)) as scheduled:
+            await runtime.scheduler_loop(MagicMock(scheduler_poll_seconds=1), stop)
+        scheduled.assert_awaited_once()
+
+    async def test_age_only_cleanup_without_barrier_is_deferred(self):
+        with patch.object(pipeline, "get_settings", return_value=MagicMock(deployment_drain_enabled=False)), \
+             patch.object(pipeline, "SessionLocal") as db:
+            self.assertEqual(0, await pipeline.expire_abandoned_job_runs())
+            db.assert_not_called()
+
+    async def test_age_only_cleanup_cannot_steal_admitted_work(self):
+        @asynccontextmanager
+        async def blocked(**_):
+            raise TimeoutError
+            yield
+        with patch.object(pipeline, "get_settings", return_value=MagicMock(deployment_drain_enabled=True)), \
+             patch.object(pipeline, "maintenance_barrier", blocked), \
+             patch.object(pipeline, "SessionLocal") as db:
+            with self.assertRaises(HTTPException) as error:
+                await pipeline.expire_abandoned_job_runs()
+            self.assertEqual(503, error.exception.status_code)
+            db.assert_not_called()
+
     async def test_cancelled_pipeline_records_terminal_state_and_releases_lock(self):
         cfg = Settings(environment="test", postgres_db="assistant_test", postgres_user="synthetic",
                        postgres_password="synthetic", redis_password="synthetic")
