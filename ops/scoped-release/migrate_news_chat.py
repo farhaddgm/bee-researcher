@@ -1,6 +1,7 @@
 """Additive 0045 migration with a private, Researcher-schema-only backup.
 
-Uses the existing migrator role/credentials; never changes roles, secrets,
+Uses the existing runtime role for backup and migrator role for DDL;
+never changes roles, secrets,
 other schemas, account grants, runtime flags or service containers.
 """
 import argparse
@@ -10,7 +11,7 @@ import os
 from pathlib import Path
 import subprocess
 import time
-from deploy import candidate, run, save
+from deploy import candidate, inspect, run, save
 
 PRIVATE = Path('/opt/ai-assistant/ops/bee-researcher-direct/private')
 MIGRATOR = PRIVATE / '3.39.0-security/migration.env'
@@ -26,11 +27,33 @@ def migration_values(path: Path) -> dict[str, str]:
     return values
 
 
+def scoped_backup_values(migrator: dict[str, str], runtime: dict[str, str]) -> dict[str, str]:
+    # DDL permission is not SELECT permission on historical tables. Snapshot
+    # with the already-configured restricted reader; do not elevate migrator
+    # privileges, exclude tables, or reach for a shared database administrator.
+    prefix = 'MARKET_INTELLIGENCE_POSTGRES_'
+    if runtime.get(prefix+'USER') != 'bee_researcher_runtime' or runtime.get(prefix+'DB') != 'assistant':
+        raise RuntimeError('Existing restricted Researcher backup identity required')
+    for key in ('HOST', 'DB', 'PORT'):
+        default = '5432' if key == 'PORT' else ''
+        if runtime.get(prefix+key, default) != migrator.get(prefix+key, default):
+            raise RuntimeError('Backup and migration must target the same Researcher database')
+    result = {key: runtime.get(prefix+suffix, '') for key, suffix in
+              [('PGHOST', 'HOST'), ('PGDATABASE', 'DB'), ('PGUSER', 'USER'), ('PGPASSWORD', 'PASSWORD')]}
+    result['PGPORT'] = runtime.get(prefix+'PORT', '5432')
+    if any(not value or '\n' in value or '\r' in value for value in result.values()):
+        raise RuntimeError('Single-line configured Researcher backup values required')
+    return result
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image',required=True);parser.add_argument('--revision',required=True)
     args=parser.parse_args();candidate(args.image,args.revision,'3.40.0')
     values=migration_values(MIGRATOR)
+    current=inspect('ai-market-intelligence')
+    runtime=dict(item.split('=',1) for item in current['Config']['Env'] if '=' in item)
+    pg=scoped_backup_values(values,runtime)
     stamp=time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())
     directory=PRIVATE/('3.40.0-migration-'+stamp);directory.mkdir(mode=0o700)
     common=['docker','run','--rm','--network','container:ai-market-intelligence',
@@ -48,9 +71,6 @@ asyncio.run(main())"""
     revision=json.loads(run(common+['--entrypoint','python',args.image,'-c',probe]))['schema_revision']
     if revision not in {'0044_security_events','0045_news_chat'}:
         raise RuntimeError('Unexpected schema; refusing broad migration')
-    pg={key:values['MARKET_INTELLIGENCE_POSTGRES_'+suffix] for key,suffix in
-        [('PGHOST','HOST'),('PGDATABASE','DB'),('PGUSER','USER'),('PGPASSWORD','PASSWORD')]}
-    pg['PGPORT']=values.get('MARKET_INTELLIGENCE_POSTGRES_PORT','5432')
     pgfile=directory/'pg.env';save(pgfile,''.join(k+'='+v+'\n' for k,v in pg.items()),private=True)
     backup=directory/'market-intelligence-before-0045.dump'
     descriptor=os.open(backup,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
@@ -81,6 +101,8 @@ asyncio.run(main())"""
     receipt=directory/'migration-receipt.json'
     save(receipt,{**verified,'revision':args.revision,'backup_schema':'market_intelligence',
         'backup_sha256':hashlib.sha256(backup.read_bytes()).hexdigest(),'previous_schema':revision,
+        'backup_role':'bee_researcher_runtime','migration_role':'bee_researcher_migrator',
+        'roles_or_grants_changed':False,
         'secrets_rekeyed':False,'other_schemas_changed':False,'services_restarted':False},private=True)
     print(json.dumps({'migration_verified':True,'receipt':str(receipt)}))
 
