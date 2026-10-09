@@ -77,6 +77,7 @@ class BackgroundDeploymentTest(unittest.IsolatedAsyncioTestCase):
         connection.scalar.return_value = False
         cfg = settings().model_copy(update={"deployment_drain_enabled": True})
         with patch("app.deployment_drain.get_settings", return_value=cfg), \
+                patch.object(pipeline_service, "get_settings", return_value=cfg), \
                 patch("app.deployment_drain._connect", AsyncMock(return_value=connection)), \
                 patch.object(contenter, "SessionLocal", Mock()) as contenter_db, \
                 patch.object(pipeline_service, "SessionLocal", Mock()) as jobs_db:

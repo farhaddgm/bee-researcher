@@ -1,0 +1,21 @@
+
+    // MI-093: owner account theme picker. Preferences are server-backed and
+    // the account entry is intentionally the last visible sidebar item.
+    (function(){
+      const owner=()=>Boolean(state.currentUser?.is_owner||state.currentUser?.role==='owner');
+      const themes={system:{fa:'همگام با سیستم',en:'System',swatch:'#64748b'},light:{fa:'روشن',en:'Light',swatch:'#2457d6'},dark:{fa:'تیره',en:'Dark',swatch:'#1f2937'},default:{fa:'آبی جذاب',en:'Attractive blue',swatch:'#2457d6'},honey:{fa:'عسل و کهربا',en:'Honey amber',swatch:'#b66a08'},forest:{fa:'جنگل سبز',en:'Forest green',swatch:'#19735b'},slate:{fa:'خاکستری محو',en:'Faded gray',swatch:'#64748b'},blackyellow:{fa:'مشکی و زرد',en:'Black & yellow',swatch:'#171717'},red:{fa:'قرمز حرفه‌ای',en:'Professional red',swatch:'#d83a56'}};
+      const applyTheme=theme=>{const value=themes[theme]?theme:'honey';document.documentElement.dataset.theme=value;localStorage.setItem('research_bee_theme',value)};
+      const storedTheme=localStorage.getItem('research_bee_theme');applyTheme(storedTheme||'honey');
+      function ensureAccount(){
+        if(!$('view-account')){const section=document.createElement('section');section.id='view-account';section.className='view';section.innerHTML='<div class="page-head"><div><h2 id="accountTitle">حساب کاربری</h2><p id="accountSubtitle">تنظیمات ظاهری حساب مالک</p></div></div><div class="card section-card"><div class="notice" id="accountNotice">تم فقط روی ظاهر بک‌آفیس اثر می‌گذارد و داده‌های پروژه را تغییر نمی‌دهد.</div><div id="themeChoices" class="grid" data-ui-css="declaration-16"></div><div id="accountMsg" class="muted" data-ui-css="declaration-1"></div></div>';document.querySelector('.content')?.appendChild(section)}
+      }
+      function renderAccount(){ensureAccount();const en=state.language==='en',title=$('accountTitle'),subtitle=$('accountSubtitle'),notice=$('accountNotice');if(title)title.textContent=en?'Account':'حساب کاربری';if(subtitle)subtitle.textContent=en?'Owner appearance settings':'تنظیمات ظاهری حساب مالک';if(notice)notice.textContent=en?'Themes affect only the backoffice appearance and never change project data.':'تم فقط روی ظاهر بک‌آفیس اثر می‌گذارد و داده‌های پروژه را تغییر نمی‌دهد.';const wrap=$('themeChoices');if(!wrap)return;const current=document.documentElement.dataset.theme||'default';wrap.innerHTML=Object.entries(themes).map(([id,x])=>`<button type="button" class="card theme-choice" data-theme-choice="${id}" aria-pressed="${id===current}"><span data-theme-swatch="${id}"></span><b>${en?x.en:x.fa}</b><span class="muted" data-ui-css="declaration-17">${id===current?(en?'Selected':'انتخاب‌شده'):(en?'Select':'انتخاب')}</span></button>`).join('');document.querySelectorAll('[data-theme-choice]').forEach(b=>b.onclick=async()=>{const theme=b.dataset.themeChoice;applyTheme(theme);renderAccount();try{await req('/admin/api/account/preferences',{method:'PUT',body:JSON.stringify({theme})});if($('accountMsg')){$('accountMsg').textContent=en?'Theme saved':'تم ذخیره شد';$('accountMsg').className='success'}}catch(err){if($('accountMsg')){$('accountMsg').textContent=friendlyError(err.message);$('accountMsg').className='error'}}})}
+      const oldApply=applyRoleVisibility;applyRoleVisibility=function(){oldApply();ensureAccount();const visible=owner()||state.currentUser?.role==='admin';document.querySelector('[data-view="account"]')?.classList.toggle('hidden',!visible);if(!visible&&$('view-account')?.classList.contains('active'))setView('overview')};
+      const oldSet=setView;setView=function(name){if(name==='account'&&!(owner()||state.currentUser?.role==='admin')){name='overview'}oldSet(name);if(name==='account')renderAccount()};
+      // Appearance preferences are loaded once by MI-143.  Fetching them a
+      // second time inside every full refresh added latency and competed with
+      // the account panel's own render.
+      const oldLoad=loadAll;loadAll=async function(){const result=await oldLoad();ensureAccount();applyRoleVisibility();return result};
+      const oldLang=setLanguage;setLanguage=function(lang){oldLang(lang);if($('view-account')?.classList.contains('active'))renderAccount()};
+      ensureAccount();applyRoleVisibility();
+    })();

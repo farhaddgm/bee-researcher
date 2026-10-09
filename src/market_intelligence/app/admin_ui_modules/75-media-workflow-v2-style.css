@@ -1,0 +1,15 @@
+
+    /* Media management is intentionally a short three-action workflow:
+       health, discovery and add.  The review state uses the same field and
+       button primitives as the rest of the back-office. */
+    #view-sources .media-workflow-meta{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 2px}
+    #view-sources .media-workflow-meta .status{white-space:normal}
+    .media-discovery-result{display:grid;gap:12px}
+    .media-discovery-result .notice p{margin:8px 0 0}
+    .media-discovery-result .detail-list{margin:0}
+    .media-alternatives{display:flex;flex-wrap:wrap;gap:8px}
+    .media-health-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:4px 0 12px}
+    .media-health-summary .detail-item{display:grid;gap:4px;justify-items:start;min-width:0}
+    .media-health-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:10px 0;border-top:1px solid var(--line)}
+    .media-health-row small{display:block;color:var(--muted);margin-top:4px;line-height:1.5}
+    @media(max-width:620px){.media-health-summary{grid-template-columns:1fr}.media-health-row{grid-template-columns:1fr}}

@@ -297,6 +297,7 @@ def user_portal_access_payload(user: AdminUser) -> dict[str, bool]:
     return {
         "user_portal_access": portal_enabled,
         "user_feedback_access": feedback_enabled,
+        "news_chat_access": portal_enabled and (is_owner(user) or (user.preferences or {}).get("news_chat_enabled") is True),
     }
 
 

@@ -1,0 +1,4 @@
+
+    /* MI-206: locale-aware login alignment for the additive language pack. */
+    html[lang="ar"] #login input{direction:rtl;text-align:right}
+    html[lang="tr"] #login input,html[lang="es"] #login input,html[lang="it"] #login input,html[lang="de"] #login input,html[lang="fr"] #login input{direction:ltr;text-align:left}

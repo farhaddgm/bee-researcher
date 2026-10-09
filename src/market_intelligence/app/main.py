@@ -12,6 +12,7 @@ import uuid
 from collections import deque
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
@@ -24,6 +25,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import get_settings
 from app.observability import configure_logging
+from app.ui_assets import ASSETS as UI_ASSETS, externalize_document
 from app.database import SessionLocal, check_database
 from app.deployment_drain import engine as deployment_lease_engine, work_lease
 from app.models import AssistantWorkspace
@@ -253,7 +255,12 @@ def _login_document(body: str, portal: str, *, password: bool = False) -> str:
     """Choose the auth UI before first paint; never expose a password fallback."""
     mode = "password" if password else "google"
     attrs = f'data-login-mode="{mode}" data-auth-portal="{portal}" data-google-ready="{str(settings.google_login_ready).lower()}"'
-    return body.replace("<body>", f"<body {attrs}>", 1)
+    body = body.replace("<body>", f"<body {attrs}>", 1)
+    if portal == "admin":
+        body = body.replace('</head>', '<link rel="stylesheet" href="/assets/news-chat/chat.css"></head>', 1).replace(
+            '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-chat/admin.js"></script></body>', 1,
+        )
+    return externalize_document(body)
 
 
 from app.security_controls import (
@@ -284,6 +291,11 @@ _ADMIN_ASSETS = {
 settings = get_settings()
 configure_logging()
 logger = logging.getLogger(__name__)
+
+# Prime every process before its first request; an asset request may land on
+# a different worker from the document request. Never rely on sticky routing.
+externalize_document(ADMIN_HTML)
+externalize_document(USER_HTML)
 
 
 class _ClientErrorRateLimiter:
@@ -332,6 +344,39 @@ def _safe_telemetry_token(value: object, limit: int = 64) -> str:
     return token_value if re.fullmatch(r"[A-Za-z0-9_.:-]+", token_value or "") else "unknown"
 
 
+# A character whitelist is not a privacy boundary: passwords and account IDs
+# can use that same alphabet. Accept only context defined by our own UI.
+_TELEMETRY_VIEWS = frozenset({"assistants", "overview", "publications", "feedback",
+    "businesses", "sources", "topics", "schedule", "content", "settings",
+    "operations", "support", "accounts", "unknown"})
+_TELEMETRY_ACTIONS = frozenset(re.findall(r'id=["\']([A-Za-z][A-Za-z0-9]*Btn)["\']', ADMIN_HTML)) | {
+    "catalog_source", "catalog_topic", "unknown"}
+_TELEMETRY_PHASES = frozenset({"click", "workspace", "replay_target", "replay",
+    "modal", "handler", "request", "timeout", "unknown"})
+_TELEMETRY_OUTCOMES = frozenset({"ok", "waiting", "error", "unknown"})
+
+
+def _telemetry_enum(value: object, allowed: frozenset[str]) -> str:
+    return value if isinstance(value, str) and value in allowed else "unknown"
+
+
+def _telemetry_route(value: object) -> str:
+    """Log a registered route template, never a caller's URL or identifiers."""
+    if value == "client":
+        return "client"
+    if not isinstance(value, str) or len(value) > 512:
+        return "unknown"
+    path = value.split("?", 1)[0]
+    for route in app.routes:
+        template = getattr(route, "path", "")
+        if not template.startswith("/admin/api/"):
+            continue
+        pattern = re.sub(r"\\\{[^}]+\\\}", r"[^/]+", re.escape(template))
+        if re.fullmatch(pattern, path):
+            return re.sub(r"\{[^}]+\}", ":id", template)
+    return "unknown"
+
+
 def _reader_assistant_is_accessible(
     available: Mapping[str, object], assistant_id: uuid.UUID
 ) -> bool:
@@ -366,6 +411,28 @@ async def _read_bounded_request_body(request: Request, limit: int) -> bytes | No
 async def lifespan(_: FastAPI):
     stop = asyncio.Event()
     tasks: list[asyncio.Task] = []
+    if settings.deployment_drain_enabled:
+        from app.pipeline_service import reconcile_jobs_before_startup
+        boot_time = datetime.now(timezone.utc)
+        async def recovery():
+            # A deploy may still hold admission while the new HTTP server
+            # starts. Retry after release instead of deadlocking readiness.
+            while not stop.is_set():
+                try:
+                    count = await reconcile_jobs_before_startup(started_before=boot_time)
+                    logger.info("startup_job_reconciliation completed=%d", count)
+                    return
+                except Exception as exc:
+                    logger.info("startup_job_reconciliation deferred type=%s", type(exc).__name__)
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=30)
+                except TimeoutError:
+                    pass
+        tasks.append(asyncio.create_task(recovery()))
+    if settings.news_chat_enabled:
+        from app.news_chat.service import worker, maintenance
+        tasks.extend(asyncio.create_task(worker(stop)) for _ in range(4))
+        tasks.append(asyncio.create_task(maintenance(stop)))
     from app.contenter import connection_status, sync_loop
     if connection_status(settings)["configured"]:
         tasks.append(asyncio.create_task(sync_loop(settings, stop)))
@@ -557,16 +624,16 @@ async def client_error_report(
     # Browser context is useful for triage, but never trust arbitrary text from
     # the client: it could contain user content, control characters or a
     # username. Restrict it to the same low-risk token alphabet as actions.
-    view = _safe_telemetry_token(payload.get("view"), 80)
-    action = _safe_telemetry_token(payload.get("action")) if kind == "action" else ""
-    phase = _safe_telemetry_token(payload.get("phase")) if kind == "action" else ""
-    outcome = _safe_telemetry_token(payload.get("outcome")) if kind == "action" else ""
-    route = _safe_telemetry_token(payload.get("route"), 96) if kind == "action" else ""
+    view = _telemetry_enum(payload.get("view"), _TELEMETRY_VIEWS)
+    action = _telemetry_enum(payload.get("action"), _TELEMETRY_ACTIONS) if kind == "action" else ""
+    phase = _telemetry_enum(payload.get("phase"), _TELEMETRY_PHASES) if kind == "action" else ""
+    outcome = _telemetry_enum(payload.get("outcome"), _TELEMETRY_OUTCOMES) if kind == "action" else ""
+    route = _telemetry_route(payload.get("route")) if kind == "action" else ""
     status = payload.get("status") if kind == "action" else None
     duration = payload.get("duration_ms") if kind == "action" else None
-    if not isinstance(status, int) or status < 0 or status > 999:
+    if type(status) is not int or status < 0 or status > 999:
         status = 0
-    if not isinstance(duration, int) or duration < 0 or duration > 120_000:
+    if type(duration) is not int or duration < 0 or duration > 120_000:
         duration = 0
     # This is client-side telemetry rather than a server fault.  Keep it out of
     # the warning stream so expected browser reports do not mask real incidents.
@@ -875,6 +942,17 @@ async def admin_asset(asset_name: str) -> FileResponse:
     return FileResponse(_ADMIN_ASSETS_DIR / asset_name, media_type=media_type, headers={"Cache-Control": "public, max-age=86400"})
 
 
+@app.get("/assets/ui/{asset_name}", include_in_schema=False)
+async def trusted_ui_asset(asset_name: str) -> Response:
+    asset = UI_ASSETS.get(asset_name)
+    if asset is None:
+        raise HTTPException(404, "Asset not found")
+    return Response(asset[0], media_type=asset[1], headers={
+        "Cache-Control": "public, max-age=31536000, immutable",
+        "X-Content-Type-Options": "nosniff",
+    })
+
+
 @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
 async def admin_ui(request: Request) -> HTMLResponse:
     # ADMIN_HTML is a trusted static template. Nonces are injected only into
@@ -910,6 +988,7 @@ async def user_password_login_ui(request: Request) -> HTMLResponse:
     )
 
 
+@app.get("/user/news/{publication_id}", response_class=HTMLResponse, include_in_schema=False)
 @app.get("/user", response_class=HTMLResponse, include_in_schema=False)
 async def user_ui(request: Request) -> HTMLResponse:
     """Serve the read-only published-news portal."""
@@ -923,6 +1002,28 @@ async def user_ui(request: Request) -> HTMLResponse:
             "X-Robots-Tag": "noindex, nofollow, noarchive, nosnippet",
         },
     )
+
+
+from app.news_chat.api import router as news_chat_router
+app.include_router(news_chat_router)
+
+
+@app.get("/user/api/publications/{publication_id}/detail")
+async def user_news_detail(publication_id: uuid.UUID, token: str | None = Cookie(default=None, alias=USER_SESSION_COOKIE)):
+    from app.news_chat.service import publication
+    from app.models import ArticleAnalysis, NormalizedArticle, SourceItem, Source
+    from sqlalchemy import select
+    user = await current_reader(token)
+    async with SessionLocal() as session:
+        item = await publication(session, publication_id, user)
+        source_name = await session.scalar(select(Source.name).join(SourceItem, SourceItem.source_id == Source.id)
+            .join(NormalizedArticle, NormalizedArticle.source_item_id == SourceItem.id)
+            .join(ArticleAnalysis, ArticleAnalysis.article_id == NormalizedArticle.id)
+            .where(ArticleAnalysis.id == item.analysis_id, ArticleAnalysis.assistant_id == item.assistant_id,
+                   NormalizedArticle.assistant_id == item.assistant_id, SourceItem.assistant_id == item.assistant_id, Source.assistant_id == item.assistant_id))
+        return {"id": str(item.id), "assistant_id": str(item.assistant_id), "message_text": item.message_text,
+                "source_name": source_name or "",
+                "published_at": item.published_at.isoformat() if item.published_at else None}
 
 
 @app.get("/user/settings", response_class=HTMLResponse, include_in_schema=False)

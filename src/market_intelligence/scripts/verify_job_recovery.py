@@ -3,17 +3,19 @@ import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
+from fastapi import HTTPException
 from sqlalchemy import delete, select
 
 from app.config import get_settings
 from app.database import SessionLocal, engine
+from app.deployment_drain import engine as lease_engine, work_lease
 from app.models import AssistantWorkspace, JobRun
 from app.pipeline_service import expire_abandoned_job_runs
 
 
 async def main():
     cfg = get_settings()
-    if cfg.environment != "test" or cfg.postgres_db != "assistant_test" or cfg.openai_ready or cfg.telegram_ready or cfg.scheduler_enabled:
+    if cfg.environment != "test" or cfg.postgres_db != "assistant_test" or cfg.openai_ready or cfg.telegram_ready or cfg.scheduler_enabled or not cfg.deployment_drain_enabled:
         raise RuntimeError("Refusing non-isolated environment or configured external providers")
     aid = uuid.uuid4()
     now = datetime.now(timezone.utc)
@@ -30,6 +32,17 @@ async def main():
                     idempotency_key=f"recovery:{aid}:{name}", scheduled_for=started, started_at=started,
                     created_at=started, finished_at=finished, attempt=1, result={"input_chars": 123, "fixture": name}))
             await session.commit()
+        async with work_lease(enabled=True):
+            try:
+                await expire_abandoned_job_runs(now=now)
+            except HTTPException as exc:
+                assert exc.status_code == 503
+            else:
+                raise AssertionError("Age-only cleanup stole an admitted execution")
+            async with SessionLocal() as session:
+                original = {name: status for name, status, _, _ in rows}
+                observed = (await session.scalars(select(JobRun).where(JobRun.assistant_id == aid))).all()
+                assert {row.result['fixture']: row.status for row in observed} == original
         await expire_abandoned_job_runs(now=now)
         async with SessionLocal() as session:
             results = (await session.scalars(select(JobRun).where(JobRun.assistant_id == aid))).all()
@@ -46,6 +59,7 @@ async def main():
             await session.execute(delete(AssistantWorkspace).where(AssistantWorkspace.id == aid))
             await session.commit()
         await engine.dispose()
+        await lease_engine.dispose()
 
 
 if __name__ == "__main__":

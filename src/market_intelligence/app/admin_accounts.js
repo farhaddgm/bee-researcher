@@ -40,6 +40,8 @@
     if(!projectControls.length)projects.append(node('p',t('empty'),'accounts-help'));
     const access=node('fieldset',undefined,'accounts-full');access.append(node('legend',t('portal')));form.append(access);
     const portal=check(access,'portal',Boolean(item?.user_portal_access));const feedback=check(access,'feedback',Boolean(item?.user_feedback_access));
+    let newsChat=null;
+    if(owner&&window.BeeNewsChatI18n){const label=node('label',undefined,'accounts-check');newsChat=input('checkbox');newsChat.checked=Boolean(item?.news_chat_access);newsChat.disabled=own||!portal.checked;label.append(newsChat,node('span',window.BeeNewsChatI18n.t('grant')));access.append(label)}
     const portalAllowed=owner||me.stored_role==='admin';
     portal.disabled=own||!portalAllowed||item?.is_owner||role.value==='admin';feedback.disabled=own||!portalAllowed||!portal.checked;
     access.append(node('p',t('portalHint'),'accounts-help'));
@@ -50,6 +52,7 @@
       if(current)current.closest('.accounts-field').hidden=method.value==='google';
       if(role.value==='admin'){portal.checked=true;portal.disabled=true}else portal.disabled=own||!portalAllowed;
       feedback.disabled=own||!portalAllowed||!portal.checked;if(!portal.checked)feedback.checked=false;
+      if(newsChat){newsChat.disabled=own||!portal.checked;if(!portal.checked)newsChat.checked=false}
     }
     method.addEventListener('change',dependencies);role.addEventListener('change',dependencies);portal.addEventListener('change',dependencies);dependencies();
     form.addEventListener('submit',async event=>{
@@ -58,6 +61,7 @@
       if(!item||!item.email)payload.email=email.value.trim();
       if(!own){payload.role=role.value;payload.active=status.value==='true';payload.assistant_ids=projectControls.filter(c=>c.checked).map(c=>c.value);if(portalAllowed){payload.user_portal_access=portal.checked;payload.user_feedback_access=feedback.checked}}
       if(!item)delete payload.active;
+      if(newsChat&&!own)payload.news_chat_access=newsChat.checked;
       if(owner&&!own||!item)payload.login_method=method.value;
       if(password.value&&method.value!=='google'){payload.password=password.value;if(own)payload.current_password=current.value}
       try{

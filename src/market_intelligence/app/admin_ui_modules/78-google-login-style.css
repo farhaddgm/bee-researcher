@@ -1,0 +1,1 @@
+#login.google-only #loginForm{display:none!important}.google-login{display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none}.google-login[hidden]{display:none!important}#googleAccessPanel table{width:100%}#googleAccessPanel td,#googleAccessPanel th{padding:6px 8px;text-align:start}#googleAccessPanel .actions{display:flex;gap:6px;flex-wrap:wrap}

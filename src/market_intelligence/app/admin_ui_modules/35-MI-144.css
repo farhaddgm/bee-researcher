@@ -1,0 +1,16 @@
+
+    /* MI-144: final cascade for the shared header layout. */
+    body.assistant-header-reference .topbar{position:sticky;top:0;height:72px;padding:0 28px;gap:14px;display:flex;align-items:center;direction:inherit;overflow:visible}
+    body.assistant-header-reference .topbar #mobileToggle{position:static;inset:auto;flex:0 0 40px;width:40px;height:40px}
+    body.assistant-header-reference .topbar .topbar-main{position:static;inset:auto;top:auto;width:180px;min-width:180px;height:auto;display:flex;justify-content:center;flex:0 0 180px}
+    body.assistant-header-reference .topbar .workspace-select{position:static;inset:auto;top:auto;width:300px;min-width:190px;height:40px;flex:0 1 300px}
+    body.assistant-header-reference .topbar .global-search{position:relative;inset:auto;top:auto;width:min(300px,28vw);max-width:430px;height:40px;flex:1 1 260px}
+    body.assistant-header-reference .topbar .global-search input{height:40px}
+    body.assistant-header-reference .topbar .top-actions{position:static;inset:auto;top:auto;height:40px;margin-inline-start:auto;display:flex;align-items:center;gap:10px;flex:0 0 auto}
+    body.assistant-header-reference .topbar .language-choice{width:134px;height:40px}
+    body.assistant-header-reference .topbar .language-select{width:126px;min-width:126px;height:32px}
+    body.assistant-header-reference .topbar .icon-btn{width:40px;height:40px;min-width:40px}
+    html[dir="rtl"] body.assistant-header-reference .toast{left:22px;right:auto;inset-inline-start:22px;inset-inline-end:auto}
+    html[dir="ltr"] body.assistant-header-reference .toast{left:auto;right:22px;inset-inline-start:auto;inset-inline-end:22px}
+    @media(max-width:1100px){body.assistant-header-reference .topbar{padding:0 18px;gap:10px}body.assistant-header-reference .topbar .topbar-main{width:150px;min-width:150px;flex-basis:150px}body.assistant-header-reference .topbar .workspace-select{width:210px;flex-basis:210px}body.assistant-header-reference .topbar .global-search{width:auto;flex-basis:180px}}
+    @media(max-width:780px){body.assistant-header-reference .topbar{height:auto;min-height:72px;padding:10px 16px;flex-wrap:wrap}body.assistant-header-reference .topbar #mobileToggle,body.assistant-header-reference .topbar .topbar-main,body.assistant-header-reference .topbar .workspace-select,body.assistant-header-reference .topbar .global-search,body.assistant-header-reference .topbar .top-actions{position:static;inset:auto;flex:0 1 auto}body.assistant-header-reference .topbar .topbar-main{width:auto;min-width:0}.assistant-header-reference .topbar .workspace-select{order:3;width:100%}.assistant-header-reference .topbar .global-search{display:none}.assistant-header-reference .topbar .top-actions{margin-inline-start:auto}}

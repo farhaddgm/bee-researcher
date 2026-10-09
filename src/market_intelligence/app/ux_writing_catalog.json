@@ -440,12 +440,12 @@
   "ذخیره سقف‌ها": {
     "fa": "ذخیره سقف‌ها",
     "en": "Save limits",
-    "tr": "Çatıları kurtarın",
-    "ar": "أنقذوا الأسطح",
-    "it": "Salviamo i tetti",
-    "es": "Salvemos los tejados",
-    "de": "Rettet die Dächer!",
-    "fr": "Sauvez les toits"
+    "tr": "Limitleri kaydet",
+    "ar": "حفظ الحدود",
+    "it": "Salva limiti",
+    "es": "Guardar límites",
+    "de": "Limits speichern",
+    "fr": "Enregistrer les limites"
   },
   "Command palette": {
     "en": "Command palette",
@@ -621,12 +621,12 @@
   "سقف‌های قابل تنظیم برای پروژهٔ انتخاب‌شده؛ فقط مالک می‌تواند آن‌ها را تغییر دهد.": {
     "fa": "سقف‌های قابل تنظیم برای پروژهٔ انتخاب‌شده؛ فقط مالک می‌تواند آن‌ها را تغییر دهد.",
     "en": "Adjustable limits for the selected project; only the owner can change them.",
-    "tr": "Seçilen proje için ayarlanabilir tavanlar; bunları yalnızca sahibi değiştirebilir.",
-    "ar": "أسقف قابلة للتعديل للمشروع المحدد؛ ولا يمكن تغييرها إلا من قبل المالك.",
-    "it": "Soffitti regolabili per il progetto selezionato; solo il proprietario può modificarli.",
-    "es": "Techos regulables para el proyecto seleccionado; solo el propietario puede modificarlos.",
-    "de": "Für das ausgewählte Projekt sind verstellbare Decken vorgesehen; diese können nur vom Eigentümer verändert werden.",
-    "fr": "Plafonds réglables pour le projet sélectionné ; seul le propriétaire peut les modifier."
+    "tr": "Seçilen projenin limitleri yalnızca sahibi tarafından değiştirilebilir.",
+    "ar": "حدود قابلة للتعديل للمشروع المحدد؛ يمكن للمالك فقط تغييرها.",
+    "it": "Limiti configurabili per il progetto selezionato; solo il proprietario può modificarli.",
+    "es": "Límites configurables para el proyecto seleccionado; solo el propietario puede modificarlos.",
+    "de": "Konfigurierbare Limits für das ausgewählte Projekt; nur der Eigentümer kann sie ändern.",
+    "fr": "Limites configurables pour le projet sélectionné ; seul le propriétaire peut les modifier."
   },
   "شناسه یکتا (slug)": {
     "fa": "شناسه یکتا (slug)",
@@ -798,12 +798,12 @@
   "حداکثر رسانه": {
     "fa": "حداکثر رسانه",
     "en": "Maximum media sources",
-    "tr": "Maksimum medya",
-    "ar": "أقصى وسائل الإعلام",
-    "it": "Massima media",
-    "es": "Máximo de medios",
-    "de": "Maximale Medien",
-    "fr": "Médias maximums"
+    "tr": "En fazla kaynak sayısı",
+    "ar": "الحد الأقصى لعدد المصادر",
+    "it": "Numero massimo di fonti",
+    "es": "Número máximo de fuentes",
+    "de": "Maximale Anzahl an Quellen",
+    "fr": "Nombre maximal de sources"
   },
   "رسانه‌ها": {
     "fa": "رسانه‌ها",
@@ -1728,12 +1728,12 @@
   "حداکثر موضوع": {
     "fa": "حداکثر موضوع",
     "en": "Maximum topics",
-    "tr": "Maksimum diş sayısı",
-    "ar": "أقصى خيط",
-    "it": "Filo massimo",
-    "es": "Hilo máximo",
-    "de": "Maximale Gewindesteigung",
-    "fr": "Fil maximum"
+    "tr": "En fazla konu sayısı",
+    "ar": "الحد الأقصى لعدد المواضيع",
+    "it": "Numero massimo di argomenti",
+    "es": "Número máximo de temas",
+    "de": "Maximale Anzahl an Themen",
+    "fr": "Nombre maximal de sujets"
   },
   "عنوان موضوع": {
     "fa": "عنوان موضوع",
@@ -2907,14 +2907,14 @@
     "fr": "Guide de terrain"
   },
   "رخداد بازی برای نمایش نیست.": {
-    "fa": "رخداد بازی برای نمایش نیست.",
-    "en": "No replay event to display.",
-    "tr": "Oyun gösteriş için değil.",
-    "ar": "اللعبة ليست للعرض فقط.",
-    "it": "Il gioco non è uno spettacolo.",
-    "es": "El juego no es un espectáculo.",
-    "de": "Das Spiel ist keine Show.",
-    "fr": "Ce jeu n'est pas un spectacle."
+    "fa": "رخداد بازی وجود ندارد.",
+    "en": "No open incidents.",
+    "tr": "Açık olay yok.",
+    "ar": "لا توجد حوادث مفتوحة.",
+    "it": "Nessun incidente aperto.",
+    "es": "No hay incidentes abiertos.",
+    "de": "Keine offenen Vorfälle.",
+    "fr": "Aucun incident ouvert."
   },
   "رسانه حذف شد": {
     "fa": "رسانه حذف شد",

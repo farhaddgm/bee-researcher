@@ -1,0 +1,47 @@
+[data-ui-css="declaration-0"]{font-size:11px;margin-top:3px}
+[data-ui-css="declaration-1"]{margin-top:14px}
+[data-ui-css="declaration-2"]{min-width:0}
+[data-ui-css="declaration-3"]{margin-top:12px}
+[data-ui-css="declaration-4"]{max-width:70%;text-align:left}
+[data-ui-css="declaration-5"]{align-items:center}
+[data-ui-css="declaration-6"]{margin-top:10px}
+[data-ui-css="declaration-7"]{margin-top:8px}
+[data-ui-css="declaration-8"]{cursor:grab;margin-top:8px}
+[data-ui-css="declaration-9"]{font-size:11px}
+[data-ui-css="declaration-10"]{margin-bottom:8px}
+[data-ui-css="declaration-11"]{overflow-x:auto}
+[data-ui-css="declaration-12"]{margin-top:24px}
+[data-ui-css="declaration-13"]{display:flex;align-items:center;gap:8px}
+[data-ui-css="declaration-14"]{margin-inline-start:12px}
+[data-ui-css="declaration-15"]{align-items:flex-start}
+[data-ui-css="declaration-16"]{grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+[data-ui-css="declaration-17"]{display:block;margin-top:7px;font-size:11px}
+[data-ui-css="declaration-18"]{margin-top:10px;margin-bottom:0}
+[data-ui-css="declaration-19"]{margin-top:4px}
+[data-ui-css="declaration-20"]{display:block}
+[data-ui-css="declaration-21"]{display:flex;justify-content:space-between;gap:12px}
+[data-ui-css="detail-value-wide"]{max-width:75%;text-align:start}
+.theme-choice{padding:16px;text-align:start;border:2px solid var(--line);background:var(--panel)}
+.theme-choice[aria-pressed="true"]{border-color:var(--primary)}
+[data-theme-swatch]{display:inline-block;width:18px;height:18px;border-radius:50%;vertical-align:middle;margin-inline-end:8px}
+[data-theme-swatch="default"]{background:#2457d6}
+[data-theme-swatch="honey"]{background:#b66a08}
+[data-theme-swatch="system"],[data-theme-swatch="slate"]{background:#64748b}
+[data-theme-swatch="light"]{background:#2457d6}
+[data-theme-swatch="dark"]{background:#1f2937}
+[data-theme-swatch="forest"]{background:#19735b}
+[data-theme-swatch="blackyellow"]{background:#171717}
+[data-theme-swatch="red"]{background:#d83a56}
+.appearance-theme-swatch[data-theme-swatch="system"]{background:linear-gradient(135deg,#eef3fb 50%,#17243f 50%)}
+.appearance-theme-swatch[data-theme-swatch="light"]{background:#f8fafc}
+.appearance-theme-swatch[data-theme-swatch="dark"]{background:#17243f}
+.appearance-theme-swatch[data-theme-swatch="honey"]{background:#f5b942}
+.appearance-theme-swatch[data-theme-swatch="forest"]{background:#237a57}
+.appearance-theme-swatch[data-theme-swatch="blackyellow"]{background:linear-gradient(135deg,#111827 50%,#f5c542 50%)}
+.appearance-theme-swatch[data-theme-swatch="red"]{background:#c7364c}
+[data-accent="blue"]{background:#2457d6}
+[data-accent="teal"]{background:#0a8f83}
+[data-accent="purple"]{background:#7b61d8}
+[data-accent="orange"]{background:#b66a08}
+[data-accent="red"]{background:#d83a56}
+[data-accent="gray"]{background:#64748b}

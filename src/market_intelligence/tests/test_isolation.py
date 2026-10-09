@@ -82,6 +82,9 @@ class IsolationTest(unittest.TestCase):
                 "market_intelligence.bee_cfo_infrastructure_audits",
                 "market_intelligence.bee_cfo_governance_events",
                 "market_intelligence.support_tickets",
+                "market_intelligence.news_chat_policy",
+                "market_intelligence.news_chat_conversations",
+                "market_intelligence.news_chat_generations",
             },
             set(Base.metadata.tables),
         )

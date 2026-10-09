@@ -160,6 +160,12 @@ class Settings(BaseSettings):
     csp_report_uri: str = "/admin/api/security/csp-report"
 
     openai_api_key: SecretStr | None = None
+    # Interactive reader chat is opt-in and never changes pipeline models.
+    news_chat_enabled: bool = False
+    news_chat_anthropic_key: SecretStr | None = None
+    news_chat_google_key: SecretStr | None = None
+    news_chat_timeout_seconds: int = Field(default=90, ge=10, le=180)
+    news_chat_retention_days: int = Field(default=30, ge=1, le=90)
     telegram_bot_token: SecretStr | None = None
     # Dedicated source credentials are environment-only. The back-office
     # stores a reference name, never the secret itself.

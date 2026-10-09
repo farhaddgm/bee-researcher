@@ -1,0 +1,13 @@
+
+    /* Keep either shell out of the first paint until the session check has
+       completed; this prevents a login-form flash during a hard refresh. */
+    html.session-checking #login,html.session-checking #app{visibility:hidden!important}
+    /* Locale is committed atomically.  While the authenticated shell or a
+       language change is being reconciled, keep the old/new copy from
+       flashing for a frame.  The release hooks below remove the class only
+       after the final locale pass has completed. */
+    html.locale-pending #app,html.locale-switching #app,html.locale-switching #login{visibility:hidden!important}
+    /* The legacy text mark is hidden before the body is painted.  The same
+       brand asset is preloaded above and used as the first-frame fallback. */
+    .login-card .logo{min-height:130px;background:url('/assets/bee-researcher-grey.svg') center/contain no-repeat;font-size:0}
+    .login-card .logo .logo-mark,.login-card .logo>span{display:none!important}

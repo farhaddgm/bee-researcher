@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from fastapi import HTTPException
 from redis.asyncio import Redis
 
 from app.config import TIME_PATTERN, Settings
@@ -671,10 +672,22 @@ async def scheduler_loop(settings: Settings, stop: asyncio.Event) -> None:
             try:
                 now = datetime.now(timezone.utc)
                 if reconciled_at is None or now - reconciled_at >= timedelta(hours=1):
-                    expired = await expire_abandoned_job_runs(now=now)
+                    try:
+                        expired = await expire_abandoned_job_runs(now=now)
+                    except HTTPException as exc:
+                        if exc.status_code != 503:
+                            raise
+                        # Cleanup may defer while any admitted work is live;
+                        # that must not starve normal scheduled collection.
+                        expired = 0
+                        _log_runtime_event("abandoned_jobs_cleanup_deferred")
+                    from app.freshness_notifications import deliver_freshness_notifications
+                    delivered = await deliver_freshness_notifications()
                     reconciled_at = now
                     if expired:
                         _log_runtime_event("abandoned_jobs_reconciled", count=expired)
+                    if delivered:
+                        _log_runtime_event("freshness_alert_delivered", count=delivered)
                 result = await scheduler_tick(settings)
                 STATUS.last_scheduler_tick = datetime.now(timezone.utc).isoformat()
                 STATUS.last_scheduler_error = None

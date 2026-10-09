@@ -1,0 +1,50 @@
+
+    /* MI-209: the Support workspace owns one predictable layout.  These
+       rules are intentionally late in the cascade so legacy support layers
+       cannot stretch cards or make the form and queue drift apart. */
+    #view-support.support-shell{width:100%;max-width:1320px;margin-inline:auto}
+    #view-support.support-shell .support-v2-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:stretch}
+    #view-support.support-shell .support-v2-grid>.section-card{height:100%;min-height:0}
+    #view-support.support-shell .support-compose-card,#view-support.support-shell .support-queue-card{display:flex;flex-direction:column}
+    #view-support.support-shell .support-compose-card form{flex:1;align-content:start}
+    #view-support.support-shell .support-queue-card .support-ticket-list{flex:1;min-height:140px}
+    #view-support.support-shell .support-owner-card{width:100%;box-sizing:border-box}
+    @media(max-width:1120px){#view-support.support-shell .support-v2-grid{grid-template-columns:1fr}}
+    @media(max-width:620px){#view-support.support-shell .support-v2-grid>.section-card{height:auto}}
+    /* Static safety net for browsers that delay or reject the dynamic v2
+       stylesheet. The Support view must never expose its HTML as an
+       unformatted stream while the dynamic layer is being attached. */
+    #view-support.support-shell .support-v2-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:18px}
+    #view-support.support-shell .support-title-wrap{display:flex;align-items:flex-start;gap:10px;min-width:0}
+    #view-support.support-shell .support-title-wrap h2{margin:0 0 6px}
+    #view-support.support-shell .support-title-wrap p{margin:0;color:var(--muted);font-size:12px;line-height:1.8}
+    #view-support.support-shell .support-page-mark{display:grid;place-items:center;flex:0 0 20px;width:20px;height:20px;border:1px solid var(--muted);border-radius:50%;color:var(--muted);font:italic 700 12px Georgia,serif}
+    #view-support.support-shell .support-summary{display:grid;grid-template-columns:minmax(190px,1.25fr) repeat(4,minmax(100px,1fr));gap:10px;margin-bottom:16px}
+    #view-support.support-shell .support-summary-head,#view-support.support-shell .support-summary-item{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:58px;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+    #view-support.support-shell .support-summary-head{display:grid;align-content:center;justify-items:start;background:color-mix(in srgb,var(--primary) 8%,var(--panel));border-color:color-mix(in srgb,var(--primary) 22%,var(--line))}
+    #view-support.support-shell .support-summary-head span,#view-support.support-shell .support-summary-item span{font-size:11px;color:var(--muted)}
+    #view-support.support-shell .support-summary-head b,#view-support.support-shell .support-summary-item strong{font-size:18px;color:var(--ink)}
+    #view-support.support-shell .support-summary-grid{display:contents}
+    #view-support.support-shell .support-compose-card,#view-support.support-shell .support-queue-card{min-width:0;padding:22px;border-top:3px solid var(--primary)}
+    #view-support.support-shell .support-queue-card{border-top-color:var(--teal)}
+    #view-support.support-shell .support-compose-hint,#view-support.support-shell .support-queue-hint{margin:5px 0 0;color:var(--muted);font-size:11px;line-height:1.8}
+    #view-support.support-shell .support-compose-card form{display:grid;gap:14px}
+    #view-support.support-shell .support-compose-card .field{display:grid;gap:7px}
+    #view-support.support-shell .support-compose-card input,#view-support.support-shell .support-compose-card select,#view-support.support-shell .support-compose-card textarea,#view-support.support-shell .support-queue-card input,#view-support.support-shell .support-queue-card select{width:100%;box-sizing:border-box}
+    #view-support.support-shell .support-compose-card textarea{min-height:142px;resize:vertical;line-height:1.75}
+    #view-support.support-shell .support-priority-buttons{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+    #view-support.support-shell .support-priority-button{min-height:36px;border:1px solid var(--line);border-radius:9px;background:var(--panel);color:var(--muted);font:inherit;font-size:11px;cursor:pointer}
+    #view-support.support-shell .support-priority-button.active{border-color:var(--primary);background:color-mix(in srgb,var(--primary) 10%,var(--panel));color:var(--primary);font-weight:700}
+    #view-support.support-shell .support-submit-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding-top:2px}
+    #view-support.support-shell .support-toolbar{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:8px;margin:3px 0 10px}
+    #view-support.support-shell .support-search{position:relative;display:block;min-width:0}
+    #view-support.support-shell .support-search input{padding-inline-end:38px}
+    #view-support.support-shell .support-search-clear{display:none;position:absolute;inset-inline-end:6px;top:5px;width:30px;height:30px;place-items:center;border:0;border-radius:8px;background:transparent;color:var(--muted);font:inherit;font-size:18px;cursor:pointer}
+    #view-support.support-shell .support-search-clear.visible{display:grid}
+    #view-support.support-shell .support-filter-tabs{display:flex;align-items:center;gap:3px;overflow:auto;margin-bottom:12px;border-bottom:1px solid var(--line)}
+    #view-support.support-shell .support-filter-tab{flex:0 0 auto;border:0;border-bottom:2px solid transparent;background:transparent;color:var(--muted);padding:8px 9px;font:inherit;font-size:11px;cursor:pointer;white-space:nowrap}
+    #view-support.support-shell .support-filter-tab.active{border-bottom-color:var(--primary);color:var(--primary);font-weight:700}
+    #view-support.support-shell .support-ticket-list{display:grid;gap:9px;max-height:620px;overflow:auto;padding:1px 2px 2px}
+    #view-support.support-shell .support-state{padding:32px 16px;border:1px dashed var(--line);border-radius:11px;color:var(--muted);font-size:12px;text-align:center;line-height:2}
+    @media(max-width:1120px){#view-support.support-shell .support-summary{grid-template-columns:repeat(4,minmax(100px,1fr))}#view-support.support-shell .support-summary-head{grid-column:1/-1}}
+    @media(max-width:620px){#view-support.support-shell .support-summary{grid-template-columns:repeat(2,minmax(0,1fr))}#view-support.support-shell .support-summary-head{grid-column:1/-1}#view-support.support-shell .support-toolbar{grid-template-columns:1fr}#view-support.support-shell .support-priority-buttons{grid-template-columns:repeat(2,minmax(0,1fr))}#view-support.support-shell .support-v2-head{display:grid;gap:12px}}

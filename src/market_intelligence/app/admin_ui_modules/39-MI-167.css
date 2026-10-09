@@ -1,0 +1,36 @@
+
+    /* MI-167/169/173: consistent canvas gutters and resilient compact cards. */
+    :root{--page-gutter:clamp(18px,3vw,44px)}
+    .content,.topbar{padding-inline:var(--page-gutter)!important}
+    #view-content .news-list-tools{display:none!important}
+    /* News queue: keep the title column compact so every field stays aligned
+       and readable at desktop widths.  The first header is optional (bulk
+       selection); data columns are explicitly sized by their semantic index. */
+    #view-content table{table-layout:fixed;min-width:1080px}
+    /* Keep the header and every body cell on the same six-column grid.  A
+       fixed table without an explicit selection width lets the browser give
+       the checkbox column part of the title width, which is why headers drift
+       or wrap over the first row at common desktop sizes. */
+    #view-content table th[data-publication-column="0"],#view-content table td.publication-news-cell{width:34%;min-width:0;max-width:0}
+    #view-content table th[data-publication-column="1"]{width:14%}
+    #view-content table th[data-publication-column="2"]{width:12%}
+    #view-content table th[data-publication-column="3"]{width:15%}
+    #view-content table th[data-publication-column="4"]{width:12.5%}
+    #view-content table th[data-publication-column="5"]{width:12.5%}
+    #view-content table th[data-publication-select-all]{width:44px;min-width:44px;max-width:44px}
+    #view-content table th[data-publication-column]{white-space:normal;line-height:1.45;text-align:start}
+    #view-content table td{min-width:0}
+    #view-content table td.publication-news-cell .btn{display:block;width:100%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    /* Desktop collapse changes only the shell column.  Inner views keep their
+       own responsive grids and controls; forcing an Assistant-only grid here
+       made cards and buttons resize differently from every other page. */
+    @media(min-width:781px){
+      .shell.sidebar-collapsed .main,.shell.sidebar-collapsed .content,.shell.sidebar-collapsed .view,.shell.sidebar-collapsed .grid,.shell.sidebar-collapsed .card,.shell.sidebar-collapsed .page-head{min-width:0}
+      .shell.sidebar-collapsed .content{width:100%;max-width:1600px}
+      .shell.sidebar-collapsed .table-wrap{max-width:100%;min-width:0}
+      .shell.sidebar-collapsed .topbar{min-width:0}
+      .shell.sidebar-collapsed .card-actions,.shell.sidebar-collapsed .table-actions{min-width:0}
+      .shell.sidebar-collapsed .card-actions .btn,.shell.sidebar-collapsed .table-actions .btn{min-width:0}
+    }
+    .appearance-theme-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.appearance-theme-card{display:grid;gap:7px;padding:11px;border:1px solid var(--line);border-radius:12px;background:var(--panel);cursor:pointer;text-align:start}.appearance-theme-card:hover,.appearance-theme-card.active{border-color:var(--primary);box-shadow:0 0 0 2px color-mix(in srgb,var(--primary) 18%,transparent)}.appearance-theme-swatch{height:30px;border-radius:8px}.appearance-theme-card small{color:var(--muted)}
+    @media(max-width:780px){.content,.topbar{padding-inline:16px!important}.appearance-theme-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
