@@ -38,7 +38,7 @@ def main():
     parser.add_argument('--artifacts',type=Path,help='Optional directory for synthetic UI screenshots')
     args=parser.parse_args()
     suffix=uuid.uuid4().hex[:12];net='bee-news-chat-test-'+suffix
-    names={k:'bee-news-chat-'+k+'-'+suffix for k in ('pg','redis','app')}
+    names={k:'bee-news-chat-'+k+'-'+suffix for k in ('pg','redis','app','startup')}
     containers=[];network=False
     with tempfile.TemporaryDirectory(prefix='bee-news-chat-browser-') as tools:
         try:
@@ -66,6 +66,40 @@ def main():
             common=['--network',net,'-w','/app']
             for key,value in env.items():common.extend(['-e',f'MARKET_INTELLIGENCE_{key}={value}'])
             run('run','--rm','--entrypoint','alembic',*common,args.image,'upgrade','head')
+            # Exercise the ACTUAL image CMD in production mode. UI fixtures
+            # override that CMD and otherwise hide broken startup preflights.
+            run('run','--rm','--entrypoint','python',*common,args.image,'scripts/seed_runtime_boot_sql.py')
+            run('exec',names['redis'],'redis-cli','-a','synthetic-chat-redis-fixture','ACL','SETUSER',
+                'startup-fixture','on','>synthetic-startup-redis-fixture','~*','+@all',capture=True)
+            startup=dict(env)
+            startup.update({'ENVIRONMENT':'production','ADMIN_COOKIE_SECURE':'true','POSTGRES_USER':'startup_fixture',
+                'POSTGRES_PASSWORD':'synthetic-startup-database-fixture','REDIS_USERNAME':'startup-fixture',
+                'REDIS_PASSWORD':'synthetic-startup-redis-fixture','NEWS_CHAT_ENABLED':'false',
+                'OPENAI_API_KEY':'','NEWS_CHAT_ANTHROPIC_KEY':'','NEWS_CHAT_GOOGLE_KEY':'',
+                'CSRF_SIGNING_SECRET':'synthetic-csrf-startup-secret-at-least-32',
+                'MFA_ENCRYPTION_SECRET':'synthetic-encryption-startup-secret-at-least-32',
+                'GOOGLE_CLIENT_ID':'synthetic-startup.apps.googleusercontent.com',
+                'GOOGLE_CLIENT_SECRET':'synthetic-startup-google-client-secret',
+                'GOOGLE_REDIRECT_URI':'https://startup-fixture.invalid/auth/google/callback',
+                'DOMAIN':'startup-fixture.invalid','ADMIN_BOOTSTRAP_USERNAME':'chat-owner',
+                'ADMIN_BOOTSTRAP_PASSWORD':'synthetic violet herons cross mountain lakes'})
+            startup_options=['--network',net,'--read-only','--tmpfs','/tmp:size=32m,mode=1777',
+                '--cap-drop','ALL','--security-opt','no-new-privileges:true']
+            for key,value in startup.items():startup_options.extend(['-e',f'MARKET_INTELLIGENCE_{key}={value}'])
+            run('run','-d','--name',names['startup'],*startup_options,args.image,capture=True)
+            containers.append(names['startup'])
+            probe="import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8010/health',timeout=2); assert r.status==200; assert json.load(r)['status']=='healthy'"
+            for attempt in range(60):
+                check=subprocess.run(['docker','exec',names['startup'],'python','-c',probe],capture_output=True)
+                if check.returncode==0:break
+                state=run('inspect','--format','{{.State.Running}}',names['startup'],capture=True).stdout.strip()
+                if state!='true' or attempt==59:
+                    # Every value in this disposable fixture is synthetic.
+                    diagnostics=run('logs','--tail','60',names['startup'],capture=True)
+                    raise RuntimeError('Actual startup CMD failed: '+diagnostics.stdout+diagnostics.stderr)
+                time.sleep(.5)
+            run('stop','--time','30',names['startup'],capture=True)
+            print('Actual production startup CMD passed with restricted PostgreSQL/Redis identities, OAuth prerequisites and 0045 schema.')
             run('run','-d','--name',names['app'],'--entrypoint','python',*common,args.image,'scripts/news_chat_fixture.py',capture=True);containers.append(names['app'])
             artifacts=[]
             if args.artifacts:
