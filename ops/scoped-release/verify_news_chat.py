@@ -1,6 +1,7 @@
 """Reproducible isolated chat acceptance gate; no runtime secrets or production DB."""
 from __future__ import annotations
 import argparse
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,6 +11,19 @@ import uuid
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "src/market_intelligence"
 PW = "mcr.microsoft.com/playwright:v1.55.1-noble"
+
+
+def browser_mounts(modules):
+    # Sibling mounts keep ESM's parent-directory resolution without requiring
+    # Docker to mkdir node_modules inside the read-only source mount.
+    return ['-w', '/harness/source', '-v', f'{SOURCE}:/harness/source:ro',
+            '-v', f'{modules}:/harness/node_modules:ro']
+
+
+def installer_options(directory):
+    # The caller must own temporary files so cleanup works on non-root CI.
+    return ['--user', f'{os.getuid()}:{os.getgid()}',
+            '-e', 'npm_config_cache=/tmp/bee-npm-cache', '-v', f'{directory}:/tools']
 
 
 def run(*args, timeout=300, capture=False):
@@ -30,7 +44,7 @@ def main():
         try:
             modules=args.node_modules.resolve() if args.node_modules else Path(tools)/'node_modules'
             if not args.node_modules:
-                run('run','--rm','--entrypoint','npm','-v',f'{tools}:/tools',PW,'install','--prefix','/tools','--ignore-scripts','--no-audit','--no-fund','playwright@1.55.1','@axe-core/playwright@4.11.0')
+                run('run','--rm','--entrypoint','npm',*installer_options(tools),PW,'install','--prefix','/tools','--ignore-scripts','--no-audit','--no-fund','playwright@1.55.1','@axe-core/playwright@4.11.0')
             run('network','create','--internal',net,capture=True);network=True
             run('run','-d','--name',names['pg'],'--network',net,'-e','POSTGRES_DB=news_chat_test','-e','POSTGRES_USER=news_chat_test','-e','POSTGRES_PASSWORD=synthetic-chat-database-fixture','postgres:17.10-alpine',capture=True);containers.append(names['pg'])
             run('run','-d','--name',names['redis'],'--network',net,'redis:7.4.9-alpine','redis-server','--requirepass','synthetic-chat-redis-fixture',capture=True);containers.append(names['redis'])
@@ -59,11 +73,11 @@ def main():
                 artifacts=['-v',f'{output}:/artifacts','-e','BEE_CHAT_ARTIFACT_DIR=/artifacts']
             # Loopback provides a trustworthy browser context for native
             # clipboard APIs. It still has no host ports or Internet route.
-            run('run','--rm','--entrypoint','node','--network','container:'+names['app'],'-w','/app','-v',f'{SOURCE}:/app:ro','-v',f'{modules}:/app/node_modules:ro',*artifacts,
+            run('run','--rm','--entrypoint','node','--network','container:'+names['app'],*browser_mounts(modules),*artifacts,
                 '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test','-e','BEE_CHAT_TEST_URL=http://127.0.0.1:8010',PW,'scripts/verify_news_chat.mjs')
             # The new optional surface must not break the existing Reader
             # settings, focus trap, text direction or notification preferences.
-            run('run','--rm','--entrypoint','node','--network',net,'-w','/app','-v',f'{SOURCE}:/app:ro','-v',f'{modules}:/app/node_modules:ro',
+            run('run','--rm','--entrypoint','node','--network',net,*browser_mounts(modules),
                 '-e',f'BEE_USER_URL=http://{names["app"]}:8010/user','-e','MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_USERNAME=chat-owner',
                 '-e','MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_PASSWORD=synthetic violet herons cross mountain lakes',PW,'scripts/verify_user_portal.mjs')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_news_chat_sql.py')
@@ -72,8 +86,7 @@ def main():
             # ticket conversations, locale rendering and keyboard semantics.
             for script in ('verify_admin_support.mjs', 'verify_admin_catalog_viewports.mjs',
                            'verify_admin_locales.mjs', 'verify_admin_accessibility.mjs'):
-                run('run','--rm','--entrypoint','node','--network',net,'-w','/app',
-                    '-v',f'{SOURCE}:/app:ro','-v',f'{modules}:/app/node_modules:ro',
+                run('run','--rm','--entrypoint','node','--network',net,*browser_mounts(modules),
                     '-e',f'BEE_ADMIN_URL=http://{names["app"]}:8010/admin',
                     '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test',
                     '-e','MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_USERNAME=chat-owner',
