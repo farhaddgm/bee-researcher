@@ -15,6 +15,21 @@ REF = "ghcr.io/farhaddgm/bee-researcher-market-intelligence@sha256:" + "b" * 64
 
 
 class ScopedReleaseTests(unittest.TestCase):
+    def test_new_release_restores_verified_image_cmd_not_inherited_rollback(self):
+        image={"Config":{"Cmd":["./start-service.sh"]}}
+        with patch.object(release,'inspect',return_value=image) as inspect:
+            service=release.production_service(REF,{"MARKET_INTELLIGENCE_VERSION":"3.40.0"})
+        inspect.assert_called_once_with(REF)
+        self.assertEqual(service['command'],['./start-service.sh'])
+        self.assertEqual(service['image'],REF)
+        self.assertEqual(service['environment']['MARKET_INTELLIGENCE_VERSION'],'3.40.0')
+
+    def test_missing_candidate_cmd_is_refused_before_cutover(self):
+        for command in (None,[],"./start-service.sh",[None],[""]):
+            with patch.object(release,'inspect',return_value={"Config":{"Cmd":command}}):
+                with self.assertRaisesRegex(RuntimeError,'explicit startup command'):
+                    release.production_service(REF,{})
+
     def test_legacy_rollback_keeps_auth_and_forward_schema_without_migrating(self):
         current={"Image":"old-image","Config":{"Labels":{"org.opencontainers.image.version":"3.39.1"}}}
         service=release.rollback_service(current,{"MARKET_INTELLIGENCE_VERSION":"3.39.1"},"3.40.0")
@@ -203,7 +218,7 @@ class ScopedReleaseTests(unittest.TestCase):
                 "MARKET_INTELLIGENCE_POSTGRES_USER=bee_researcher_runtime", "MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED=true",
                 "MARKET_INTELLIGENCE_POSTGRES_PASSWORD=synthetic$not-a-real-secret", "UNRELATED_SERVICE_TOKEN=not-copied"]},
                 "HostConfig": {"ReadonlyRootfs": True, "CapDrop": ["ALL"]}}
-            live = {"Image": "new-image", "Config": {"User": "market-intelligence"}}
+            live = {"Image": "new-image", "Config": {"User": "market-intelligence", "Cmd": ["./start-service.sh"]}}
             controller = Mock(returncode=0)
             controller.stdout.readline.return_value = "RESEARCHER_DRAINED\n"
             controller.poll.return_value = 0
@@ -221,7 +236,7 @@ class ScopedReleaseTests(unittest.TestCase):
             controller.communicate.side_effect = released
             args = SimpleNamespace(image=REF, revision=REV, version="3.39.1", expected_current_revision=REV)
             with patch.object(release, "ROOT", root), patch.object(release, "candidate", return_value="new-image"), \
-                    patch.object(release, "inspect", side_effect=[current, {"State": {"ExitCode": 0}}, live]), \
+                    patch.object(release, "inspect", side_effect=[current, {"Config":{"Cmd":["./start-service.sh"]}}, {"State": {"ExitCode": 0}}, live]), \
                     patch.object(release, "compose_command", return_value=["docker", "compose"]), \
                     patch.object(release, "run", return_value=""), patch.object(release, "verify_shutdown", return_value={"exit_code": 143}), patch.object(release, "wait_health", side_effect=readiness), \
                     patch.object(release.subprocess, "Popen", return_value=controller), \
@@ -231,6 +246,7 @@ class ScopedReleaseTests(unittest.TestCase):
             controller.communicate.assert_called_once_with("release\n", timeout=30)
             overrides = list((root / "ops/bee-researcher-direct/private").glob("*/production.override.json"))
             self.assertEqual(len(overrides), 1)
+            self.assertEqual(json.loads(overrides[0].read_text())["services"]["market-intelligence"]["command"],["./start-service.sh"])
             self.assertEqual(overrides[0].stat().st_mode & 0o777, 0o600)
             env = json.loads(overrides[0].read_text())["services"]["market-intelligence"]["environment"]
             self.assertEqual(env["MARKET_INTELLIGENCE_POSTGRES_PASSWORD"], "synthetic$$not-a-real-secret")
@@ -271,7 +287,7 @@ class ScopedReleaseTests(unittest.TestCase):
             controller.communicate.side_effect = released
             args = SimpleNamespace(image=REF, revision=REV, version="3.39.1", expected_current_revision=REV)
             with patch.object(release, "ROOT", root), patch.object(release, "candidate", return_value="new-image"), \
-                    patch.object(release, "inspect", side_effect=[current, {"State": {"ExitCode": 0}}]), \
+                    patch.object(release, "inspect", side_effect=[current, {"Config":{"Cmd":["./start-service.sh"]}}, {"State": {"ExitCode": 0}}]), \
                     patch.object(release, "compose_command", return_value=["docker", "compose"]), \
                     patch.object(release, "run", return_value=""), patch.object(release, "verify_shutdown", return_value={"exit_code": 143}), patch.object(release, "wait_health", side_effect=readiness), \
                     patch.object(release.subprocess, "Popen", return_value=controller), \

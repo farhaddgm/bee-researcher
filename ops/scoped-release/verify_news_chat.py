@@ -35,6 +35,14 @@ def installer_options(directory):
             '-e', 'npm_config_cache=/tmp/bee-npm-cache', '-v', f'{directory}:/tools']
 
 
+def startup_healthcheck_options():
+    # Production receives this readiness-bound healthcheck from Compose,
+    # not Dockerfile. Plain docker run must reproduce it explicitly.
+    return ['--health-cmd', 'python -c "import urllib.request; urllib.request.urlopen(\'http://127.0.0.1:8010/ready\',timeout=2)"',
+            '--health-interval', '15s', '--health-timeout', '5s',
+            '--health-start-period', '30s', '--health-retries', '10']
+
+
 def run(*args, timeout=300, capture=False):
     return subprocess.run(["docker", *map(str,args)],check=True,timeout=timeout,
                           text=True,capture_output=capture)
@@ -104,7 +112,7 @@ def main():
             containers.append(names['drain'])
             if not select.select([controller.stdout],[],[],45)[0] or controller.stdout.readline().strip()!='RESEARCHER_DRAINED':
                 raise RuntimeError('Isolated startup admission barrier did not become ready')
-            run('run','-d','--name',names['startup'],*startup_options,args.image,capture=True)
+            run('run','-d','--name',names['startup'],*startup_options,*startup_healthcheck_options(),args.image,capture=True)
             containers.append(names['startup'])
             probe="import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8010/health',timeout=2); assert r.status==200; assert json.load(r)['status']=='healthy'"
             for attempt in range(60):
