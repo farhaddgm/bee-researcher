@@ -123,7 +123,13 @@ def wait_health(revision, version, *, timeout=120, ready_required=True):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         container = inspect(APP)
-        if container["State"].get("Health", {}).get("Status") == "healthy":
+        # Docker itself probes /ready. Requiring Docker healthy before
+        # releasing admission is the SAME scheduler-heartbeat deadlock as
+        # directly querying /ready. During drain, independently require a
+        # running container, bound source and public /health instead. The
+        # normal final gate still requires both Docker healthy and /ready.
+        state = container["State"]
+        if state.get("Running") and (not ready_required or state.get("Health", {}).get("Status") == "healthy"):
             if container["Config"]["Labels"].get("org.opencontainers.image.revision") != revision:
                 raise RuntimeError("running source binding mismatch")
             try:

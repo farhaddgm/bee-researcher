@@ -137,7 +137,7 @@ class ScopedReleaseTests(unittest.TestCase):
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         response.read.return_value = json.dumps({"version": "3.39.1"}).encode()
-        container = {"State": {"Health": {"Status": "healthy"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV}}}
+        container = {"State": {"Running": True, "Health": {"Status": "healthy"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV}}}
         with patch.object(release, "inspect", return_value=container), patch.object(release.urllib.request, "urlopen", return_value=response):
             release.wait_health(REV, "3.39.1")
             with self.assertRaises(RuntimeError):
@@ -148,7 +148,7 @@ class ScopedReleaseTests(unittest.TestCase):
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         response.read.return_value = json.dumps({"version": "3.39.1"}).encode()
-        container = {"State": {"Health": {"Status": "healthy"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV}}}
+        container = {"State": {"Running": True, "Health": {"Status": "healthy"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV}}}
         starting = urllib.error.HTTPError("https://researcher.beeproject.ir/ready", 503, "starting", {}, None)
         with patch.object(release, "inspect", return_value=container), patch.object(release.time, "sleep"), \
                 patch.object(release.urllib.request, "urlopen", side_effect=[response, starting, response, response]) as request:
@@ -160,10 +160,38 @@ class ScopedReleaseTests(unittest.TestCase):
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         response.read.return_value = json.dumps({"version": "3.39.1"}).encode()
-        container = {"State": {"Health": {"Status": "healthy"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV}}}
+        container = {"State": {"Running": True, "Health": {"Status": "starting"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV},"Healthcheck":{"Test":["CMD","probe /ready"]}}}
         with patch.object(release, "inspect", return_value=container), patch.object(release.urllib.request, "urlopen", return_value=response) as request:
             release.wait_health(REV, "3.39.1", ready_required=False)
             request.assert_called_once_with("https://researcher.beeproject.ir/health", timeout=15)
+
+    def test_final_readiness_still_requires_docker_healthy_and_public_ready(self):
+        starting={"State":{"Running":True,"Health":{"Status":"starting"}},"Config":{"Labels":{"org.opencontainers.image.revision":REV}}}
+        healthy={**starting,"State":{"Running":True,"Health":{"Status":"healthy"}}}
+        response=Mock()
+        response.__enter__=Mock(return_value=response)
+        response.__exit__=Mock(return_value=False)
+        response.read.return_value=json.dumps({"version":"3.40.0"}).encode()
+        with patch.object(release,'inspect',side_effect=[starting,healthy]) as inspect, \
+                patch.object(release.time,'sleep'),patch.object(release.urllib.request,'urlopen',return_value=response) as request:
+            release.wait_health(REV,'3.40.0',ready_required=True)
+        self.assertEqual(inspect.call_count,2)
+        self.assertEqual([call.args[0] for call in request.call_args_list],['https://researcher.beeproject.ir/health','https://researcher.beeproject.ir/ready'])
+
+    def test_starting_liveness_never_accepts_another_source_commit(self):
+        container={"State":{"Running":True,"Health":{"Status":"starting"}},"Config":{"Labels":{"org.opencontainers.image.revision":"c"*40}}}
+        with patch.object(release,'inspect',return_value=container),patch.object(release.urllib.request,'urlopen') as request:
+            with self.assertRaisesRegex(RuntimeError,'source binding'):
+                release.wait_health(REV,'3.40.0',ready_required=False)
+        request.assert_not_called()
+
+    def test_stopped_container_never_passes_liveness(self):
+        container={"State":{"Running":False,"Health":{"Status":"healthy"}}}
+        with patch.object(release,'inspect',return_value=container), \
+                patch.object(release.time,'monotonic',side_effect=[0,0,2]),patch.object(release.time,'sleep'), \
+                patch.object(release.urllib.request,'urlopen') as request:
+            with self.assertRaises(TimeoutError):release.wait_health(REV,'3.40.0',timeout=1,ready_required=False)
+        request.assert_not_called()
 
     def test_atomic_cutover_releases_admission_before_full_readiness(self):
         with tempfile.TemporaryDirectory() as directory:
