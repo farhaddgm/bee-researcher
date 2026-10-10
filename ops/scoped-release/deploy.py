@@ -152,7 +152,11 @@ def wait_health(revision, version, *, timeout=120, ready_required=True):
                             raise RuntimeError("public route is serving the wrong version")
                 return
             except urllib.error.HTTPError as exc:
-                if exc.code != 503:
+                # Docker running does not imply Uvicorn is listening yet.
+                # A reverse proxy emits 502/504 during this bounded cutover,
+                # including rollback. Do not retry auth/rate-limit/wrong-route
+                # errors or accept a mismatched version/source.
+                if exc.code not in {502, 503, 504}:
                     raise
             except (urllib.error.URLError, TimeoutError):
                 pass
