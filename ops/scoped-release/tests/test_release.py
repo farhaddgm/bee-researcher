@@ -170,6 +170,49 @@ class ScopedReleaseTests(unittest.TestCase):
             release.wait_health(REV, "3.39.1", timeout=5)
             self.assertEqual(request.call_count, 4)
 
+    def test_transient_reverse_proxy_errors_retry_liveness_and_final_readiness(self):
+        container={"State":{"Running":True,"Health":{"Status":"healthy"}},"Config":{"Labels":{"org.opencontainers.image.revision":REV}}}
+        response=Mock()
+        response.__enter__=Mock(return_value=response)
+        response.__exit__=Mock(return_value=False)
+        response.read.return_value=json.dumps({"version":"3.40.0"}).encode()
+        for code in (502,503,504):
+            for required in (False,True):
+                failure=urllib.error.HTTPError('https://researcher.beeproject.ir/health',code,'synthetic gateway',{},None)
+                with patch.object(release,'inspect',return_value=container),patch.object(release.time,'sleep') as sleep, \
+                        patch.object(release.urllib.request,'urlopen',side_effect=[failure,response,response]) as request:
+                    release.wait_health(REV,'3.40.0',timeout=5,ready_required=required)
+                self.assertEqual(request.call_count,3 if required else 2)
+                sleep.assert_called_once_with(2)
+
+    def test_reverse_proxy_retry_uses_existing_deadline_not_an_unbounded_loop(self):
+        container={"State":{"Running":True,"Health":{"Status":"healthy"}},"Config":{"Labels":{"org.opencontainers.image.revision":REV}}}
+        failure=urllib.error.HTTPError('https://researcher.beeproject.ir/health',502,'synthetic gateway',{},None)
+        with patch.object(release,'inspect',return_value=container),patch.object(release.time,'sleep'), \
+                patch.object(release.time,'monotonic',side_effect=[0,0,2]),patch.object(release.urllib.request,'urlopen',side_effect=failure) as request:
+            with self.assertRaises(TimeoutError):release.wait_health(REV,'3.40.0',timeout=1,ready_required=False)
+        self.assertEqual(request.call_count,1)
+
+    def test_auth_route_rate_limit_and_server_bug_are_not_transient_startup(self):
+        container={"State":{"Running":True,"Health":{"Status":"healthy"}},"Config":{"Labels":{"org.opencontainers.image.revision":REV}}}
+        for code in (401,403,404,429,500):
+            failure=urllib.error.HTTPError('https://researcher.beeproject.ir/health',code,'synthetic failure',{},None)
+            with patch.object(release,'inspect',return_value=container),patch.object(release.time,'sleep') as sleep, \
+                    patch.object(release.urllib.request,'urlopen',side_effect=failure):
+                with self.assertRaises(urllib.error.HTTPError):release.wait_health(REV,'3.40.0',ready_required=False)
+            sleep.assert_not_called()
+
+    def test_wrong_public_version_is_never_accepted_or_retried(self):
+        container={"State":{"Running":True,"Health":{"Status":"healthy"}},"Config":{"Labels":{"org.opencontainers.image.revision":REV}}}
+        response=Mock()
+        response.__enter__=Mock(return_value=response)
+        response.__exit__=Mock(return_value=False)
+        response.read.return_value=json.dumps({"version":"3.39.1"}).encode()
+        with patch.object(release,'inspect',return_value=container),patch.object(release.time,'sleep') as sleep, \
+                patch.object(release.urllib.request,'urlopen',return_value=response):
+            with self.assertRaisesRegex(RuntimeError,'wrong version'):release.wait_health(REV,'3.40.0',ready_required=False)
+        sleep.assert_not_called()
+
     def test_liveness_only_gate_does_not_require_a_blocked_scheduler_heartbeat(self):
         response = Mock()
         response.__enter__ = Mock(return_value=response)
