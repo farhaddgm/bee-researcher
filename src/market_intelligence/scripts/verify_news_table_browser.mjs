@@ -106,20 +106,29 @@ try{
 
  // Exercise the active/inactive business action through the CSP dispatcher.
  let activeBusiness=991,toggleRequest=null;
- await page.route(/\/admin\/api\/assistants\/[^/]+\/businesses(?:\?.*)?$/,route=>json(route,{assistant_id:new URL(route.request().url()).pathname.split('/')[4],active_business_id:activeBusiness,businesses:[{id:991,business_name:'Synthetic business',description:'Isolated action test'}]}));
+ const businessName="O'Reilly \"Research\" <img src=x onerror=alert(1)> & Co";
+ const businessDescription="Quoted 'text' and \"double quotes\" <script>alert(1)</script> & details";
+ await page.route(/\/admin\/api\/assistants\/[^/]+\/businesses(?:\?.*)?$/,route=>json(route,{assistant_id:new URL(route.request().url()).pathname.split('/')[4],active_business_id:activeBusiness,businesses:[{id:991,business_name:businessName,description:businessDescription}]}));
  await page.route(/\/admin\/api\/assistants\/[^/]+\/runtime-settings$/,route=>{
   if(route.request().method()==='PUT'){toggleRequest=route.request().postDataJSON();activeBusiness=toggleRequest.deactivate_business?null:toggleRequest.active_business_id;return json(route,{});}
   return json(route,{assistant_id:new URL(route.request().url()).pathname.split('/')[4]});
  });
  await page.evaluate(async()=>{window.setView('businesses');await window.refreshBusinessUi();});
  const toggle=page.locator('[data-business-toggle="991"]');
- const labels=await page.evaluate(()=>({activate:translatedCopy('فعال‌سازی'),deactivate:translatedCopy('غیرفعال‌سازی')}));
+ const labels=await page.evaluate(()=>({activate:translatedCopy('فعال‌سازی'),deactivate:translatedCopy('غیرفعال‌سازی'),edit:translatedCopy('ویرایش')}));
  await toggle.waitFor();assert.equal(await toggle.innerText(),labels.deactivate);
  page.once('dialog',d=>d.accept());await toggle.click();
  await page.waitForFunction(label=>document.querySelector('[data-business-toggle]')?.textContent===label,labels.activate);
  assert.deepEqual(toggleRequest,{deactivate_business:true});
  await toggle.click();await page.waitForFunction(label=>document.querySelector('[data-business-toggle]')?.textContent===label,labels.deactivate);
  assert.deepEqual(toggleRequest,{active_business_id:991});
+ await page.locator('#businessGrid').getByRole('button',{name:labels.edit,exact:true}).click();
+ await page.locator('#bizName').waitFor({state:'visible'});
+ assert.equal(await page.locator('#bizName').inputValue(),businessName);
+ assert.equal(await page.locator('#bizDesc').inputValue(),businessDescription);
+ assert.equal(await page.locator('#businessGrid img,#modalRoot img,#businessGrid script,#modalRoot script').count(),0);
+ await page.keyboard.press('Escape');
+ await page.locator('#bizName').waitFor({state:'hidden'});
  assert.equal(await page.locator('#view-businesses [onclick]').count(),0);
  if(process.env.CAPTURE_OUTPUT){
   await page.evaluate(()=>{window.setLanguage('fa');window.setView('content');});
@@ -127,5 +136,5 @@ try{
   await page.screenshot({path:path.join(process.env.CAPTURE_OUTPUT,'news-table-fa-after.png'),fullPage:true});
  }
  assert.deepEqual(errors,[]);
- console.log('News/action regressions passed: 8 locales × 4 widths × 2 themes, seven aligned columns, readable titles, real pointer clicks, bounded badges, one toolbar, select all/partial/pagination/filter/empty states, project isolation including delayed responses, bulk request and CSP-safe business deactivate/reactivate.');
+ console.log('News/action regressions passed: 8 locales × 4 widths × 2 themes, seven aligned columns, readable titles, real pointer clicks, bounded badges, one toolbar, select all/partial/pagination/filter/empty states, project isolation including delayed responses, bulk request and CSP-safe business deactivate/reactivate and quoted business editor values.');
 }finally{await browser.close();}
