@@ -191,6 +191,10 @@ jobs:
         timeout-minutes: 3
         working-directory: src/market_intelligence
         run: npm run admin:accounts:e2e
+      - name: Required owner login history E2E
+        timeout-minutes: 3
+        working-directory: src/market_intelligence
+        run: npm run admin:login-history:e2e
       - name: Required catalog viewport E2E
         timeout-minutes: 4
         working-directory: src/market_intelligence

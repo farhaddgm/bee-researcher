@@ -21,7 +21,7 @@ from sqlalchemy import delete, select
 from app import admin, google_auth, main
 from app.config import get_settings
 from app.database import SessionLocal, engine
-from app.models import AdminSession, AdminUser, AssistantMember, AssistantWorkspace
+from app.models import AdminAuditLog, AdminSession, AdminUser, AssistantMember, AssistantWorkspace
 
 
 async def run():
@@ -196,6 +196,33 @@ async def run():
                 google_only = await create(owner_client, login_method="google", password=None)
                 await request(owner_client, "DELETE", "/admin/api/owner/google-access/" + google_only["id"])
                 await password_login(member_client, google_only["email"], status=401)
+                # All final outcomes appear once, ten per page, including
+                # unlisted Google identities and subsequently deleted accounts.
+                await request(member_client, "GET", "/admin/api/owner/login-history", status=403)
+                first = (await request(owner_client, "GET", "/admin/api/owner/login-history")).json()
+                assert first["page_size"] == 10 and len(first["attempts"]) == 10 and first["pages"] >= 2
+                history = []
+                for page in range(1, first["pages"] + 1):
+                    result = (await request(owner_client, "GET", f"/admin/api/owner/login-history?page={page}")).json()
+                    assert len(result["attempts"]) <= 10
+                    history.extend(result["attempts"])
+                assert len(history) == first["total"] == len({row["id"] for row in history})
+                unlisted = [row for row in history if row["email"] == "unlisted@gmail.com"]
+                assert len(unlisted) == 1 and unlisted[0]["outcome"] == "failure" and unlisted[0]["reason"] == "not_allowed"
+                deleted = [row for row in history if row["email"] == item["email"]]
+                assert any(row["outcome"] == "success" and row["portal"] == "user" for row in deleted)
+                assert any(row["outcome"] == "failure" and row["reason"] == "inactive" for row in deleted)
+                assert any(row["outcome"] == "failure" and row["reason"] == "not_allowed" and row["method"] == "password" for row in deleted)
+                assert all(row["created_at"] for row in history)
+                assert not any(row["id"].startswith("audit:") for row in history), "Duplicate legacy audit rows"
+                # Pre-existing successful logins are recovered from the audit
+                # table, without requiring a data migration or guessing emails.
+                async with SessionLocal() as s:
+                    s.add(AdminAuditLog(user_id=owner.id, action="admin.login", details={"method": "password"}))
+                    await s.commit()
+                legacy = (await request(owner_client, "GET", "/admin/api/owner/login-history")).json()
+                assert legacy["total"] == first["total"] + 1
+                assert legacy["attempts"][0]["email"] == owner_email and legacy["attempts"][0]["id"].startswith("audit:")
         print("Account integration passed: real SQL/API, signed Google OIDC+PKCE/state, merged allowlist, method rules, self-service, roles/project ACL, User/feedback grants, immediate dual-portal revocation, independent logout, 30-minute idle, fixed 12-hour Admin and 02:00 User expiry.")
     finally:
         async with SessionLocal() as s:
