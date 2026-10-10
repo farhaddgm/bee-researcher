@@ -6,7 +6,6 @@ destination is invented and no publication channel receives operational tests.
 from datetime import datetime, timezone
 import uuid
 from sqlalchemy import select
-from app.config import get_settings
 from app.database import SessionLocal
 from app.deployment_drain import protected_work
 from app.models import AdminUser
@@ -38,10 +37,13 @@ def reconcile_inbox(preferences: dict, incidents: list[dict], *, now: datetime) 
 
 @protected_work
 async def deliver_freshness_notifications() -> int:
-    from app.admin import list_admin_incidents
+    from app.admin import is_owner, list_admin_incidents, owner_email
+    # Gmail dots/plus aliases are canonicalized by sign-in. Share that exact
+    # ownership contract; a raw config value or legacy username is not it.
+    canonical_owner = owner_email()
     async with SessionLocal() as session:
         owners = (await session.scalars(select(AdminUser).where(
-            AdminUser.active.is_(True), AdminUser.email == get_settings().owner_email))).all()
+            AdminUser.active.is_(True), AdminUser.email == canonical_owner))).all()
     total = 0
     for owner in owners:
         incidents = await list_admin_incidents(owner)
@@ -50,7 +52,7 @@ async def deliver_freshness_notifications() -> int:
             raise RuntimeError('invalid_freshness_incidents')
         async with SessionLocal() as session:
             account = await session.get(AdminUser, owner.id, with_for_update=True)
-            if account is None or not account.active or account.email != get_settings().owner_email:
+            if account is None or not account.active or not is_owner(account):
                 continue
             updated, count = reconcile_inbox(account.preferences or {}, rows, now=datetime.now(timezone.utc))
             if updated != (account.preferences or {}):
