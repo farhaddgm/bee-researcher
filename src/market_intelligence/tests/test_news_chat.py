@@ -1,6 +1,7 @@
 import json
 import asyncio
 import unittest
+from html import escape
 from tests.ui_source import document_source
 import uuid
 from decimal import Decimal
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr, ValidationError
 
 from app.config import Settings
+from app import main as main_module
 from app.main import app
 from app.news_chat import providers, service
 from app.news_chat.context import context_for, prompt, reader_report_text, validate_citations
@@ -167,6 +169,35 @@ class NewsChatContextTests(unittest.TestCase):
 
     def test_boolean_usage_does_not_fabricate_token_counts(self):
         self.assertIsNone(providers.cost(spec(),{"input_tokens":True,"output_tokens":False}))
+
+
+class ReaderProjectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_feed_preserves_literal_markup_without_reinterpreting_it(self):
+        aid = uuid.uuid4()
+        published = 'Headline\nLiteral tag: &lt;img src="https://tracker.invalid/leak" onerror="bad()"&gt; &amp; data'
+        row = {"id": str(uuid.uuid4()), "message_text": published, "source_name": "Source", "created_at": None,
+               "published_at": None, "article_published_at": None, "relevance_score": 1}
+        with patch.object(main_module, "current_reader", new=AsyncMock()), \
+             patch.object(main_module, "reader_assistants", new=AsyncMock()), \
+             patch.object(main_module, "_reader_assistant_is_accessible", return_value=True), \
+             patch.object(main_module, "list_publications", new=AsyncMock(return_value=[row])):
+            response = await main_module.user_api_publications(aid, limit=20, query=None, touch=True, token="synthetic")
+        self.assertEqual(escape(reader_report_text(published)), response["publications"][0]["message_text"])
+        self.assertNotIn('<img', response["publications"][0]["message_text"])
+
+    async def test_direct_detail_has_the_same_html_safe_projection(self):
+        published = 'Headline\nLiteral &lt;b&gt;quoted code&lt;/b&gt; &amp; data'
+        pid = uuid.uuid4()
+        item = SimpleNamespace(id=pid, assistant_id=uuid.uuid4(), analysis_id=uuid.uuid4(), message_text=published, published_at=service.now())
+        session = AsyncMock()
+        session.scalar.return_value = "Source"
+        manager = AsyncMock()
+        manager.__aenter__.return_value = session
+        with patch.object(main_module, "current_reader", new=AsyncMock()), \
+             patch.object(main_module, "SessionLocal", return_value=manager), \
+             patch.object(service, "publication", new=AsyncMock(return_value=item)):
+            response = await main_module.user_news_detail(pid, token="synthetic")
+        self.assertEqual(escape(reader_report_text(published)), response["message_text"])
 
 
 class ProviderContractTests(unittest.IsolatedAsyncioTestCase):

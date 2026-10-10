@@ -13,6 +13,7 @@ from collections import deque
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from html import escape
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
@@ -1074,7 +1075,7 @@ async def user_news_detail(publication_id: uuid.UUID, token: str | None = Cookie
             .join(ArticleAnalysis, ArticleAnalysis.article_id == NormalizedArticle.id)
             .where(ArticleAnalysis.id == item.analysis_id, ArticleAnalysis.assistant_id == item.assistant_id,
                    NormalizedArticle.assistant_id == item.assistant_id, SourceItem.assistant_id == item.assistant_id, Source.assistant_id == item.assistant_id))
-        return {"id": str(item.id), "assistant_id": str(item.assistant_id), "message_text": reader_report_text(item.message_text),
+        return {"id": str(item.id), "assistant_id": str(item.assistant_id), "message_text": escape(reader_report_text(item.message_text)),
                 "source_name": source_name or "",
                 "published_at": item.published_at.isoformat() if item.published_at else None}
 
@@ -1189,7 +1190,9 @@ async def user_api_publications(
         "publications": [
             {
                 "id": row["id"],
-                "message_text": reader_report_text(str(row["message_text"])),
+                # The reader's legacy plainText decoder expects HTML-safe
+                # text. Never reinterpret literal tags from the news as DOM.
+                "message_text": escape(reader_report_text(str(row["message_text"]))),
                 "source_name": row["source_name"],
                 "created_at": row["created_at"],
                 "published_at": row["published_at"],
