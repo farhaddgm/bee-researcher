@@ -12,5 +12,8 @@ def decorate_auth_html(html: str, *, admin: bool) -> str:
     js = (ROOT / "auth_portal.js").read_text(encoding="utf-8")
     if admin:
         js += (ROOT / "admin_accounts.js").read_text(encoding="utf-8")
+        css += (ROOT / "report_portal/portal.css").read_text(encoding="utf-8")
+        js += (ROOT / "report_portal/i18n.js").read_text(encoding="utf-8")
+        js += (ROOT / "report_portal/admin.js").read_text(encoding="utf-8")
     return html.replace('</head>', '<style id="account-access-styles">' + css + '</style></head>', 1).replace(
         '</body>', '<script id="account-access-controller">' + js + '</script></body>', 1)

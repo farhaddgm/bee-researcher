@@ -1,0 +1,68 @@
+import {chromium} from 'playwright';
+import assert from 'node:assert/strict';
+import AxeBuilder from '@axe-core/playwright';
+
+const base=process.env.REPORT_TEST_URL;
+assert(base&&new URL(base).hostname.startsWith('bee-report-'),'isolated browser target required');
+const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
+let checks=0;const errors=[];
+const context=await browser.newContext();
+const fixture=await (await context.request.get(base+'/_report_fixture')).json();
+const page=await context.newPage();page.on('pageerror',e=>errors.push(e.message));
+try{
+  await page.goto(base+'/report/login-up');
+  await page.locator('#username').fill(fixture.reporter);
+  await page.locator('#password').fill('Synthetic-report-test-42!');
+  await page.locator('#loginButton').click();
+  await page.locator('#reportForm').waitFor();checks++;
+  for(const lang of ['en','fa','tr','ar','es','it','de','fr']){
+    await page.locator('#reportLanguage').selectOption(lang);
+    await page.waitForFunction(l=>document.documentElement.lang===l,lang);
+    const label=await page.locator('#reportHeading').textContent();assert(label.length>4);checks++;
+    assert.equal(await page.locator('#reportForm textarea').count(),1);
+    const tip=page.locator('#reportForm .report-help').first();await tip.locator('button').focus();
+    await tip.locator('[role="tooltip"]').waitFor({state:'visible'});checks++;
+    const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2);assert(!overflow);checks++;
+    const geometry=await page.evaluate(()=>({language:document.getElementById('reportLanguage').getBoundingClientRect().width,logout:getComputedStyle(document.getElementById('reportLogout')).borderRadius,heading:document.getElementById('reportHeading').getBoundingClientRect().height}));
+    assert(geometry.language<=180&&parseFloat(geometry.logout)>=10&&geometry.heading<=80,JSON.stringify(geometry));checks++;
+  }
+  await page.locator('#reportLanguage').selectOption('en');
+  const accessibility=await new AxeBuilder({page}).include('.report-app').analyze();
+  assert.equal(accessibility.violations.filter(v=>['critical','serious'].includes(v.impact)).length,0,JSON.stringify(accessibility.violations));checks++;
+  if(process.env.REPORT_ARTIFACT_DIR)await page.screenshot({path:process.env.REPORT_ARTIFACT_DIR+'/report-form.png',fullPage:true});
+  await page.locator('[name="title"]').fill('Synthetic private launch <script>alert(1)</script>');
+  await page.locator('[name="text"]').fill('The company launched new software for small companies. This is an unpublished synthetic browser test report.');
+  await page.locator('[name="tags"]').fill('software, synthetic');
+  await page.locator('#reportForm button').filter({hasText:'Save draft'}).click();
+  await page.locator('#reportMessage').filter({hasText:'Draft saved'}).waitFor();checks++;
+  await page.locator('#reportForm button').filter({hasText:'Preview and submit'}).click();
+  await page.locator('#reportDialog[open]').waitFor();checks++;
+  assert.equal(await page.locator('#reportDialog script').count(),0);checks++;
+  await page.locator('#reportDialog input[type="checkbox"]').check();
+  await page.locator('#reportDialog button').filter({hasText:'Submit for private analysis'}).click();
+  await page.locator('#reportListItems button').first().waitFor();checks++;
+  await page.waitForFunction(()=>document.getElementById('reportListItems')?.textContent.includes('Analysis ready'),{},{timeout:40000});checks++;
+  await page.locator('#reportListItems button').first().click();
+  await page.locator('#reportDialogContent').filter({hasText:'The company says it launched software'}).waitFor();checks++;
+  await page.keyboard.press('Escape');await page.locator('#reportDialog').waitFor({state:'hidden'});checks++;
+  await page.waitForFunction(()=>document.querySelector('#reportListItems button')===document.activeElement);checks++;
+  await page.setViewportSize({width:390,height:844});
+  assert(!(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2)));checks++;
+  await page.locator('#reportLanguage').selectOption('fa');
+  assert.equal(await page.locator('html').getAttribute('dir'),'rtl');checks++;
+  assert(!(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2)));checks++;
+  await page.locator('#reportLogout').click();await page.locator('#login').waitFor({state:'visible'});checks++;
+  assert.equal(await page.locator('#reportList').textContent(),'');assert.equal(await page.locator('#reportCompose').textContent(),'');assert.equal(await page.locator('#reportDialogContent').textContent(),'');checks++;
+  await page.setViewportSize({width:1280,height:900});
+  await page.locator('#username').fill(fixture.manager);await page.locator('#password').fill('Synthetic-report-test-42!');await page.locator('#loginButton').click();await page.locator('#reportForm').waitFor();checks++;
+  await page.locator('#reportLanguage').selectOption('en');
+  await page.locator('#reportScope button').filter({hasText:'AI data policy'}).click();await page.locator('#reportDialog[open]').waitFor();checks++;
+  await page.locator('#reportDialog input[type="checkbox"]').last().check();
+  await page.locator('#reportDialog button').filter({hasText:'Save policy'}).click();await page.locator('#reportDialog').waitFor({state:'hidden'});checks++;
+  await page.locator('#reportNavigation button').filter({hasText:'Reports'}).click();await page.locator('#reportListItems button').first().click();await page.locator('#reportDialog[open]').waitFor();checks++;
+  assert.equal(await page.locator('#reportDialog button').filter({hasText:'Create revision'}).count(),0);checks++;
+  assert.equal(await page.locator('#reportDialog button').filter({hasText:'New report'}).count(),0);checks++;
+  await page.keyboard.press('Escape');await page.locator('#reportLogout').click();await page.locator('#login').waitFor({state:'visible'});checks++;
+  assert.equal(errors.length,0,errors.join('\n'));checks++;
+  console.log(JSON.stringify({status:'passed',checks,locales:8,synthetic:true}));
+}catch(e){console.error(JSON.stringify({pageErrors:errors,loginError:await page.locator('#loginError').textContent()}));throw e;}finally{await context.close();await browser.close();}

@@ -482,6 +482,7 @@ class OpenAIClient:
         topics: list[dict[str, object]],
         incomplete_text: bool,
         output_language: str = "fa",
+        origin: str = "public",
     ) -> StructuredAnalysis:
         safe_title, safe_text, source_safety = sanitize_untrusted_source(
             title=article_title,
@@ -503,6 +504,12 @@ class OpenAIClient:
             "بگیرید و فقط واقعیت‌های قابل اتکا را تحلیل کنید."
         )
         system_prompt += " " + language_instructions(output_language)
+        if origin == "internal":
+            system_prompt += (
+                " This is an unpublished private company submission, not an independently verified public news source. "
+                "Attribute claims to the company; distinguish assertions from inferences. Do not assert independent verification, "
+                "invent external citations or recommend public publication. Never use tools or search outside this supplied context."
+            )
         schema = cast(dict[str, Any], copy.deepcopy(ANALYSIS_SCHEMA))
         # Time horizon was a Persian-only enum even for English output. Keep
         # its controlled vocabulary, but localize it with the report contract.

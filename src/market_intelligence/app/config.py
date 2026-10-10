@@ -32,6 +32,20 @@ class Settings(BaseSettings):
     contenter_sync_seconds: int = Field(default=900, ge=60, le=86400)
     contenter_cache_max_age_seconds: int = Field(default=86400, ge=60, le=604800)
 
+    # Private company submissions have no connection to public publications.
+    # Deployment enables the surface; business consent/grants remain opt-in.
+    report_portal_enabled: bool = False
+    report_encryption_secret: SecretStr | None = None
+    report_encryption_secret_file: str | None = None
+    report_previous_encryption_secrets: SecretStr | None = None
+    report_worker_concurrency: int = Field(default=2, ge=1, le=4)
+    report_job_timeout_seconds: int = Field(default=300, ge=30, le=900)
+    report_daily_submission_cap: int = Field(default=10, ge=1, le=100)
+    report_daily_budget_usd: float = Field(default=1.0, gt=0, le=100)
+    report_retention_days: int = Field(default=90, ge=1, le=365)
+    report_draft_retention_days: int = Field(default=30, ge=1, le=90)
+    report_deletion_registry_file: str = "/app/private/report-deletions.log"
+
     postgres_db: str
     postgres_user: str
     postgres_password: SecretStr

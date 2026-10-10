@@ -35,7 +35,8 @@ FLOW_COOKIE = "research_bee_google_flow"
 FLOW_COOKIE_PATH = "/auth/google"
 FLOW_TTL_SECONDS = 600
 CLOCK_SKEW_SECONDS = 60
-PORTALS = frozenset({"admin", "user"})
+from app.portals import PORTAL_REGISTRY, portal_spec
+PORTALS = frozenset(PORTAL_REGISTRY)
 # Machine-readable codes shown by the login pages.
 ERROR_CODES = frozenset({"not_configured", "cancelled", "expired", "not_gmail", "not_allowed", "inactive", "rate_limited", "failed"})
 
@@ -86,18 +87,24 @@ def _sign(settings: Settings, payload: bytes) -> str:
 
 
 def safe_redirect(portal: str, value: object) -> str:
-    base = "/user" if portal == "user" else "/admin"
+    if portal not in PORTALS:
+        raise GoogleAuthError("not_allowed")
+    base = portal_spec(portal).path
     if not isinstance(value, str) or len(value) > 1024 or re.search(r"[\\\x00-\x20]", value):
         return base
     path = value.split("?", 1)[0].split("#", 1)[0]
-    return value if path in ({"/user", "/user/settings"} if portal == "user" else {"/admin"}) else base
+    allowed = {base}
+    if portal == "user":
+        allowed.add("/user/settings")
+    return value if path in allowed else base
 
 
 def start_flow(settings: Settings, portal: str, redirect_to: str | None = None) -> tuple[str, str]:
     """Return Google's consent URL and the signed flow cookie value."""
     if not settings.google_login_ready:
         raise GoogleAuthError("not_configured")
-    portal = portal if portal in PORTALS else "admin"
+    if portal not in PORTALS:
+        raise GoogleAuthError("not_allowed")
     verifier = _b64(secrets.token_bytes(48))
     flow = {
         "state": _b64(secrets.token_bytes(24)),
@@ -141,7 +148,9 @@ def read_flow(settings: Settings, cookie: str | None) -> dict[str, object]:
 
 def flow_portal(flow: dict[str, object] | None) -> str:
     portal = str((flow or {}).get("portal") or "admin")
-    return portal if portal in PORTALS else "admin"
+    if portal not in PORTALS:
+        raise GoogleAuthError("not_allowed")
+    return portal
 
 
 def identity_from_claims(settings: Settings, claims: dict[str, object], nonce: str) -> GoogleIdentity:

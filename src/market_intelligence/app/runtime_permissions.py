@@ -40,6 +40,19 @@ async def check_runtime_permissions():
                     if not await connection.scalar(text("SELECT has_table_privilege(current_user, :table, :permission)"),
                             {"table": "market_intelligence." + table, "permission": permission}):
                         raise RuntimeError("web runtime is missing required chat table privileges")
+            private_tables = ("report_businesses", "report_project_bindings", "report_business_grants",
+                              "internal_reports", "internal_report_versions", "internal_report_jobs")
+            for table in private_tables + ("report_audit_events", "report_deletions"):
+                required = ("SELECT", "INSERT") if table in {"report_audit_events", "report_deletions"} else ("SELECT", "INSERT", "UPDATE", "DELETE")
+                for permission in required:
+                    if not await connection.scalar(text("SELECT has_table_privilege(current_user, :table, :permission)"),
+                            {"table": "market_intelligence." + table, "permission": permission}):
+                        raise RuntimeError("web runtime is missing required private Report privileges")
+                if table in {"report_audit_events", "report_deletions"}:
+                    for permission in ("UPDATE", "DELETE", "TRUNCATE"):
+                        if await connection.scalar(text("SELECT has_table_privilege(current_user, :table, :permission)"),
+                                {"table": "market_intelligence." + table, "permission": permission}):
+                            raise RuntimeError("private Report audit and deletion ledgers must be append-only")
     finally:
         await engine.dispose()
 

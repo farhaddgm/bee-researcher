@@ -15,6 +15,46 @@ REF = "ghcr.io/farhaddgm/bee-researcher-market-intelligence@sha256:" + "b" * 64
 
 
 class ScopedReleaseTests(unittest.TestCase):
+    def test_report_upgrade_rollback_preserves_forward_private_schema(self):
+        for old in ('3.40.0', '3.40.1'):
+            current={'Image':'old-image','Config':{'Labels':{'org.opencontainers.image.version':old}}}
+            service=release.rollback_service(current,{'MARKET_INTELLIGENCE_VERSION':old},'3.41.0')
+            self.assertIn('app.auth_deployment',service['command'][-1])
+            self.assertNotIn('alembic',service['command'][-1])
+            self.assertEqual(service['image'],'old-image')
+
+    def test_report_mounts_refuse_broad_or_missing_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory)
+            private=root/'ops/bee-researcher-direct/private'
+            private.mkdir(parents=True)
+            key=private/'report-key';key.write_text('synthetic-not-a-secret')
+            state=private/'state';state.mkdir()
+            with patch.object(release,'ROOT',root):
+                for candidate_key,candidate_state in ((root/'key',state),(key,root),(private/'missing',state),(key,private/'missing')):
+                    with self.assertRaisesRegex(RuntimeError,'private Report paths'):
+                        release.report_volumes(candidate_key,candidate_state)
+
+    def test_report_mounts_require_private_permissions_and_service_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=Path(directory);private=root/'ops/bee-researcher-direct/private';private.mkdir(parents=True)
+            key=private/'report-key';key.write_text('synthetic-not-a-secret');key.chmod(0o600)
+            state=private/'state';state.mkdir(mode=0o700)
+            with patch.object(release,'ROOT',root):
+                key.chmod(0o644)
+                with self.assertRaisesRegex(RuntimeError,'group/world'):
+                    release.report_volumes(key,state)
+                key.chmod(0o600)
+                fake_stat=SimpleNamespace(st_mode=0o600,st_uid=10002)
+                with patch.object(Path,'is_file',return_value=True),patch.object(Path,'is_dir',return_value=True),patch.object(Path,'stat',return_value=fake_stat):
+                    mounts=release.report_volumes(key,state)
+                    self.assertEqual(mounts[0]['target'],'/app/private/report-key')
+                    self.assertTrue(mounts[0]['read_only'])
+                    self.assertEqual(mounts[1]['target'],'/app/report-state')
+                    fake_stat.st_uid=10003
+                    with self.assertRaisesRegex(RuntimeError,'restricted service identity'):
+                        release.report_volumes(key,state)
+
     def test_new_release_restores_verified_image_cmd_not_inherited_rollback(self):
         image={"Config":{"Cmd":["./start-service.sh"]}}
         with patch.object(release,'inspect',return_value=image) as inspect:
