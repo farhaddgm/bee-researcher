@@ -101,8 +101,14 @@ if (await articleDialog.getAttribute('aria-modal') !== 'true'
   || !(await articleDialog.getAttribute('aria-labelledby'))) {
   throw new Error('The reader article dialog is missing its accessible modal semantics.');
 }
-// Optional, permission-gated chat controls are present but hidden. Only
-// visible controls participate in the actual dialog's keyboard sequence.
+// Wait for the async chat eligibility result before choosing the last control.
+// An unavailable chat still exposes its help button and localized explanation;
+// it must participate in the modal's real keyboard sequence, not appear mid-test.
+await page.waitForFunction(() => {
+  const chat = document.getElementById('newsChat');
+  return !chat || chat.dataset.unavailable === 'true'
+    || document.querySelector('.news-study-layout')?.dataset.chatEnabled === 'true';
+});
 const dialogFocusables = articleDialog.locator('button:not([disabled]):visible, a[href]:visible, input:not([disabled]):visible, select:not([disabled]):visible, textarea:not([disabled]):visible, [tabindex]:not([tabindex="-1"]):visible');
 const firstDialogControl = dialogFocusables.first();
 const lastDialogControl = dialogFocusables.last();
