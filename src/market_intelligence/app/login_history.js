@@ -21,7 +21,7 @@
       const date=node('td');const time=node('time',dateFormat.format(new Date(item.created_at)));time.dateTime=item.created_at;date.append(time);
       const status=node('td');status.append(node('span',t(item.outcome==='success'?'loginSuccess':'loginFailure'),'accounts-status '+(item.outcome==='success'?'is-active':'is-failed')));
       tr.append(email,date,status,node('td',t(item.method==='google'?'googleMethod':'passwordMethod')),
-        node('td',item.portal==='user'?'User':item.portal==='admin'?'Admin':'—'),node('td',item.reason?t(item.reason):'—'));body.append(tr);
+        node('td',item.portal==='report'?'Report':item.portal==='user'?'User':item.portal==='admin'?'Admin':'—'),node('td',item.reason?t(item.reason):'—'));body.append(tr);
     }
     if(!rows.length){const tr=node('tr'),td=node('td',t('loginEmpty'));td.colSpan=6;tr.append(td);body.append(tr)}
     const numbers=new Intl.NumberFormat(i18n.lang());

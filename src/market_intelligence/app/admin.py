@@ -1148,6 +1148,7 @@ async def authenticate(
     *,
     require_mfa: bool = True,
     nightly_reader_expiry: bool = False,
+    portal: str | None = None,
 ) -> tuple[str, AdminUser]:
     settings = get_settings()
     username = request.username.strip().lower()
@@ -1185,24 +1186,27 @@ async def authenticate(
         if needs_rehash(user.password_hash):
             user.password_hash = await hash_password_async(request.password)
         user.last_login_at = datetime.now(timezone.utc)
-        raw = _add_session(session, user, nightly_reader_expiry=nightly_reader_expiry, mfa_required=require_mfa and _mfa_enabled(user))
+        raw = _add_session(session, user, nightly_reader_expiry=nightly_reader_expiry, mfa_required=require_mfa and _mfa_enabled(user), portal=portal)
         await session.commit()
     await _audit(user.id, "admin.login", details={"method": "password", "login_history_recorded": True})
     return raw, user
 
 
-def _add_session(session, user: AdminUser, *, nightly_reader_expiry: bool = False, mfa_required: bool = False) -> str:
+def _add_session(session, user: AdminUser, *, nightly_reader_expiry: bool = False, mfa_required: bool = False, portal: str | None = None) -> str:
     """Stage a new server-side session row and return its raw token."""
+    from app.portals import portal_spec
+    name = portal or ("user" if nightly_reader_expiry else "admin")
+    spec = portal_spec(name)
     raw = secrets.token_urlsafe(40)
     now = datetime.now(timezone.utc)
     expires_at = now + _account_session_lifetime()
-    if nightly_reader_expiry:
+    if spec.nightly:
         expires_at = min(expires_at, _reader_nightly_expiry(now))
     session.add(
         AdminSession(
             user_id=user.id,
             token_hash=hashlib.sha256(raw.encode()).hexdigest(),
-            portal="user" if nightly_reader_expiry else "admin",
+            portal=name,
             expires_at=expires_at,
             mfa_verified=not mfa_required,
         )
@@ -1245,6 +1249,8 @@ async def _unique_username(session, base: str) -> str:
 
 
 async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[str, AdminUser]:
+    from app.portals import portal_spec
+    portal_spec(portal)
     """Resolve a verified Google identity against the owner-managed allowlist.
 
     The owner account is created on the first Google sign-in. Every other
@@ -1283,9 +1289,13 @@ async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[s
             raise GoogleAuthError("inactive")
         if portal == "user" and not user_portal_access_allowed(user):
             raise GoogleAuthError("not_allowed", "user portal access denied")
+        if portal == "report":
+            from app.report_portal.policy import has_report_access
+            if not await has_report_access(session, user):
+                raise GoogleAuthError("not_allowed")
         user.google_sub = identity.sub
         user.last_login_at = datetime.now(timezone.utc)
-        raw = _add_session(session, user, nightly_reader_expiry=portal == "user")
+        raw = _add_session(session, user, portal=portal)
         try:
             await session.commit()
         except IntegrityError as exc:

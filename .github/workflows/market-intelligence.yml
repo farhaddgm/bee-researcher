@@ -23,6 +23,8 @@ jobs:
         run: docker build --tag bee-researcher-chat-ci src/market_intelligence
       - name: Required real SQL and browser gates with synthetic providers
         run: python3 ops/scoped-release/verify_news_chat.py --image bee-researcher-chat-ci
+      - name: Required private Report SQL and eight-language browser gate
+        run: python3 ops/scoped-release/verify_report_portal.py --image bee-researcher-chat-ci
 
   unit-and-contract:
     runs-on: ubuntu-24.04
