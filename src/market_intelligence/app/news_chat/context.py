@@ -4,6 +4,8 @@ import re
 from html import unescape
 from html.parser import HTMLParser
 
+from app.report_language import LANGUAGES, report_copy
+
 
 class PlainText(HTMLParser):
     def __init__(self):
@@ -16,10 +18,34 @@ class PlainText(HTMLParser):
             self.parts.append("\n")
 
 
-def context_for(text: str, published_at: str | None) -> dict:
+def reader_report_text(text: str) -> str:
+    """Hide generated opportunity/risk blocks in User, not in publications.
+
+    Match the publisher's section headings in all report languages, never a
+    word inside the story. Keep the first line (the news headline) regardless
+    of its wording. Both the legacy combined block and template blocks are
+    supported; following source/business sections remain visible.
+    """
     parser = PlainText()
     parser.feed(text)
     clean = unescape("".join(parser.parts)).strip()
+    headings = {report_copy(lang)[key] for lang in LANGUAGES for key in ("opportunity", "risk", "risks")}
+    heading = re.compile(r"^[^\w]*(?:" + "|".join(re.escape(h) for h in sorted(headings, key=len, reverse=True)) + r")\s*[:：](?:\s|$)", re.I)
+    visible = []
+    hiding = False
+    for index, line in enumerate(clean.splitlines()):
+        if not line.strip():
+            hiding = False
+            visible.append(line)
+        elif index and heading.match(line):
+            hiding = True
+        elif not hiding:
+            visible.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(visible)).strip()
+
+
+def context_for(text: str, published_at: str | None) -> dict:
+    clean = reader_report_text(text)
     version = hashlib.sha256(clean.encode()).hexdigest()
     # Entire published report or an explicitly labelled, bounded prefix.
     bounded = clean[:16000]
@@ -44,7 +70,7 @@ def validate_citations(answer: str, context: dict) -> tuple[str, list, bool]:
     return re.sub(r"\[(report-[\w-]+)\]", replace, answer), valid, invalid
 
 
-def prompt(context: dict, question: str, language: str, history: list, selected: str | None, max_chars: int) -> list:
+def prompt(context: dict, question: str, language: str, history: list, selected: str | None, max_chars: int, intent: str = "question") -> list:
     source = "\n".join(f'[{s["id"]}] {s["text"]}' for s in context["segments"])
     language_name = {'fa':'Persian (Farsi)','en':'English','tr':'Turkish','ar':'Modern Standard Arabic',
                      'es':'Spanish','it':'Italian','de':'German','fr':'French'}[language]
@@ -64,6 +90,14 @@ def prompt(context: dict, question: str, language: str, history: list, selected:
         system += " Only part of the report is available; disclose this limitation."
     if selected:
         system += " The user asks specifically about segment " + selected + "."
+    if intent in {"opportunities", "risks"}:
+        system += (
+            " The user explicitly requests a detailed " + intent + " analysis of this specific news. "
+            "For each well-supported point explain the mechanism, who may be affected, likely time horizon, "
+            "conditions, uncertainty and a practical question or signal to monitor. Cite supporting report facts. "
+            "Label possible consequences as inferences, not established facts. Avoid generic filler, "
+            "invented company details and guarantees; if evidence is limited, say so instead of inventing points."
+        )
     messages = [{"role": "system", "content": system}, {"role": "user", "content": "REPORT DATA:\n" + source}]
     # Preserve complete recent turns, never silently truncate the source.
     remaining = max_chars - len(system) - len(source) - len(question) - 100

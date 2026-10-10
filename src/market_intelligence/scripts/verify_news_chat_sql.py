@@ -56,6 +56,45 @@ async def verify():
     await svc.maintenance_once()
     async with SessionLocal() as s:
         row=await s.get(ChatGeneration,uuid.UUID(g['id']));assert row.question==row.answer=='' and row.citations==[] and row.reserved_usd>0
+    # A window UUID is known before its first POST. Closing before creation
+    # must leave a content-free tombstone, never resurrect a late request.
+    early=uuid.uuid4()
+    await api.close_window(pid,early,token=token)
+    try:await api.start(pid,Start(model_key='openai:fixture-v1',conversation_id=early),token=token)
+    except HTTPException as exc:assert exc.status_code==410
+    else:raise AssertionError('Late create resurrected a closed window')
+    for mode in ('queued','running','abandoned'):
+        start=await api.start(pid,Start(model_key='openai:fixture-v1',conversation_id=uuid.uuid4()),token=token)
+        assert not any(key.startswith('_') for key in start['context']),'Private lease/session metadata leaked'
+        window=uuid.UUID(start['id'])
+        lease_q=Question(question='PRIVATE_WINDOW_'+mode,model_key='openai:fixture-v1',language='en',intent='opportunities',context_version=start['context']['version'],idempotency_key='sql-window-'+mode+'-fixture')
+        request=await svc.send(window,lease_q,user,token);gid=uuid.UUID(request['id'])
+        async with SessionLocal() as s:
+            session_before=await s.scalar(select(AdminSession.expires_at).where(AdminSession.token_hash==token_hash))
+            row=await s.get(ChatGeneration,gid)
+            if mode=='running':row.status='running';row.answer='PRIVATE_PARTIAL_RESPONSE'
+            if mode=='abandoned':
+                c=await s.get(ChatConversation,window)
+                c.context={**c.context,'_expires_at':(svc.now()-timedelta(seconds=1)).isoformat()}
+            await s.commit()
+        if mode=='abandoned':await svc.maintenance_once()
+        else:
+            await api.heartbeat(window,token=token)
+            async with SessionLocal() as s:
+                assert await s.scalar(select(AdminSession.expires_at).where(AdminSession.token_hash==token_hash))==session_before,'Heartbeat renewed idle login'
+            await api.close_window(pid,window,token=token)
+            await api.close_window(pid,window,token=token) # safe repeat
+        async with SessionLocal() as s:
+            c=await s.get(ChatConversation,window);row=await s.get(ChatGeneration,gid)
+            assert c.deleted_at and c.context=={}
+            assert row.question==row.answer==row.session_hash=='' and row.citations==[] and row.cancel_requested
+            assert row.reserved_usd>0,'Closing reset quota/spend ledger'
+            assert row.actual_usd is None if mode=='running' else row.actual_usd==0
+            # Release the synthetic running slot; no provider was called.
+            row.status='stopped';await s.commit()
+        try:await svc.send(window,lease_q,user,token)
+        except HTTPException as exc:assert exc.status_code==404
+        else:raise AssertionError('Message accepted after window erasure')
     # Sixty-five rows with exactly the same timestamp must appear once each,
     # including the last page; an exactly-full page must have no phantom cursor.
     async with SessionLocal() as s:

@@ -1063,6 +1063,7 @@ async def report_login(payload: LoginRequest, response: Response, http_request: 
 @app.get("/user/api/publications/{publication_id}/detail")
 async def user_news_detail(publication_id: uuid.UUID, token: str | None = Cookie(default=None, alias=USER_SESSION_COOKIE)):
     from app.news_chat.service import publication
+    from app.news_chat.context import reader_report_text
     from app.models import ArticleAnalysis, NormalizedArticle, SourceItem, Source
     from sqlalchemy import select
     user = await current_reader(token)
@@ -1073,7 +1074,7 @@ async def user_news_detail(publication_id: uuid.UUID, token: str | None = Cookie
             .join(ArticleAnalysis, ArticleAnalysis.article_id == NormalizedArticle.id)
             .where(ArticleAnalysis.id == item.analysis_id, ArticleAnalysis.assistant_id == item.assistant_id,
                    NormalizedArticle.assistant_id == item.assistant_id, SourceItem.assistant_id == item.assistant_id, Source.assistant_id == item.assistant_id))
-        return {"id": str(item.id), "assistant_id": str(item.assistant_id), "message_text": item.message_text,
+        return {"id": str(item.id), "assistant_id": str(item.assistant_id), "message_text": reader_report_text(item.message_text),
                 "source_name": source_name or "",
                 "published_at": item.published_at.isoformat() if item.published_at else None}
 
@@ -1182,12 +1183,13 @@ async def user_api_publications(
     if not _reader_assistant_is_accessible(available, assistant_id):
         raise HTTPException(status_code=403, detail="workspace access denied")
     rows = await list_publications(status="published", limit=limit, assistant_id=assistant_id, query=query)
+    from app.news_chat.context import reader_report_text
     return {
         "count": len(rows),
         "publications": [
             {
                 "id": row["id"],
-                "message_text": row["message_text"],
+                "message_text": reader_report_text(str(row["message_text"])),
                 "source_name": row["source_name"],
                 "created_at": row["created_at"],
                 "published_at": row["published_at"],

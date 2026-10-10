@@ -4,6 +4,7 @@ import unittest
 from tests.ui_source import document_source
 import uuid
 from decimal import Decimal
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -15,8 +16,9 @@ from pydantic import SecretStr, ValidationError
 from app.config import Settings
 from app.main import app
 from app.news_chat import providers, service
-from app.news_chat.context import context_for, prompt, validate_citations
+from app.news_chat.context import context_for, prompt, reader_report_text, validate_citations
 from app.news_chat.schemas import LANGUAGES, ModelSpec, Policy, Question
+from app.telegram_delivery import render_analysis_message
 
 
 def spec(provider="openai", **changes):
@@ -25,6 +27,37 @@ def spec(provider="openai", **changes):
 
 
 class NewsChatContextTests(unittest.TestCase):
+    def test_user_hides_only_generated_insights_in_all_languages_and_templates(self):
+        for language in LANGUAGES:
+            for blocks in (None, [{"type": k, "visible": True} for k in ("title", "summary", "opportunity", "risk", "source", "business_connection")]):
+                with self.subTest(language=language, template=bool(blocks)):
+                    published = render_analysis_message(headline="Risk: real news headline", summary="News facts discuss risk and opportunity.",
+                        business_connection="KEEP BUSINESS CONNECTION", opportunity="HIDE OPPORTUNITY", risk="HIDE RISK", action="", confidence=1,
+                        source_name="KEEP SOURCE", source_url="https://example.invalid", published_at=None, incomplete=False,
+                        template_blocks=blocks, output_language=language)
+                    visible = reader_report_text(published)
+                    for keep in ("Risk: real news headline", "News facts discuss risk and opportunity.", "KEEP SOURCE", "KEEP BUSINESS CONNECTION"):
+                        self.assertIn(keep, visible)
+                    self.assertNotIn("HIDE OPPORTUNITY", visible)
+                    self.assertNotIn("HIDE RISK", visible)
+                    self.assertIn("HIDE RISK", published, "User projection changed the published Telegram message")
+                    self.assertNotIn("HIDE", str(context_for(published, None)))
+
+    def test_detail_prompts_are_grounded_and_label_inferences(self):
+        for intent in ("opportunities", "risks"):
+            messages = prompt(context_for("Published fact", None), "Analyze", "fa", [], None, 24000, intent)
+            self.assertIn("detailed " + intent + " analysis", messages[0]["content"])
+            self.assertIn("Label possible consequences as inferences", messages[0]["content"])
+            self.assertIn("invented company details", messages[0]["content"])
+
+    def test_ephemeral_lease_is_fail_closed_and_private_metadata_is_not_returned(self):
+        future = (service.now() + timedelta(seconds=120)).isoformat()
+        self.assertFalse(service.window_expired({"_ephemeral": True, "_expires_at": future}))
+        for value in (None, "not-a-date", service.now().isoformat()):
+            self.assertTrue(service.window_expired({"_ephemeral": True, "_expires_at": value}))
+        context = {**context_for("News", None), "_ephemeral": True, "_session_hash": "PRIVATE", "_expires_at": future}
+        self.assertEqual(context_for("News", None), service.public_context(context))
+
     def test_context_only_published_text_plain_and_versioned(self):
         c = context_for("<b>Headline</b><br>Published report &amp; data", "2026-10-09")
         self.assertEqual("published_report", c["scope"])
@@ -238,6 +271,25 @@ class NewsChatHttpContracts(unittest.TestCase):
             self.assertNotIn(forbidden,source)
         self.assertIn('new EventSource',source)
         self.assertIn('crypto.getRandomValues',source)
+
+    def test_window_close_erases_memory_and_calls_server_even_before_creation_returns(self):
+        source=self.client.get('/assets/news-chat/chat.js').text
+        for old in ('const drafts=', 'renderThreads', 'loadThread(', "btn('select'", 'chat-selection'):
+            self.assertNotIn(old,source)
+        self.assertIn('keepalive:true',source)
+        self.assertIn("window.addEventListener('pagehide'",source)
+        self.assertIn("window.addEventListener('pageshow'",source)
+        self.assertIn('conversation_id:id',source)
+        self.assertIn('windowThreads.set(cid,news)',source)
+        self.assertIn("'/conversations/'+id+'/close'",source)
+
+    def test_guidance_is_in_heading_tooltip_and_insights_are_explicit_requests(self):
+        source=self.client.get('/assets/news-chat/chat.js').text
+        self.assertIn("tip.append(node('span',t('daily')+': '+daily))",source)
+        self.assertIn("for(const intent of ['opportunities','risks'])",source)
+        self.assertIn('send(null,intent)',source)
+        catalog=self.client.get('/assets/news-chat/i18n.js').text
+        self.assertNotIn('Ask about this news. History is private to you.',catalog)
 
     def test_optional_chat_is_hidden_until_an_approved_model_is_loaded(self):
         source=self.client.get('/assets/news-chat/chat.js').text
