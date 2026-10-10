@@ -14,5 +14,6 @@ html[data-portal="report"] .report-metadata{display:grid;grid-template-columns:a
 html[data-portal="report"] .report-metadata dd{margin:0}
 html[data-portal="report"] .report-version{padding:16px;border:1px solid #dce5f4;border-radius:12px;margin-block:12px}
 html[data-portal="report"] .report-version summary{cursor:pointer;font-weight:600}
+.report-list-tags{display:flex;gap:6px;flex-wrap:wrap;width:100%}.report-metadata dt .report-help{margin-inline-start:8px}
 .report-topbar h1{flex:1;min-width:0;line-height:1.5}.report-topbar h1>span:first-child{overflow-wrap:anywhere}.report-topbar .report-help{flex:0 0 19px}.report-topbar #reportLanguage{flex:0 0 160px;width:160px;min-width:0;font-size:13px}.report-account{font-size:13px}.report-account .report-btn{background:#ffffff12;color:#eaf1ff;border:1px solid #ffffff30;text-align:start;justify-content:flex-start}.report-account .report-btn:hover{background:#ffffff24}.report-sidebar nav button{font-size:14px}.report-topbar #reportLanguage:focus-visible{outline:3px solid #a7bcff}
 @media(max-width:650px){.report-topbar{gap:12px}.report-topbar h1{font-size:20px}.report-topbar #reportLanguage{flex-basis:124px;width:124px}}

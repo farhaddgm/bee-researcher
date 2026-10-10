@@ -258,6 +258,7 @@ async def list_reports(user, business_id, offset=0, limit=20):
                 {
                     "id": str(report.id),
                     "title": value["title"],
+                    "tags": value.get("tags", []),
                     "created_at": report.created_at.isoformat(),
                     "state": job.status if job else report.state,
                     "version": version.number,

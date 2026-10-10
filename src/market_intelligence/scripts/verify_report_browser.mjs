@@ -41,9 +41,13 @@ try{
   await page.locator('#reportDialog input[type="checkbox"]').check();
   await page.locator('#reportDialog button').filter({hasText:'Submit for private analysis'}).click();
   await page.locator('#reportListItems button').first().waitFor();checks++;
-  await page.waitForFunction(()=>document.getElementById('reportListItems')?.textContent.includes('Analysis ready'),{},{timeout:40000});checks++;
+  await page.waitForFunction(()=>/Analysis ready|Analysis failed/.test(document.getElementById('reportListItems')?.textContent||''),{},{timeout:40000});
+  assert((await page.locator('#reportListItems').textContent()).includes('Analysis ready'),'Synthetic private analysis must succeed');checks++;
   await page.locator('#reportListItems button').first().click();
   await page.locator('#reportDialogContent').filter({hasText:'The company says it launched software'}).waitFor();checks++;
+  assert((await page.locator('#reportDialogContent').textContent()).includes('Short term'));
+  assert((await page.locator('#reportDialogContent').textContent()).includes('Model confidence'));
+  assert((await page.locator('#reportDialogContent').textContent()).includes('Topic threshold'));checks++;
   await page.keyboard.press('Escape');await page.locator('#reportDialog').waitFor({state:'hidden'});checks++;
   await page.waitForFunction(()=>document.querySelector('#reportListItems button')===document.activeElement);checks++;
   await page.setViewportSize({width:390,height:844});
