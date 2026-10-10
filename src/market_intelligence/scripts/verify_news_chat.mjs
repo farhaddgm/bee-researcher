@@ -59,6 +59,9 @@ try{
   // Create a real new workspace AFTER the policy was saved: no chat allowlist edit.
   const future=await api(owner,'/admin/api/assistants','POST',{slug:'synthetic-future-chat',name:'Synthetic future chat'});
   assert.equal(future.status,200);const futureId=future.data.id;
+  // Drafts are intentionally absent from User; enable the synthetic workspace,
+  // not its chat capability, using the normal project lifecycle endpoint.
+  assert.equal((await api(owner,'/admin/api/assistants/'+futureId,'PATCH',{status:'testing'})).status,200);
   const futureModels=await api(owner,'/user/api/chat/models?assistant_id='+futureId);
   assert.equal(futureModels.status,401,'Admin cookie must not act as a reader cookie');
   const ownerReaderContext=await browser.newContext(),ownerReader=await ownerReaderContext.newPage();
