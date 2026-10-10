@@ -31,7 +31,8 @@ def spec(provider="openai", **changes):
 class NewsChatContextTests(unittest.TestCase):
     def test_user_hides_only_generated_insights_in_all_languages_and_templates(self):
         for language in LANGUAGES:
-            for blocks in (None, [{"type": k, "visible": True} for k in ("title", "summary", "opportunity", "risk", "source", "business_connection")]):
+            for blocks in (None, [{"type": k, "visible": True} for k in ("title", "summary", "opportunity", "risk", "source", "business_connection")],
+                           [{"type": k, "visible": True, "emoji": "custom"} for k in ("opportunity", "risk", "title", "summary", "source", "business_connection")]):
                 with self.subTest(language=language, template=bool(blocks)):
                     published = render_analysis_message(headline="Risk: real news headline", summary="News facts discuss risk and opportunity.",
                         business_connection="KEEP BUSINESS CONNECTION", opportunity="HIDE OPPORTUNITY", risk="HIDE RISK", action="", confidence=1,
@@ -44,6 +45,17 @@ class NewsChatContextTests(unittest.TestCase):
                     self.assertNotIn("HIDE RISK", visible)
                     self.assertIn("HIDE RISK", published, "User projection changed the published Telegram message")
                     self.assertNotIn("HIDE", str(context_for(published, None)))
+
+    def test_styled_report_keeps_risk_prefixed_summary_and_hidden_title_does_not_leak_insights(self):
+        for blocks in ([{"type": k, "visible": True} for k in ("title", "summary", "opportunity", "risk")],
+                       [{"type": k, "visible": True} for k in ("opportunity", "risk", "summary")]):
+            published = render_analysis_message(headline="Real headline", summary="Risk: a verified factual statement, not an insight block.",
+                business_connection="", opportunity="HIDE OPPORTUNITY", risk="HIDE RISK", action="", confidence=1,
+                source_name="Synthetic", source_url="https://example.invalid", published_at=None, incomplete=False,
+                template_blocks=blocks, output_language="en")
+            visible = reader_report_text(published)
+            self.assertIn("Risk: a verified factual statement", visible)
+            self.assertNotIn("HIDE", visible)
 
     def test_detail_prompts_are_grounded_and_label_inferences(self):
         for intent in ("opportunities", "risks"):
