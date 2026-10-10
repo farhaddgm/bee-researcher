@@ -5,7 +5,7 @@
     'checkAssistantReadiness','openAssistantModal','openCloneAssistantModal','activateAssistant',
     'toggleSource','openSourceModal','toggleTopic','openTopicModal','editUser','revokeSession',
     'closeModal','publishFromReview','manageUserAccess','deleteUser','activateBusiness',
-    'openBusinessEditor','deleteBusiness','deleteSourceFromUi','deleteTopicFromUi',
+    'deactivateBusiness','openBusinessEditor','deleteBusiness','deleteSourceFromUi','deleteTopicFromUi',
     'restoreAssistantFromUi','permanentDeleteAssistantFromUi','runIncidentHealth','closeIncident']);
   function splitArgs(text) {
     const result=[]; let quote='',escaped=false,start=0,depth=0;

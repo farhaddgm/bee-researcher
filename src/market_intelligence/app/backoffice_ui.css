@@ -60,6 +60,11 @@ html[data-theme="dark"] #app{--muted:#b0bed0}
 #app .table-wrap>table:not(.schedule-grid){min-width:650px}
 #app .table-wrap th{line-height:1.6;white-space:normal;vertical-align:middle}
 #app .table-wrap td{vertical-align:middle}
+/* News actions and translated status labels stay inside their own columns. */
+#app #view-content .publication-news-cell>.btn{display:block;width:100%;max-width:100%;height:auto;min-height:40px;text-align:start;white-space:normal;overflow-wrap:anywhere;line-height:1.65;padding:8px 10px}
+#app #view-content tbody .status{max-width:100%;box-sizing:border-box;white-space:normal;overflow-wrap:anywhere}
+#app #view-content tbody .status::before{flex-shrink:0}
+#app #view-content tbody td.muted{white-space:normal;overflow-wrap:anywhere}
 #app .table-wrap :is(th,td)[colspan]{width:auto!important;min-width:0!important;max-width:none!important;text-align:center!important;white-space:normal!important}
 #app .table-wrap td.empty[colspan]{display:table-cell!important;padding:28px 16px!important}
 #app .table-wrap td[colspan] .empty{padding:28px 16px;max-width:none!important;min-width:0!important;text-align:center}

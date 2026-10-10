@@ -1,7 +1,7 @@
 # Reuse the exact current production dependency image; no dependency upgrade.
 FROM ghcr.io/farhaddgm/bee-researcher-market-intelligence@sha256:e4d12a6f45666ec2cefd8277360667ae7fa7d1e4b4d353ad157732e33d400043
 ARG SOURCE_REVISION=unknown
-LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" org.opencontainers.image.version="3.41.0"
+LABEL org.opencontainers.image.revision="${SOURCE_REVISION}" org.opencontainers.image.version="3.41.1"
 ENV MARKET_INTELLIGENCE_BUILD_REVISION=${SOURCE_REVISION}
 COPY --chown=10002:10002 alembic.ini .
 COPY --chown=10002:10002 alembic ./alembic
