@@ -21,6 +21,7 @@ from app.database import SessionLocal,engine
 from app.models import AdminSession,AdminUser
 from app.freshness_notifications import reconcile_inbox
 from app.security_controls import new_csrf_token
+from app.admin import owner_email
 
 
 async def main(args):
@@ -35,7 +36,7 @@ async def main(args):
     # Session/notice IDs remain only inside this process; print coarse results.
     try:
         async with SessionLocal() as session:
-            owner=await session.scalar(select(AdminUser).where(AdminUser.email==cfg.owner_email,
+            owner=await session.scalar(select(AdminUser).where(AdminUser.email==owner_email(),
                 AdminUser.active.is_(True)).with_for_update())
             if owner is None:raise RuntimeError('active_owner_required')
             owner_id=owner.id
