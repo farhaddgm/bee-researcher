@@ -5,7 +5,7 @@ publication. The source repository is public; application access is not.
 
 ## Repository layout
 
-- `src/market_intelligence/app`: Researcher API, Admin/User portals and pipeline.
+- `src/market_intelligence/app`: Researcher API, Admin/User/Report portals and pipeline.
 - `src/market_intelligence/tests`: unit and contract regression tests.
 - `src/market_intelligence/scripts`: isolated SQL/browser acceptance suites.
 - `docs`: product/integration documents and release notes.
@@ -14,7 +14,18 @@ publication. The source repository is public; application access is not.
 
 The service version is defined in `src/market_intelligence/VERSION`. Read the
 [service guide](src/market_intelligence/README.md) and
-[3.39.1 release notes](docs/RELEASE-v3.39.1-fa.md) before running it.
+[3.41.0 release notes](docs/RELEASE-v3.41.0-fa.md) before running it.
+
+## Private company reports
+
+`/report` accepts unpublished company news using the same sign-in mechanism as
+`/user`, but with independent sessions and explicit business/project grants.
+The Owner configures Reporter/Business Manager access in Admin's Accounts and
+access section. A Business Manager must consent to the AI data policy before
+external analysis. Reports never enter the public news or publication pipeline.
+See the [implementation and onboarding guide](docs/REPORT-PORTAL-IMPLEMENTATION-fa.md)
+for scope, limits, encryption, retention, provider disclosure and safe deployment.
+No real account grant or business consent is created automatically.
 
 ## Release safety
 
