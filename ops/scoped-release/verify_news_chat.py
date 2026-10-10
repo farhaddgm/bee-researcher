@@ -164,8 +164,6 @@ def main():
             run('run','--rm','--entrypoint','node','--network',net,*browser_mounts(modules),
                 '-e',f'BEE_USER_URL=http://{names["app"]}:8010/user','-e','MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_USERNAME=chat-owner',
                 '-e','MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_PASSWORD=synthetic violet herons cross mountain lakes',PW,'scripts/verify_user_portal.mjs')
-            run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_news_chat_sql.py')
-            run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_job_recovery_sql.py')
             # The modularized Admin document must keep real modal hit tests,
             # ticket conversations, locale rendering and keyboard semantics.
             for script in ('verify_admin_support.mjs', 'verify_admin_catalog_viewports.mjs',
@@ -176,6 +174,15 @@ def main():
                     '-e','MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_USERNAME=chat-owner',
                     '-e','MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_PASSWORD=synthetic violet herons cross mountain lakes',
                     PW,'scripts/'+script,timeout=360)
+            # The SQL gate creates queued/running rows to inspect erasure and
+            # reservation invariants before provider work. A live fixture
+            # worker can claim those rows between transactions and settle
+            # usage, making the expected pre-execution state nondeterministic.
+            # Browser gates above exercise the real worker; stop it gracefully
+            # before SQL state probes, while retaining the same real database.
+            run('stop','--time','30',names['app'],capture=True)
+            run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_news_chat_sql.py')
+            run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_job_recovery_sql.py')
             print('Isolated news-chat acceptance gate passed; no live credentials or calls.')
         finally:
             if controller and controller.poll() is None:
