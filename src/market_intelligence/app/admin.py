@@ -1188,7 +1188,7 @@ async def authenticate(
         user.last_login_at = datetime.now(timezone.utc)
         raw = _add_session(session, user, nightly_reader_expiry=nightly_reader_expiry, mfa_required=require_mfa and _mfa_enabled(user), portal=portal)
         await session.commit()
-    await _audit(user.id, "admin.login", details={"method": "password"})
+    await _audit(user.id, "admin.login", details={"method": "password", "login_history_recorded": True})
     return raw, user
 
 
@@ -1301,7 +1301,7 @@ async def login_with_google(identity: GoogleIdentity, *, portal: str) -> tuple[s
         except IntegrityError as exc:
             await session.rollback()
             raise GoogleAuthError("not_allowed", "identity binding conflict") from exc
-    await _audit(user.id, "admin.login", details={"method": "google", "portal": portal})
+    await _audit(user.id, "admin.login", details={"method": "google", "portal": portal, "login_history_recorded": True})
     return raw, user
 
 

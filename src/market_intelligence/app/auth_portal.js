@@ -21,9 +21,19 @@
   };
   const languages=['fa','en','tr','ar','es','it','de','fr'];
   const words={
-    title:['ورود به Bee Researcher','Sign in to Bee Researcher','Bee Researcher’a giriş','تسجيل الدخول إلى Bee Researcher','Iniciar sesión en Bee Researcher','Accedi a Bee Researcher','Bei Bee Researcher anmelden','Se connecter à Bee Researcher'],
+    loginHistory:['گزارش ورود کاربران','User sign-in history','Kullanıcı giriş geçmişi','سجل دخول المستخدمين','Historial de acceso de usuarios','Cronologia accessi utenti','Anmeldeverlauf der Nutzer','Historique de connexion des utilisateurs'],
+    loginHistoryHint:['ورودهای موفق و ناموفق همهٔ کاربران، شامل حساب‌های گوگل خارج از فهرست مجاز؛ جدیدترین تلاش‌ها در ابتدا نمایش داده می‌شوند.','Successful and failed sign-ins for all users, including Google accounts outside the allowlist. Newest attempts appear first.','İzin listesi dışındaki Google hesapları dahil tüm kullanıcıların başarılı ve başarısız girişleri. En yeni denemeler önce gösterilir.','عمليات الدخول الناجحة والفاشلة لجميع المستخدمين، بما فيها حسابات Google خارج قائمة السماح. تظهر أحدث المحاولات أولاً.','Accesos correctos y fallidos de todos los usuarios, incluidas cuentas de Google fuera de la lista permitida. Primero se muestran los más recientes.','Accessi riusciti e non riusciti di tutti gli utenti, inclusi gli account Google non autorizzati. I tentativi più recenti appaiono per primi.','Erfolgreiche und fehlgeschlagene Anmeldungen aller Nutzer, einschließlich nicht freigegebener Google-Konten. Neueste Versuche zuerst.','Connexions réussies et échouées de tous les utilisateurs, y compris les comptes Google non autorisés. Les tentatives récentes apparaissent en premier.'],
+    loginTime:['تاریخ و ساعت','Date and time','Tarih ve saat','التاريخ والوقت','Fecha y hora','Data e ora','Datum und Uhrzeit','Date et heure'],
+    loginOutcome:['نتیجهٔ ورود','Sign-in result','Giriş sonucu','نتيجة الدخول','Resultado del acceso','Esito accesso','Anmeldeergebnis','Résultat de connexion'],
+    loginSuccess:['موفق','Successful','Başarılı','ناجح','Correcto','Riuscito','Erfolgreich','Réussie'],
+    loginFailure:['ناموفق','Failed','Başarısız','فاشل','Fallido','Non riuscito','Fehlgeschlagen','Échouée'],
+    loginEmpty:['هنوز تلاشی برای ورود ثبت نشده است.','No sign-in attempts recorded yet.','Henüz giriş denemesi kaydedilmedi.','لم تُسجَّل محاولات دخول بعد.','Aún no se han registrado intentos de acceso.','Nessun tentativo di accesso registrato.','Noch keine Anmeldeversuche erfasst.','Aucune tentative de connexion enregistrée.'],
+    loginReason:['دلیل','Reason','Neden','السبب','Motivo','Motivo','Grund','Motif'],
+    loginPortal:['بخش','Portal','Portal','البوابة','Portal','Portale','Portal','Portail'],
+    googleMethod:['گوگل','Google','Google','Google','Google','Google','Google','Google'],
+    passwordMethod:['رمز عبور','Password','Parola','كلمة المرور','Contraseña','Password','Passwort','Mot de passe'],
+    invalid_credentials:['اطلاعات ورود نادرست است.','Invalid sign-in credentials.','Giriş bilgileri geçersiz.','بيانات الدخول غير صحيحة.','Credenciales de acceso incorrectas.','Credenziali di accesso non valide.','Ungültige Anmeldedaten.','Identifiants de connexion incorrects.'],
     google:['ورود با گوگل','Sign in with Google','Google ile giriş yap','تسجيل الدخول باستخدام Google','Iniciar sesión con Google','Accedi con Google','Mit Google anmelden','Se connecter avec Google'],
-    allowed:['فقط حساب‌های مجاز می‌توانند وارد شوند.','Only authorized accounts can sign in.','Yalnızca yetkili hesaplar giriş yapabilir.','يمكن للحسابات المصرح لها فقط تسجيل الدخول.','Solo pueden acceder las cuentas autorizadas.','Possono accedere solo gli account autorizzati.','Nur autorisierte Konten können sich anmelden.','Seuls les comptes autorisés peuvent se connecter.'],
     email:['ایمیل یا نام کاربری حساب قدیمی','Email or legacy username','E-posta veya eski kullanıcı adı','البريد الإلكتروني أو اسم المستخدم القديم','Correo electrónico o usuario anterior','Email o nome utente precedente','E-Mail oder bisheriger Benutzername','E-mail ou ancien nom d’utilisateur'],
     password:['رمز عبور','Password','Parola','كلمة المرور','Contraseña','Password','Passwort','Mot de passe'],
     signin:['ورود به حساب','Sign in','Giriş yap','تسجيل الدخول','Iniciar sesión','Accedi','Anmelden','Se connecter'],
@@ -97,9 +107,6 @@
   icon.setAttribute('viewBox','0 0 48 48');icon.setAttribute('aria-hidden','true');
   icon.innerHTML='<path fill="#4285f4" d="M43.6 20.5H24v8h11.3C33.7 32.7 29.2 36 24 36a12 12 0 1 1 7.9-21.1l5.7-5.7A20 20 0 1 0 44 24c0-1.3-.1-2.4-.4-3.5z"/>';
   const buttonLabel=document.createElement('span');button.replaceChildren(icon,buttonLabel);
-  const title=document.createElement('h1');title.className='auth-title';
-  const description=document.createElement('p');description.className='auth-description';
-  button.before(title,description);
   const note=document.createElement('p');note.className='auth-provider-note';note.hidden=document.body.dataset.googleReady==='true';button.after(note);
   const username=document.getElementById('loginUser')||document.getElementById('username'),password=document.getElementById('loginPass')||document.getElementById('password');
   function label(input,key){if(!input)return;const node=document.createElement('label');node.htmlFor=input.id;node.className='auth-field-label';input.before(node);return node}
@@ -111,7 +118,7 @@
   button.href='/auth/google/start?'+new URLSearchParams({portal,redirectTo:path});
   if(error){params.delete('login_error');history.replaceState(null,'',location.pathname+(params.size?'?'+params:'')+location.hash)}
   function render(){
-    title.textContent=t('title');description.textContent=t('allowed');buttonLabel.textContent=t('google');note.textContent=t('not_configured');
+    buttonLabel.textContent=t('google');note.textContent=t('not_configured');
     if(username){username.placeholder=t('email');username.setAttribute('aria-label',t('email'));emailLabel.textContent=t('email')}
     if(password){password.placeholder=t('password');password.setAttribute('aria-label',t('password'));passLabel.textContent=t('password')}
     const submit=document.getElementById('loginSubmit')||document.getElementById('loginButton');if(submit)submit.textContent=t('signin');

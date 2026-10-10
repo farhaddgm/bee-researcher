@@ -14,6 +14,7 @@
     "admin:models:e2e": "node scripts/verify_ai_model_settings.mjs",
     "admin:research-context:e2e": "node scripts/verify_research_context_browser.mjs",
     "admin:accounts:e2e": "node scripts/verify_account_access_browser.mjs",
+    "admin:login-history:e2e": "node scripts/verify_login_history_browser.mjs",
     "admin:accessibility:e2e": "node scripts/verify_admin_accessibility.mjs",
     "admin:catalog:e2e": "node scripts/verify_admin_catalog_viewports.mjs"
   },

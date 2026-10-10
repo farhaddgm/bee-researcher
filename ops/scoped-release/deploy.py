@@ -91,7 +91,7 @@ def runtime_preflight(ref, env_path):
 def rollback_service(current, environment, version):
     service = {"image": current["Image"], "stop_grace_period": "600s", "environment": dict(environment)}
     old = current["Config"]["Labels"]["org.opencontainers.image.version"]
-    if (old in {"3.39.0", "3.39.1"} and version == "3.40.0") or (old in {"3.40.0", "3.40.1"} and version == "3.41.0"):
+    if (old in {"3.39.0", "3.39.1"} and version == "3.40.0") or (old in {"3.40.0", "3.40.1", "3.40.2"} and version == "3.41.0"):
         # Auth configuration is still checked. A separate candidate-package
         # preflight verifies least privilege before the legacy app is restored.
         # Never downgrade 0045 or ask the 0044-only preflight to read it.

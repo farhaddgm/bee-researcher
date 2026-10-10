@@ -1,0 +1,15 @@
+#loginHistoryPanel{min-width:0;margin-top:16px}
+#loginHistoryPanel .login-history-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+#loginHistoryPanel h3{margin:0;font-size:18px}
+#loginHistoryPanel .accounts-help{margin:12px 0;line-height:1.8}
+#loginHistoryPanel [role="alert"]{color:#bc2844}
+#loginHistoryPanel .login-history-scroll{overflow:auto;width:100%;border:1px solid var(--line,#dde5f2);border-radius:12px}
+#loginHistoryPanel table{width:100%;min-width:750px;border-collapse:collapse}
+#loginHistoryPanel th,#loginHistoryPanel td{padding:13px 12px;text-align:start;vertical-align:middle;overflow-wrap:anywhere;font-size:13px}
+#loginHistoryPanel th{background:var(--soft,#f3f6fc);font-size:12px;color:var(--muted)}
+#loginHistoryPanel td{border-top:1px solid var(--line,#dde5f2)}
+#loginHistoryPanel .login-history-email{min-width:180px}
+#loginHistoryPanel .is-failed{background:#fff1f3;color:#bc2844}
+#loginHistoryPanel .login-history-pagination{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:16px;flex-wrap:wrap}
+#loginHistoryPanel button{min-height:40px!important;width:auto!important;padding:0 14px!important;font:inherit;font-size:13px!important;white-space:nowrap}
+#loginHistoryPanel :focus-visible{outline:3px solid #91acf7;outline-offset:2px}

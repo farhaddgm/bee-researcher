@@ -683,6 +683,7 @@ async def client_error_report(
 from app.security_controls import USER_CSRF_COOKIE, request_activity, is_trusted_proxy
 from app.admin import canonical_login_identity
 from app.security_events import record_security_event, client_hash
+from app.login_history import record_login_attempt, list_login_history
 
 @app.middleware("http")
 async def private_indexing_headers(request: Request, call_next):
@@ -1218,12 +1219,15 @@ def _login_client_address(request: Request) -> str:
 
 async def _rate_limited_password_login(payload: LoginRequest, response: Response, http_request: Request, login_fn) -> dict[str, object]:
     """Apply the shared per-account and per-client budget to a password login."""
+    portal = "report" if http_request.url.path.startswith("/report/") else "user" if http_request.url.path.startswith("/user/") else "admin"
     username = payload.username.strip().lower()
     if "@" in username:
         username = google_auth.normalize_email(username)
     username = await canonical_login_identity(username)
     client_address = _login_client_address(http_request)
     if await login_attempts_exceeded(settings, username, client_address):
+        await record_login_attempt(method="password", portal=portal, successful=False,
+                                   username=payload.username, reason="rate_limited")
         await record_security_event("login.rate_limited", severity="warning", details={"client_hash": client_hash(client_address)})
         raise HTTPException(
             status_code=429,
@@ -1233,10 +1237,19 @@ async def _rate_limited_password_login(payload: LoginRequest, response: Response
     try:
         result = await login_fn(payload, response)
     except HTTPException as exc:
+        await record_login_attempt(method="password", portal=portal, successful=False,
+                                   username=payload.username,
+                                   reason="inactive" if exc.detail == "account_disabled" else
+                                   "not_allowed" if exc.status_code == 403 else "invalid_credentials")
         if exc.status_code == 401:
             await record_security_event("login.failed", severity="warning", details={"client_hash": client_hash(client_address)})
             await record_login_failure(settings, username, client_address)
         raise
+    except Exception:
+        await record_login_attempt(method="password", portal=portal, successful=False,
+                                   username=payload.username, reason="failed")
+        raise
+    await record_login_attempt(method="password", portal=portal, successful=True, username=payload.username)
     await clear_login_failures(settings, username, client_address)
     return result
 
@@ -1275,8 +1288,10 @@ async def google_login_start(request: Request, portal: str = Query(default="admi
             raise google_auth.GoogleAuthError("rate_limited")
         url, flow_cookie = google_auth.start_flow(settings, portal, redirectTo)
     except google_auth.GoogleAuthError as exc:
+        await record_login_attempt(method="google", portal=portal, successful=False, reason=exc.code)
         return _google_login_error(portal, exc.code)
     except HTTPException:
+        await record_login_attempt(method="google", portal=portal, successful=False, reason="failed")
         return _google_login_error(portal, "failed")
     response = RedirectResponse(url=url, status_code=302)
     # SameSite=Lax: Google's redirect back is a cross-site top-level GET.
@@ -1301,6 +1316,7 @@ async def google_login_callback(
 ) -> RedirectResponse:
     """Google redirects here; success sets the portal session and returns home."""
     portal = "admin"
+    identity = None
     client_address = _login_client_address(request)
     try:
         flow = google_auth.read_flow(settings, request.cookies.get(google_auth.FLOW_COOKIE))
@@ -1310,14 +1326,24 @@ async def google_login_callback(
         identity = await google_auth.finish_flow(settings, code=code, state=state, error=error, flow=flow)
         raw, _user = await login_with_google(identity, portal=portal)
     except google_auth.GoogleAuthError as exc:
+        await record_login_attempt(method="google", portal=portal, successful=False,
+                                   email=identity.email if identity else None, reason=exc.code)
         if exc.code in {"not_allowed", "not_gmail", "inactive", "failed"}:
             await record_ip_login_failure(settings, client_address)
         if exc.code == "failed":
             logger.warning("google sign-in failed: %s", redact_sensitive_text(str(exc), limit=300))
-        await accounts.admin._audit(None, "auth.google.failed", details={"portal": portal, "reason": exc.code})
+        await accounts.admin._audit(None, "auth.google.failed", details={"portal": portal, "reason": exc.code, "login_history_recorded": True})
         return _google_login_error(portal, exc.code)
     except HTTPException:
+        await record_login_attempt(method="google", portal=portal, successful=False,
+                                   email=identity.email if identity else None, reason="failed")
         return _google_login_error(portal, "failed")
+    except Exception:
+        await record_login_attempt(method="google", portal=portal, successful=False,
+                                   email=identity.email if identity else None, reason="failed")
+        return _google_login_error(portal, "failed")
+    await record_login_attempt(method="google", portal=portal, successful=True,
+                               email=identity.email, actor_id=_user.id)
     response = RedirectResponse(url=google_auth.safe_redirect(portal, flow.get("redirect_to")), status_code=302)
     response.delete_cookie(google_auth.FLOW_COOKIE, path=google_auth.FLOW_COOKIE_PATH)
     if portal == "user":
@@ -1328,6 +1354,12 @@ async def google_login_callback(
     else:
         set_admin_session_cookies(response, raw)
     return response
+
+
+@app.get("/admin/api/owner/login-history")
+async def admin_api_login_history(page: int = Query(default=1, ge=1),
+                                 token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict:
+    return await list_login_history(await current_admin(token), page=page)
 
 
 @app.get("/admin/api/owner/google-access")

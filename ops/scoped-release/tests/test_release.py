@@ -16,7 +16,7 @@ REF = "ghcr.io/farhaddgm/bee-researcher-market-intelligence@sha256:" + "b" * 64
 
 class ScopedReleaseTests(unittest.TestCase):
     def test_report_upgrade_rollback_preserves_forward_private_schema(self):
-        for old in ('3.40.0', '3.40.1'):
+        for old in ('3.40.0', '3.40.1', '3.40.2'):
             current={'Image':'old-image','Config':{'Labels':{'org.opencontainers.image.version':old}}}
             service=release.rollback_service(current,{'MARKET_INTELLIGENCE_VERSION':old},'3.41.0')
             self.assertIn('app.auth_deployment',service['command'][-1])
