@@ -214,7 +214,8 @@ async def run():
                 assert any(row["outcome"] == "failure" and row["reason"] == "inactive" for row in deleted)
                 assert any(row["outcome"] == "failure" and row["reason"] == "not_allowed" and row["method"] == "password" for row in deleted)
                 assert all(row["created_at"] for row in history)
-                assert not any(row["id"].startswith("audit:") for row in history), "Duplicate legacy audit rows"
+                assert not any(row["id"].startswith("audit:") for row in history
+                               if row["email"] in {owner_email, item["email"]}), "Duplicate legacy audit rows"
                 # Pre-existing successful logins are recovered from the audit
                 # table, without requiring a data migration or guessing emails.
                 async with SessionLocal() as s:

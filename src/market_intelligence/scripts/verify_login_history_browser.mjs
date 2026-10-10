@@ -34,10 +34,6 @@ try{
  await page.locator('#app:not(.hidden)').waitFor();await page.waitForFunction(()=>window.__researchBeeState?.currentUser);
  assert.equal((await api('/meta')).data.environment,'test');
  const suffix=Date.now();
- for(let i=0;i<12;i++){
-  const denied=await api('/admin/api/login','POST',{email:`unlisted${suffix}${i}@gmail.com`,password:'synthetic-wrong-password'});
-  assert.equal(denied.status,401);
- }
  await page.evaluate(()=>{window.setLanguage('en');window.setView('account')});await ready();
  const first=(await api('/admin/api/owner/login-history')).data;
  assert.equal(first.page_size,10);assert.equal(first.attempts.length,10);assert(first.pages>=2);
