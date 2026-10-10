@@ -102,6 +102,7 @@ async def fixtures():
     users, projects = await seed()
     value = {
         "reporter": users[0].username,
+        "reporter_id": str(users[0].id),
         "manager": users[2].username,
         "owner": users[3].username,
         "project": str(projects[0].id),

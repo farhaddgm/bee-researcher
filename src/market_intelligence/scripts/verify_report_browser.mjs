@@ -67,6 +67,29 @@ try{
   assert.equal(await page.locator('#reportDialog button').filter({hasText:'Create revision'}).count(),0);checks++;
   assert.equal(await page.locator('#reportDialog button').filter({hasText:'New report'}).count(),0);checks++;
   await page.keyboard.press('Escape');await page.locator('#reportLogout').click();await page.locator('#login').waitFor({state:'visible'});checks++;
+  await page.goto(base+'/admin/login-up');
+  await page.locator('#loginUser').fill(fixture.owner);await page.locator('#loginPass').fill('Synthetic-report-test-42!');await page.locator('#loginSubmit').click();
+  await page.locator('#app:not(.hidden)').waitFor();await page.waitForFunction(()=>window.__researchBeeState?.currentUser);
+  await page.evaluate(()=>{window.setLanguage('en');window.setView('account');});await page.locator('#reportAccessPanel').waitFor();checks++;
+  for(const lang of ['en','fa','tr','ar','es','it','de','fr']){
+    await page.evaluate(lang=>window.setLanguage(lang),lang);
+    await page.locator('#reportBindProject').waitFor();
+    for(const width of [1280,390]){await page.setViewportSize({width,height:900});assert(await page.locator('#reportAccessPanel').evaluate(n=>n.scrollWidth<=n.clientWidth+2));checks++;}
+    assert.equal(await page.locator('#reportAccessPanel label label').count(),0);checks++;
+  }
+  await page.setViewportSize({width:1280,height:900});await page.evaluate(()=>window.setLanguage('en'));
+  await page.locator('#reportBindProject').selectOption(fixture.project);
+  const binding=page.waitForResponse(r=>r.url().endsWith('/admin/api/report/businesses')&&r.request().method()==='POST');
+  await page.locator('#reportAccessPanel button').filter({hasText:'Enable business reporting'}).click();assert.equal((await binding).status(),200);checks++;
+  const ownerAccess=await(await page.request.get(base+'/admin/api/report/access')).json();
+  const ownerBusiness=ownerAccess.businesses.find(b=>b.projects.includes(fixture.project));assert(ownerBusiness);
+  await page.locator('#reportBusinessAccess').selectOption(ownerBusiness.id);
+  await page.locator('#reportAccountAccess').selectOption(fixture.reporter_id);await page.locator('#reportRoleAccess').selectOption('reporter');
+  const grant=page.waitForResponse(r=>r.url().endsWith('/admin/api/report/grants')&&r.request().method()==='PUT');
+  await page.locator('#reportAccessPanel button').filter({hasText:'Save access'}).click();assert.equal((await grant).status(),200);checks++;
+  await page.locator('#reportAccountAccess').waitFor();
+  const ownerAxe=await new AxeBuilder({page}).include('#reportAccessPanel').analyze();
+  assert.equal(ownerAxe.violations.filter(v=>['critical','serious'].includes(v.impact)).length,0,JSON.stringify(ownerAxe.violations));checks++;
   assert.equal(errors.length,0,errors.join('\n'));checks++;
   console.log(JSON.stringify({status:'passed',checks,locales:8,synthetic:true}));
-}catch(e){console.error(JSON.stringify({pageErrors:errors,loginError:await page.locator('#loginError').textContent()}));throw e;}finally{await context.close();await browser.close();}
+}catch(e){const loginError=page.locator('#loginError,#loginErr');console.error(JSON.stringify({pageErrors:errors,error:e.message,checks,loginError:await loginError.count()?await loginError.first().textContent():null}));if(process.env.REPORT_ARTIFACT_DIR)await page.screenshot({path:process.env.REPORT_ARTIFACT_DIR+'/report-failure.png',fullPage:true});throw e;}finally{await context.close();await browser.close();}
