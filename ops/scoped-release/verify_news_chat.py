@@ -182,6 +182,7 @@ def main():
             # before SQL state probes, while retaining the same real database.
             run('stop','--time','30',names['app'],capture=True)
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_news_chat_sql.py')
+            run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_project_memory_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_job_recovery_sql.py')
             print('Isolated news-chat acceptance gate passed; no live credentials or calls.')
         finally:

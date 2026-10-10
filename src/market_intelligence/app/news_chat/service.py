@@ -113,7 +113,8 @@ async def close_window(s, cid, pid, user):
     if c is not None:
         if c.user_id != user.id or c.publication_id != pid:
             raise HTTPException(404, "news_unavailable")
-        await erase_conversation(s, c)
+        if not c.saved_at:
+            await erase_conversation(s, c)
     else:
         pub = await publication(s, pid, user)
         count = await s.scalar(select(func.count()).select_from(ChatConversation).where(ChatConversation.user_id == user.id, ChatConversation.created_at > now() - timedelta(days=1))) or 0
@@ -128,7 +129,7 @@ def view(g):
     return {"id": str(g.id), "conversation_id": str(g.conversation_id), "question": g.question,
             "answer": g.answer, "status": g.status, "error_code": g.error_code,
             "provider": g.model["provider"], "model": g.model["label"], "model_key": g.model["provider"] + ":" + g.model["model_id"],
-            "citations": g.citations, "feedback": g.feedback, "created_at": g.created_at.isoformat()}
+            "citations": g.citations, "feedback": g.feedback, "language": g.language, "created_at": g.created_at.isoformat()}
 
 
 async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict:
@@ -340,7 +341,7 @@ async def maintenance_once():
         # delivered. Browser heartbeats never renew the login's idle timeout.
         valid_sessions = select(AdminSession.token_hash).where(AdminSession.portal == "user", AdminSession.expires_at > now())
         abandoned = (await s.scalars(select(ChatConversation).where(
-            ChatConversation.deleted_at.is_(None), ChatConversation.context["_ephemeral"].as_boolean().is_(True),
+            ChatConversation.deleted_at.is_(None), ChatConversation.saved_at.is_(None), ChatConversation.context["_ephemeral"].as_boolean().is_(True),
             or_(ChatConversation.context["_expires_at"].as_string() <= now().isoformat(),
                 ChatConversation.context["_session_hash"].as_string().not_in(valid_sessions)),
         ).limit(500))).all()
@@ -348,12 +349,16 @@ async def maintenance_once():
             await erase_conversation(s, c)
         await s.execute(update(ChatGeneration).where(ChatGeneration.status.in_(ACTIVE), ChatGeneration.deadline < now() - timedelta(seconds=10)).values(status="unknown", error_code="generation_unknown", finished_at=now(), session_hash=""))
         cutoff = now() - timedelta(days=get_settings().news_chat_retention_days)
+        # Saved threads are retained until explicitly removed from memory.
+        expired = (await s.scalars(select(ChatConversation.id).where(ChatConversation.created_at < cutoff, ChatConversation.saved_at.is_(None)).with_for_update())).all()
+        retained = select(ChatConversation.id).where(ChatConversation.saved_at.is_not(None), ChatConversation.deleted_at.is_(None))
         # Covers orphaned billing rows too. Skip already-cleared rows rather
         # than repeatedly rewriting the lifetime financial ledger every tick.
-        await s.execute(update(ChatGeneration).where(ChatGeneration.created_at < cutoff, or_(ChatGeneration.question != "", ChatGeneration.answer != "", ChatGeneration.session_hash != "")).values(question="", answer="", citations=[], session_hash="", cancel_requested=True))
+        await s.execute(update(ChatGeneration).where(ChatGeneration.created_at < cutoff, or_(ChatGeneration.conversation_id.is_(None), ChatGeneration.conversation_id.not_in(retained)), or_(ChatGeneration.question != "", ChatGeneration.answer != "", ChatGeneration.session_hash != "")).values(question="", answer="", citations=[], session_hash="", cancel_requested=True))
         # The frozen database trigger clears text even for cascade deletion;
         # the nullable FK preserves the corresponding consumption records.
-        await s.execute(delete(ChatConversation).where(ChatConversation.created_at < cutoff))
+        if expired:
+            await s.execute(delete(ChatConversation).where(ChatConversation.id.in_(expired)))
         await s.execute(delete(ChatConversation).where(ChatConversation.deleted_at < now() - timedelta(days=1)))
         await s.commit()
 

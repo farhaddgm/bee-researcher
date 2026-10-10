@@ -23,6 +23,14 @@ class ScopedReleaseTests(unittest.TestCase):
             self.assertNotIn('alembic',service['command'][-1])
             self.assertEqual(service['image'],'old-image')
 
+    def test_memory_cutover_rollback_keeps_forward_schema_and_auth(self):
+        current={'Image':'old-image','Config':{'Labels':{'org.opencontainers.image.version':'3.42.1'}}}
+        service=release.rollback_service(current,{},'3.43.0')
+        self.assertIn('app.auth_deployment',service['command'][-1])
+        self.assertNotIn('alembic',service['command'][-1])
+        self.assertEqual(service['image'],'old-image')
+        self.assertNotIn('command',release.rollback_service(current,{},'3.42.1'))
+
     def test_report_mounts_refuse_broad_or_missing_targets(self):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)

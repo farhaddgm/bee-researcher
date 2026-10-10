@@ -1,7 +1,7 @@
 /* A single news-window conversation. Opening never calls a paid provider. */
 (() => {
   'use strict';
-  const i18n=window.BeeNewsChatI18n,reader=window.BeeReader;
+  const i18n=window.BeeNewsChatI18n,reader=window.BeeReader,voice=window.BeeNewsVoice;
   if(!i18n||!reader)return;
   const t=i18n.t,$=id=>document.getElementById(id);
   const node=(tag,text,cls)=>{const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el};
@@ -12,6 +12,8 @@
   let root,layout,messages,composer,error,status,provider,model,language,sendButton,stopButton,freshButton,tip,insights;
   let seq=0,pid=null,context=null,models=[],cid=null,active=null,events=null,rows=[],pending=false,returnUrl=null,heartbeat=null;
   let statusState={key:'loading'},lastError=null,daily=null,ready=false;
+  let responseMode,microphone,voiceStop,voiceStatus,summaryBox,saveButton,savedAt=null,saving=false;
+  let voiceState=null,spoken=new Set();
   const windowThreads=new Map();
   async function api(path,options={}){
     const response=await fetch(path,{credentials:'same-origin',...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});
@@ -19,17 +21,21 @@
     if(!response.ok){const err=new Error(typeof data.detail==='string'?data.detail:'request_failed');err.status=response.status;throw err}return data;
   }
   function messageFor(e){if(e?.status===401)return t('expired');if(e?.status===410)return t('windowExpired');if(e?.message==='context_changed')return t('changed');if(e?.status===429)return t('budget');if(e?.status===403)return t('denied');if(e?.message==='provider_unconfigured'||e?.message==='model_unavailable')return t('unavailable');return t('error')}
-  function drawGuide(){tip.replaceChildren(node('span',t('help')),node('span',t('report')),node('span',t('ephemeral')));if(daily!==null)tip.append(node('span',t('daily')+': '+daily));if(context&&!context.complete)tip.append(node('span',t('partial')))}
+  function drawGuide(){tip.replaceChildren(node('span',t('help')),node('span',t('report')),node('span',t('memoryPrivacy')));if(daily!==null)tip.append(node('span',t('daily')+': '+daily));if(context&&!context.complete)tip.append(node('span',t('partial')))}
   function drawStatus(){status.textContent=statusState.key?t(statusState.key):'';status.hidden=!status.textContent}
   function setStatus(key){statusState={key};drawStatus()}
   function clearError(){lastError=null;error.textContent=''}
   const currentModel=()=>models.find(m=>m.key===model.value);
-  function controls(){const busy=Boolean(active||pending),disabled=busy||!ready||!context||!currentModel();sendButton.disabled=disabled;stopButton.hidden=!active;provider.disabled=busy;model.disabled=busy;freshButton.disabled=busy||!rows.length;for(const b of insights.querySelectorAll('button'))b.disabled=disabled}
+  function controls(){const busy=Boolean(active||pending),disabled=busy||!ready||!context||!currentModel();sendButton.disabled=disabled;stopButton.hidden=!active;provider.disabled=busy;model.disabled=busy;freshButton.disabled=busy||!rows.length;responseMode.disabled=busy;language.disabled=busy;microphone.disabled=disabled||!voice?.canDictate;saveButton.disabled=busy||saving||!cid||Boolean(savedAt)||!rows.some(r=>r.status==='completed'&&r.answer);saveButton.textContent=t(savedAt?'conversationSaved':'saveConversation');for(const b of insights.querySelectorAll('button'))b.disabled=disabled}
   function eraseServer(id){const news=windowThreads.get(id);if(!news)return;windowThreads.delete(id);api('/user/api/publications/'+news+'/conversations/'+id+'/close',{method:'POST',body:'{}',keepalive:true}).catch(()=>{/* A short server lease handles offline, expired sessions and tab crashes. */})}
-  function eraseLocal(){events?.close();events=null;active=null;cid=null;rows=[];composer.value='';delete composer.dataset.signature;delete composer.dataset.key;messages.replaceChildren();error.textContent='';lastError=null}
+  function eraseLocal(){stopVoice();savedAt=null;saving=false;spoken.clear();events?.close();events=null;active=null;cid=null;rows=[];composer.value='';delete composer.dataset.signature;delete composer.dataset.key;messages.replaceChildren();error.textContent='';lastError=null}
   function fail(e){lastError=e;error.textContent=messageFor(e);if(e?.status===401||e?.status===410){for(const id of [...windowThreads.keys()])eraseServer(id);eraseLocal();ready=false;context=null;models=[];provider.replaceChildren();model.replaceChildren();error.textContent=messageFor(e);lastError=e;controls()}}
-  function availability(enabled){layout.dataset.chatEnabled=String(enabled);root.hidden=!enabled;layout.previousElementSibling.hidden=!enabled;if(!enabled){layout.dataset.mobileTab='news';syncTabs()}}
-  function unavailable(key){root.dataset.unavailable='true';availability(true);setStatus(key);controls()}
+  function availability(enabled){layout.dataset.chatEnabled=String(enabled);root.hidden=!enabled;summaryBox.hidden=!enabled;layout.previousElementSibling.hidden=!enabled;if(!enabled){layout.dataset.mobileTab='news';syncTabs()}}
+  function voiceUpdate(key){if(key==='voiceEnded'){voiceStop.hidden=true;if(voiceState==='listening')voiceState='voiceReview';else if(voiceState==='speaking')voiceState=null}else{voiceState=key;voiceStop.hidden=!['listening','speaking'].includes(key)}voiceStatus.textContent=voiceState?t(voiceState):'';microphone.setAttribute('aria-pressed',String(voiceState==='listening'));if(['voiceUnavailable','voiceError'].includes(key)){responseMode.value='text';root.dataset.responseMode='text';render()}}
+  function stopVoice(){voice?.stop();voiceState=null;if(voiceStop){voiceStop.hidden=true;voiceStatus.textContent='';microphone.setAttribute('aria-pressed','false')}}
+  function readAnswer(row){const generation=seq;voice?.speak(row.answer,row.language||language.value,key=>{if(generation===seq)voiceUpdate(key)})}
+  function autoRead(row){if(row.status==='completed'&&row.answer&&responseMode.value!=='text'&&!spoken.has(row.id)){spoken.add(row.id);readAnswer(row)}}
+  function unavailable(key){root.dataset.unavailable='true';availability(true);summaryBox.hidden=true;setStatus(key);controls()}
   function fillModels(key){model.replaceChildren();for(const m of models.filter(m=>m.provider===provider.value)){const o=node('option',m.label);o.value=m.key;model.append(o)}if(key&&[...model.options].some(o=>o.value===key))model.value=key;controls()}
   function resetConversation(){if(cid)eraseServer(cid);eraseLocal();render();controls()}
   function showSegments(){const body=$('dialogBody');body.replaceChildren();for(const seg of context.segments){const p=node('p',seg.text,'chat-segment');p.id='chat-'+seg.id;p.tabIndex=-1;p.dataset.segment=seg.id;body.append(p)}}
@@ -47,6 +53,7 @@
       const actions=node('div',undefined,'chat-actions');
       for(const cite of row.citations||[]){const b=node('button',cite.segment_id,'chat-citation');b.type='button';b.title=cite.quote;b.addEventListener('click',()=>jump(cite));actions.append(b)}
       if(row.answer&&!['queued','running'].includes(row.status)){
+        if(row.status==='completed'){const play=btn('playAnswer',()=>readAnswer(row));play.disabled=!voice?.canSpeak(row.language||language.value);actions.append(play)}
         actions.append(btn('copy',async()=>{try{await navigator.clipboard.writeText(row.answer);setStatus('saved')}catch(e){fail(e)}}),btn('note',async()=>{const generation=seq,origin=[t('model')+': '+providerNames[row.provider]+' · '+row.model,t('news')+': '+location.origin+'/user/news/'+pid];if(row.citations?.length)origin.push(t('references')+': '+row.citations.map(c=>c.segment_id+' — '+c.quote).join('\n'));if(await reader.appendNote(row.answer+'\n\n'+origin.join('\n'))){if(generation===seq)setStatus('saved')}else if(generation===seq)fail({})}));
         for(const [key,value] of [['useful',1],['unhelpful',-1]]){const b=btn(key,async()=>{const generation=seq;try{await api('/user/api/chat-messages/'+row.id+'/feedback',{method:'POST',body:JSON.stringify({value})});if(generation!==seq)return;row.feedback=value;render()}catch(e){if(generation===seq)fail(e)}});b.setAttribute('aria-pressed',String(row.feedback===value));actions.append(b)}
       }
@@ -57,13 +64,13 @@
   }
   function watch(gid,generation){
     events?.close();events=new EventSource('/user/api/chat-generations/'+gid+'/events');const stream=events;
-    stream.addEventListener('snapshot',event=>{if(generation!==seq||pid===null)return;const row=JSON.parse(event.data),index=rows.findIndex(r=>r.id===row.id);if(index>=0)rows[index]=row;else rows.push(row);if(!['queued','running'].includes(row.status)){stream.close();if(events===stream)events=null;active=null;setStatus(row.status==='failed'?'error':row.status)}render();controls()});
+    stream.addEventListener('snapshot',event=>{if(generation!==seq||pid===null)return;const row=JSON.parse(event.data),index=rows.findIndex(r=>r.id===row.id);if(index>=0)rows[index]=row;else rows.push(row);if(!['queued','running'].includes(row.status)){stream.close();if(events===stream)events=null;active=null;setStatus(row.status==='failed'?'error':row.status)}render();controls();autoRead(row)});
     stream.addEventListener('access_denied',()=>{stream.close();if(generation===seq)fail({status:401})});
     stream.onerror=()=>{if(generation===seq)fail({});/* Reconnect may GET, but never repeat a paid POST. */};
   }
   async function send(event,intent='question'){
     event?.preventDefault();if(pending||active||!ready||!composer.value.trim()||!context||!currentModel())return;
-    const generation=seq,news=pid,question=composer.value.trim(),key=model.value;pending=true;clearError();controls();
+    const generation=seq,news=pid,question=composer.value.trim(),key=model.value;pending=true;stopVoice();clearError();controls();
     const signature=[pid,context.version,key,language.value,intent,question].join('\u0000');
     if(composer.dataset.signature!==signature){composer.dataset.signature=signature;composer.dataset.key=requestKey()}
     const idempotencyKey=composer.dataset.key;
@@ -76,31 +83,36 @@
       if(c.context.version!==context.version)throw {message:'context_changed'};
       const row=await api('/user/api/conversations/'+id+'/messages',{method:'POST',body:JSON.stringify({question,model_key:key,language:language.value,context_version:context.version,intent,idempotency_key:idempotencyKey})});
       if(generation!==seq)return;
-      if(!rows.some(r=>r.id===row.id))rows.push(row);active=['queued','running'].includes(row.status)?row.id:null;composer.value='';delete composer.dataset.signature;setStatus(row.status);render();if(active)watch(active,generation);
+      if(!rows.some(r=>r.id===row.id))rows.push(row);active=['queued','running'].includes(row.status)?row.id:null;composer.value='';delete composer.dataset.signature;setStatus(row.status);render();if(active)watch(active,generation);else autoRead(row);
     }catch(e){if(generation===seq)fail(e)}finally{if(generation===seq){pending=false;controls()}}
   }
   function syncTabs(){layout.previousElementSibling?.querySelectorAll('[data-tab]').forEach(b=>{const selected=b.dataset.tab===layout.dataset.mobileTab;b.setAttribute('aria-selected',String(selected));b.tabIndex=selected?0:-1})}
   function build(){
-    const deep=document.querySelector('#newsDialog > .deep-reading-layout');if(!deep)return;
+    const deep=document.querySelector('#newsDialog > .deep-reading-layout');if(!deep)return;const readingTools=deep.querySelector('.reading-tools');
     layout=node('div',undefined,'news-study-layout');layout.dataset.mobileTab='news';layout.dataset.chatEnabled='false';deep.before(layout);layout.append(deep);
     const tabs=node('div',undefined,'chat-tabs');tabs.setAttribute('role','tablist');tabs.setAttribute('aria-label',t('chat'));
     for(const key of ['news','chat']){const b=btn(key,()=>{layout.dataset.mobileTab=key;layout.scrollTop=0;syncTabs()});b.dataset.tab=key;b.setAttribute('role','tab');b.setAttribute('aria-controls',key==='chat'?'newsChat':'dialogBody');tabs.append(b)}
     tabs.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const buttons=[...tabs.querySelectorAll('[data-tab]')],index=buttons.indexOf(document.activeElement),step=(event.key==='ArrowRight'?1:-1)*(document.documentElement.dir==='rtl'?-1:1),next=event.key==='Home'?0:event.key==='End'?buttons.length-1:(index+step+buttons.length)%buttons.length;buttons[next].click();buttons[next].focus()});layout.before(tabs);
+    summaryBox=node('div',undefined,'chat-summary');summaryBox.id='newsChatSummary';summaryBox.append(btn('summary',()=>{layout.dataset.mobileTab='chat';layout.scrollTop=0;syncTabs();composer.value=t('summary');composer.focus()}));layout.append(summaryBox);
     root=node('section',undefined);root.id='newsChat';root.setAttribute('aria-label',t('chat'));layout.append(root);
     const head=node('div',undefined,'chat-heading'),heading=node('h3',t('chat'));heading.dataset.chatKey='chat';head.append(heading);
     const info=node('button','i','chat-info');info.type='button';info.dataset.chatLabel='help';info.setAttribute('aria-label',t('help'));info.setAttribute('aria-describedby','chat-tip');tip=node('span',undefined,'chat-tip');tip.id='chat-tip';tip.role='tooltip';head.append(info,tip);root.append(head);
     const controlsBox=node('div',undefined,'chat-controls');provider=node('select');model=node('select');language=node('select');
     for(const [code,label] of [['fa','فارسی'],['en','English'],['tr','Türkçe'],['ar','العربية'],['es','Español'],['it','Italiano'],['de','Deutsch'],['fr','Français']]){const o=node('option',label);o.value=code;language.append(o)}language.value=i18n.lang();
     controlsBox.append(field('provider',provider),field('model',model),field('language',language));root.append(controlsBox);
+    responseMode=node('select');responseMode.id='news-chat-response-mode';for(const [value,key] of [['text','textResponse'],['audio','audioResponse'],['both','bothResponse']]){const option=node('option',t(key));option.value=value;option.dataset.chatKey=key;responseMode.append(option)}root.append(field('responseMode',responseMode));
     status=node('p',t('loading'),'chat-status');status.setAttribute('role','status');root.append(status);
     messages=node('div',undefined,'chat-messages');messages.setAttribute('role','log');messages.setAttribute('aria-label',t('chat'));messages.setAttribute('aria-live','off');root.append(messages);
-    const suggestions=node('div',undefined,'chat-suggestions');for(const key of ['summary','terms','implications','missing'])suggestions.append(btn(key,()=>{composer.value=t(key);composer.focus()}));root.append(suggestions);
+    const suggestions=node('div',undefined,'chat-suggestions');for(const key of ['terms','implications','missing'])suggestions.append(btn(key,()=>{composer.value=t(key);composer.focus()}));root.append(suggestions);
     const form=node('form',undefined,'chat-composer');composer=node('textarea');composer.id='news-chat-question';composer.maxLength=4000;composer.rows=3;composer.dir='auto';form.append(field('ask',composer));
     composer.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.ctrlKey||event.metaKey)){event.preventDefault();send()}});
+    const voiceActions=node('div',undefined,'chat-actions');microphone=btn('dictate',()=>{if(voiceState==='listening'){stopVoice();return}const generation=seq;voice?.dictate(language.value,text=>{if(generation!==seq)return;composer.value=(composer.value.trim()+' '+text).trim().slice(0,4000);composer.focus()},key=>{if(generation===seq)voiceUpdate(key)})});microphone.id='news-chat-microphone';microphone.setAttribute('aria-pressed','false');voiceStop=btn('stopVoice',stopVoice);voiceStop.hidden=true;voiceActions.append(microphone,voiceStop);form.append(voiceActions);voiceStatus=node('p','','chat-status');voiceStatus.role='status';form.append(voiceStatus);const disclosure=node('p',t('voiceDisclosure'),'chat-meta');disclosure.dataset.chatKey='voiceDisclosure';form.append(disclosure);
     error=node('p','','chat-error');error.role='alert';form.append(error);
     const sendActions=node('div',undefined,'chat-actions');freshButton=btn('new',()=>{resetConversation();setStatus('');composer.focus()});freshButton.dataset.new='';
-    sendButton=node('button',t('send'),'btn primary');sendButton.dataset.chatKey='send';sendButton.type='submit';stopButton=btn('stop',async()=>{if(!active)return;const generation=seq;try{await api('/user/api/chat-generations/'+active+'/cancel',{method:'POST'});if(generation===seq)setStatus('stopped')}catch(e){if(generation===seq)fail(e)}});sendActions.append(freshButton,stopButton,sendButton);form.append(sendActions);form.addEventListener('submit',event=>send(event));root.append(form);
-    const privacy=node('p',t('ephemeral'),'chat-privacy-note');privacy.dataset.chatKey='ephemeral';root.append(privacy);
+    sendButton=node('button',t('send'),'btn primary');sendButton.dataset.chatKey='send';sendButton.type='submit';stopButton=btn('stop',async()=>{if(!active)return;const generation=seq;try{await api('/user/api/chat-generations/'+active+'/cancel',{method:'POST'});if(generation===seq)setStatus('stopped')}catch(e){if(generation===seq)fail(e)}});saveButton=btn('saveConversation',async()=>{if(!cid||saving)return;const id=cid,generation=seq;saving=true;controls();try{const data=await api('/user/api/conversations/'+id+'/memory',{method:'PUT'});window.dispatchEvent(new Event('bee:memory-saved'));if(generation!==seq)return;savedAt=data.saved_at;setStatus('conversationSaved')}catch(e){if(generation===seq)fail(e)}finally{if(generation===seq){saving=false;controls()}}});sendActions.append(freshButton,saveButton,stopButton,sendButton);form.append(sendActions);form.addEventListener('submit',event=>send(event));root.append(form);
+    const privacy=node('p',t('memoryPrivacy'),'chat-privacy-note');privacy.dataset.chatKey='memoryPrivacy';root.append(privacy);
+    if(readingTools)layout.append(readingTools);
+    responseMode.addEventListener('change',()=>{stopVoice();root.dataset.responseMode=responseMode.value;if(responseMode.value!=='text'&&!voice?.canSpeak(language.value))voiceUpdate('voiceUnavailable');render()});language.addEventListener('change',()=>{stopVoice();if(responseMode.value!=='text'&&!voice?.canSpeak(language.value))voiceUpdate('voiceUnavailable');render()});
     provider.addEventListener('change',()=>{resetConversation();fillModels();setStatus('brandChange')});
     insights=node('div',undefined,'news-insight-actions');
     for(const intent of ['opportunities','risks']){const b=btn(intent,()=>{if(sendButton.disabled)return;composer.value=t(intent+'Prompt');layout.dataset.mobileTab='chat';layout.scrollTop=0;syncTabs();send(null,intent);composer.focus()});b.dataset.insight=intent;insights.append(b)}
@@ -121,7 +133,7 @@
   }
   window.__beeNewsChatClose=close;
   build();if(!root)return;
-  new MutationObserver(()=>{document.querySelectorAll('[data-chat-key]').forEach(n=>n.textContent=t(n.dataset.chatKey));document.querySelectorAll('[data-chat-label]').forEach(n=>n.setAttribute('aria-label',t(n.dataset.chatLabel)));root.setAttribute('aria-label',t('chat'));drawGuide();drawStatus();if(lastError)error.textContent=messageFor(lastError);render()}).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
+  new MutationObserver(()=>{document.querySelectorAll('[data-chat-key]').forEach(n=>n.textContent=t(n.dataset.chatKey));document.querySelectorAll('[data-chat-label]').forEach(n=>n.setAttribute('aria-label',t(n.dataset.chatLabel)));root.setAttribute('aria-label',t('chat'));drawGuide();drawStatus();controls();voiceStatus.textContent=voiceState?t(voiceState):'';if(lastError)error.textContent=messageFor(lastError);render()}).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
   new MutationObserver(()=>{const hidden=$('dialogBackdrop').classList.contains('hidden');if(hidden){if(pid)close()}else if(reader.current().id!==pid)open()}).observe($('dialogBackdrop'),{attributes:true,attributeFilter:['class']});
   new MutationObserver(()=>{if($('app').classList.contains('hidden'))close(false)}).observe($('app'),{attributes:true,attributeFilter:['class']});
   window.addEventListener('pagehide',()=>close(false));
