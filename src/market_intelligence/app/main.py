@@ -18,12 +18,16 @@ from urllib.parse import urlencode, urlsplit
 
 from fastapi import Cookie, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, Field
 from redis.asyncio import Redis
 from starlette.middleware.gzip import GZipMiddleware
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config import get_settings
+from app.report_portal.ui import REPORT_HTML
+from app.portals import portal_spec
 from app.observability import configure_logging
 from app.ui_assets import ASSETS as UI_ASSETS, externalize_document
 from app.database import SessionLocal, check_database
@@ -296,6 +300,7 @@ logger = logging.getLogger(__name__)
 # a different worker from the document request. Never rely on sticky routing.
 externalize_document(ADMIN_HTML)
 externalize_document(USER_HTML)
+externalize_document(REPORT_HTML)
 
 
 class _ClientErrorRateLimiter:
@@ -411,6 +416,7 @@ async def _read_bounded_request_body(request: Request, limit: int) -> bytes | No
 async def lifespan(_: FastAPI):
     stop = asyncio.Event()
     tasks: list[asyncio.Task] = []
+    report_tasks: list[asyncio.Task] = []
     if settings.deployment_drain_enabled:
         from app.pipeline_service import reconcile_jobs_before_startup
         boot_time = datetime.now(timezone.utc)
@@ -433,6 +439,15 @@ async def lifespan(_: FastAPI):
         from app.news_chat.service import worker, maintenance
         tasks.extend(asyncio.create_task(worker(stop)) for _ in range(4))
         tasks.append(asyncio.create_task(maintenance(stop)))
+    if settings.report_portal_enabled:
+        from app.report_portal.service import worker as report_worker, maintenance as report_maintenance
+        from app.report_portal.policy import enabled as report_enabled
+        from app.report_portal.deletions import prepare as prepare_report_registry
+        report_enabled()
+        await prepare_report_registry()
+        report_tasks.extend(asyncio.create_task(report_worker(stop)) for _ in range(settings.report_worker_concurrency))
+        report_tasks.append(asyncio.create_task(report_maintenance(stop)))
+        tasks.extend(report_tasks)
     from app.contenter import connection_status, sync_loop
     if connection_status(settings)["configured"]:
         tasks.append(asyncio.create_task(sync_loop(settings, stop)))
@@ -444,6 +459,9 @@ async def lifespan(_: FastAPI):
         yield
     finally:
         stop.set()
+        for task in report_tasks:
+            # Abandoned private leases are reconciled without paid retry.
+            task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         await deployment_lease_engine.dispose()
@@ -485,6 +503,15 @@ async def deployment_admission(request: Request, call_next):
 # UI is intentionally out of scope; the router remains independently removable
 # when the bounded context is split into its own service.
 app.include_router(bee_cfo_router)
+
+
+@app.exception_handler(RequestValidationError)
+async def private_validation_errors(request: Request, exc: RequestValidationError):
+    if request.url.path.startswith("/report/api/"):
+        allowed={"business_id","assistant_id","title","text","tags","reporter","event_date","language","classification","revision","draft_key","idempotency_key","confirmed","models","daily_cap","daily_budget_usd","retention_days","report_id","offset"}
+        return JSONResponse(status_code=422, content={"detail": "report_invalid_fields",
+            "fields": list(dict.fromkeys(str(e["loc"][1]) for e in exc.errors() if len(e["loc"])>1 and str(e["loc"][1]) in allowed))[:16]})
+    return await request_validation_exception_handler(request, exc)
 
 
 def _redact_http_detail(value):
@@ -719,6 +746,7 @@ async def private_indexing_headers(request: Request, call_next):
         if (
             request.url.path not in {"/admin/api/login", "/admin/api/security/csp-report"}
             and not request.url.path.startswith("/user/api/")
+            and not request.url.path.startswith("/report/api/")
             and request.cookies.get(ADMIN_SESSION_COOKIE)
         ):
             if not csrf_token_matches(
@@ -733,12 +761,18 @@ async def private_indexing_headers(request: Request, call_next):
         if not csrf_token_matches(request.cookies.get(USER_CSRF_COOKIE), request.headers.get("x-csrf-token"), request.cookies.get("research_bee_user_session"), settings):
             await record_security_event("reader.csrf_denied", severity="warning")
             return JSONResponse(status_code=403, content={"detail": "csrf validation failed"})
+    spec = portal_spec("report")
+    if mutating and request.url.path.startswith("/report/api/") and request.url.path != "/report/api/login" and request.cookies.get(spec.session):
+        if not csrf_token_matches(request.cookies.get(spec.csrf), request.headers.get("x-csrf-token"), request.cookies.get(spec.session), settings):
+            return JSONResponse(status_code=403, content={"detail": "csrf validation failed"})
     activity_token = request_activity.set(mutating or request.headers.get("x-user-activity") == "1")
     try:
         response = await call_next(request)
     finally:
         request_activity.reset(activity_token)
     response.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive, nosnippet"
+    if request.url.path.startswith("/report"):
+        response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     response.headers["X-Frame-Options"] = "DENY"
@@ -1007,6 +1041,23 @@ async def user_ui(request: Request) -> HTMLResponse:
 
 from app.news_chat.api import router as news_chat_router
 app.include_router(news_chat_router)
+from app.report_portal.api import router as report_router
+app.include_router(report_router)
+
+
+@app.get("/report", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/report/login-up", response_class=HTMLResponse, include_in_schema=False)
+async def report_ui(request: Request):
+    nonce = secrets.token_urlsafe(24)
+    request.state.csp_nonce = nonce
+    return HTMLResponse(_inject_inline_nonce(_login_document(REPORT_HTML, "report", password=request.url.path.endswith("login-up")), nonce),
+        headers={"Cache-Control": "no-store"})
+
+
+@app.post("/report/api/login")
+async def report_login(payload: LoginRequest, response: Response, http_request: Request):
+    from app.report_portal.auth import login
+    return await _rate_limited_password_login(payload, response, http_request, login)
 
 
 @app.get("/user/api/publications/{publication_id}/detail")
@@ -1168,7 +1219,7 @@ def _login_client_address(request: Request) -> str:
 
 async def _rate_limited_password_login(payload: LoginRequest, response: Response, http_request: Request, login_fn) -> dict[str, object]:
     """Apply the shared per-account and per-client budget to a password login."""
-    portal = "user" if http_request.url.path.startswith("/user/") else "admin"
+    portal = "report" if http_request.url.path.startswith("/report/") else "user" if http_request.url.path.startswith("/user/") else "admin"
     username = payload.username.strip().lower()
     if "@" in username:
         username = google_auth.normalize_email(username)
@@ -1215,14 +1266,14 @@ async def auth_providers() -> dict[str, bool]:
 
 
 def _google_login_error(portal: str, code: str) -> RedirectResponse:
-    target = "/user" if portal == "user" else "/admin"
+    target = portal_spec(portal).path
     response = RedirectResponse(url=f"{target}?login_error={code}", status_code=302)
     response.delete_cookie(google_auth.FLOW_COOKIE, path=google_auth.FLOW_COOKIE_PATH)
     return response
 
 
 @app.get("/auth/google/start", include_in_schema=False)
-async def google_login_start(request: Request, portal: str = Query(default="admin", pattern="^(admin|user)$"), redirectTo: str | None = Query(default=None, max_length=1024)) -> RedirectResponse:
+async def google_login_start(request: Request, portal: str = Query(default="admin", pattern="^(admin|user|report)$"), redirectTo: str | None = Query(default=None, max_length=1024)) -> RedirectResponse:
     """Browser navigation target: redirect to Google's account chooser."""
     # The flow cookie must be set on the host Google redirects back to.
     # Start on that canonical host (e.g. from the legacy domain) first.
@@ -1297,6 +1348,9 @@ async def google_login_callback(
     response.delete_cookie(google_auth.FLOW_COOKIE, path=google_auth.FLOW_COOKIE_PATH)
     if portal == "user":
         set_reader_session_cookie(response, raw)
+    elif portal == "report":
+        from app.report_portal.auth import cookies as report_cookies
+        report_cookies(response, raw)
     else:
         set_admin_session_cookies(response, raw)
     return response

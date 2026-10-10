@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app import google_auth, login_history, main
+from app.report_portal import auth as report_auth
 
 
 def database(session):
@@ -117,6 +118,15 @@ class LoginHistoryRouteTests(unittest.TestCase):
         self.assertEqual("user", event["portal"])
         self.assertIsInstance(event["actor_id"], uuid.UUID)
 
+    def test_google_report_success_uses_independent_cookie_and_history_scope(self):
+        identity = google_auth.GoogleIdentity(sub="fixture", email="allowed@gmail.com", email_verified=True)
+        response, event = self.callback(identity=identity, portal="report")
+        self.assertEqual("/report", response.headers["location"])
+        self.assertIn("research_bee_report_session", response.headers.get("set-cookie", ""))
+        self.assertNotIn("research_bee_admin_session", response.headers.get("set-cookie", ""))
+        self.assertEqual("report", event["portal"])
+        self.assertTrue(event["successful"])
+
     def test_invalid_flow_never_accepts_email_from_query(self):
         response, event = self.callback(flow_error=google_auth.GoogleAuthError("expired"))
         self.assertEqual("/admin?login_error=expired", response.headers["location"])
@@ -124,7 +134,7 @@ class LoginHistoryRouteTests(unittest.TestCase):
         self.assertFalse(event["successful"])
 
     def test_password_success_failure_denial_and_rate_limit_are_recorded(self):
-        for portal in ("admin", "user"):
+        for portal in ("admin", "user", "report"):
             for status, denial, limited, reason in (
                 (200, None, False, None),
                 (401, HTTPException(401, "invalid credentials"), False, "invalid_credentials"),
@@ -140,7 +150,9 @@ class LoginHistoryRouteTests(unittest.TestCase):
                          patch.object(main, "record_login_failure", AsyncMock()), \
                          patch.object(main, "clear_login_failures", AsyncMock()), \
                          patch.object(main, "record_login_attempt", recorder), \
-                         patch.object(main, "admin_login" if portal == "admin" else "reader_login", AsyncMock(side_effect=denial, return_value={"id": "fixture"})):
+                         patch.object(report_auth if portal == "report" else main,
+                             "login" if portal == "report" else "admin_login" if portal == "admin" else "reader_login",
+                             AsyncMock(side_effect=denial, return_value={"id": "fixture"})):
                         response = TestClient(main.app).post(f"/{portal}/api/login", json={"email": "fixture@gmail.com", "password": "synthetic-password"})
                     self.assertEqual(status, response.status_code)
                     recorder.assert_awaited_once()

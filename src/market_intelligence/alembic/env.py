@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.config import get_settings
 from app.models import Base
+from app.report_portal import models as report_models  # Register additive metadata.
 
 
 config = context.config

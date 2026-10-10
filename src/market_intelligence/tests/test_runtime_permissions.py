@@ -6,7 +6,7 @@ from app.config import Settings
 
 
 class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
-    async def check(self, *, revision='0045_news_chat', admin=False, create=False,
+    async def check(self, *, revision='0046_report_portal', admin=False, create=False,
                     journal_write=False, missing=None, environment='production'):
         connection=MagicMock()
         connection.execute=AsyncMock(return_value=SimpleNamespace(one=lambda:(admin,False,False,False,False)))
@@ -15,6 +15,7 @@ class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
             if 'has_schema_privilege' in sql:return create
             if 'version_num' in sql:return revision
             if 'security_events' in sql:return journal_write
+            if params and params.get('table') in {'market_intelligence.report_audit_events','market_intelligence.report_deletions'} and params['permission'] in {'UPDATE','DELETE','TRUNCATE'}:return False
             return (params['table'],params['permission'])!=missing
         connection.scalar=AsyncMock(side_effect=scalar)
         engine=MagicMock()
@@ -30,7 +31,7 @@ class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
         return connection
 
     def test_packaged_head_is_derived_from_actual_image_migrations(self):
-        self.assertEqual(preflight.packaged_schema_head(),'0045_news_chat')
+        self.assertEqual(preflight.packaged_schema_head(),'0046_report_portal')
 
     def test_startup_configuration_errors_never_print_secret_inputs(self):
         marker='PRIVATE_CONFIG_CANARY_secret_value_1234567890'
@@ -43,8 +44,12 @@ class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
     async def test_restricted_production_with_all_individual_grants_starts(self):
         connection=await self.check()
         checks=[call.args[1] for call in connection.scalar.await_args_list if len(call.args)>1 and 'table' in call.args[1]]
-        self.assertEqual(len(checks),12)
-        self.assertEqual({p['permission'] for p in checks},{'SELECT','INSERT','UPDATE','DELETE'})
+        self.assertEqual(len(checks),46)
+        self.assertEqual({p['permission'] for p in checks},{'SELECT','INSERT','UPDATE','DELETE','TRUNCATE'})
+
+    async def test_private_report_grants_are_required(self):
+        with self.assertRaisesRegex(RuntimeError,'private Report privileges'):
+            await self.check(missing=('market_intelligence.internal_report_versions','SELECT'))
 
     async def test_old_or_unknown_schema_is_refused(self):
         for revision in ('0044_security_events','unknown',None):

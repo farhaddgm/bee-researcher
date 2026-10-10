@@ -16,6 +16,7 @@ async def main():
         await connection.execute(text('GRANT USAGE ON SCHEMA market_intelligence TO startup_fixture'))
         await connection.execute(text('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA market_intelligence TO startup_fixture'))
         await connection.execute(text('REVOKE UPDATE, DELETE ON market_intelligence.security_events FROM startup_fixture'))
+        await connection.execute(text('REVOKE UPDATE, DELETE, TRUNCATE ON market_intelligence.report_audit_events, market_intelligence.report_deletions FROM startup_fixture'))
         await connection.execute(text('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA market_intelligence TO startup_fixture'))
     await engine.dispose()
     print('Isolated least-privileged startup role seeded; no live database touched.')

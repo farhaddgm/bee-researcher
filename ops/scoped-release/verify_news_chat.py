@@ -149,7 +149,7 @@ def main():
                 release.wait_health(source,version,timeout=120,ready_required=True)
             print('Real held-drain boot passed: independent liveness before release; Docker healthy and /ready only after release.')
             run('stop','--time','30',names['startup'],capture=True)
-            print('Actual production startup CMD passed with restricted PostgreSQL/Redis identities, OAuth prerequisites and 0045 schema.')
+            print('Actual production startup CMD passed with restricted PostgreSQL/Redis identities, OAuth prerequisites and the packaged schema.')
             run('run','-d','--name',names['app'],'--entrypoint','python',*common,args.image,'scripts/news_chat_fixture.py',capture=True);containers.append(names['app'])
             artifacts=[]
             if args.artifacts:

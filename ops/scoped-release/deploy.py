@@ -91,12 +91,26 @@ def runtime_preflight(ref, env_path):
 def rollback_service(current, environment, version):
     service = {"image": current["Image"], "stop_grace_period": "600s", "environment": dict(environment)}
     old = current["Config"]["Labels"]["org.opencontainers.image.version"]
-    if old in {"3.39.0", "3.39.1"} and version == "3.40.0":
+    if (old in {"3.39.0", "3.39.1"} and version == "3.40.0") or (old in {"3.40.0", "3.40.1", "3.40.2"} and version == "3.41.0"):
         # Auth configuration is still checked. A separate candidate-package
         # preflight verifies least privilege before the legacy app is restored.
         # Never downgrade 0045 or ask the 0044-only preflight to read it.
         service["command"] = ["sh", "-c", "python -m app.auth_deployment && exec uvicorn app.main:app --host 0.0.0.0 --port 8010 --no-access-log --no-proxy-headers"]
     return service
+
+
+def report_volumes(key_file, state_dir):
+    """Only already-provisioned Researcher private files may be mounted."""
+    root=(ROOT/'ops/bee-researcher-direct/private').resolve()
+    key=Path(key_file).resolve();state=Path(state_dir).resolve()
+    if not key.is_relative_to(root) or not state.is_relative_to(root) or not key.is_file() or not state.is_dir():
+        raise RuntimeError('Researcher-only private Report paths required')
+    if key.stat().st_mode & 0o077 or state.stat().st_mode & 0o077:
+        raise RuntimeError('Report key and state must not be group/world accessible')
+    if key.stat().st_uid != 10002 or state.stat().st_uid != 10002:
+        raise RuntimeError('Report storage must belong to the restricted service identity')
+    return [{'type':'bind','source':str(key),'target':'/app/private/report-key','read_only':True},
+            {'type':'bind','source':str(state),'target':'/app/report-state'}]
 
 
 def production_service(ref, environment):
@@ -217,6 +231,13 @@ def deploy(args):
     })
     override = private / "production.override.json"
     production = production_service(args.image, environment)
+    if getattr(args,'report_key_file',None) or getattr(args,'report_state_dir',None):
+        if not args.report_key_file or not args.report_state_dir or args.version!='3.41.0':
+            raise RuntimeError('Report activation requires both private mounts and the Report release')
+        production['volumes']=report_volumes(args.report_key_file,args.report_state_dir)
+        production['environment'].update({'MARKET_INTELLIGENCE_REPORT_PORTAL_ENABLED':'true',
+            'MARKET_INTELLIGENCE_REPORT_ENCRYPTION_SECRET_FILE':'/app/private/report-key',
+            'MARKET_INTELLIGENCE_REPORT_DELETION_REGISTRY_FILE':'/app/report-state/deletions.log'})
     save(override, {"services": {"market-intelligence": production}}, private=True)
     command = compose_command(current, override)
     run(command + ["config", "--quiet"], env=compose_env)
@@ -283,6 +304,8 @@ def deploy(args):
             "runtime_environment_preserved_in_private_override": True,
             "compose_interpolation_bound_to_runtime": True, "shutdown": shutdown,
             "native_image_command_restored": True,
+            "report_portal_activated": bool(getattr(args,'report_key_file',None)),
+            "report_account_grants_created": False,
         })
         print(json.dumps({"healthy": True, "version": args.version, "receipt": str(artifact / "deployment-receipt.json")}))
     except BaseException as exc:
@@ -323,4 +346,6 @@ if __name__ == "__main__":
     parser.add_argument("--revision", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--expected-current-revision", required=True)
+    parser.add_argument("--report-key-file", type=Path)
+    parser.add_argument("--report-state-dir", type=Path)
     deploy(parser.parse_args())

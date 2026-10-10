@@ -6,12 +6,12 @@
   const securityFetch=window.fetch.bind(window);
   window.fetch=(input,init={})=>{
     const url=new URL(typeof input==='string'?input:input.url,location.href);
-    if(url.origin===location.origin && (url.pathname.startsWith('/admin/api/')||url.pathname.startsWith('/user/api/'))){
+    if(url.origin===location.origin && ['/admin/api/','/user/api/','/report/api/'].some(p=>url.pathname.startsWith(p))){
       const headers=new Headers(init.headers||(input instanceof Request?input.headers:undefined));
       if(!document.hidden&&Date.now()-securityLastActivity<30000)headers.set('X-User-Activity','1');
       const method=String(init.method||(input instanceof Request?input.method:'GET')).toUpperCase();
       if(!['GET','HEAD','OPTIONS'].includes(method)){
-        const name=url.pathname.startsWith('/user/api/')?'research_bee_user_csrf':'research_bee_admin_csrf';
+        const name=url.pathname.startsWith('/report/api/')?'research_bee_report_csrf':url.pathname.startsWith('/user/api/')?'research_bee_user_csrf':'research_bee_admin_csrf';
         const cookie=document.cookie.split(';').map(x=>x.trim()).find(x=>x.startsWith(name+'='));
         if(cookie)headers.set('X-CSRF-Token',decodeURIComponent(cookie.slice(name.length+1)));
       }
@@ -114,7 +114,7 @@
   const params=new URLSearchParams(location.search);const error=params.get('login_error');
   const errorBox=document.getElementById('loginMsg')||document.getElementById('loginError');
   const portal=document.body.dataset.authPortal||'admin';
-  const path=portal==='admin'?'/admin'+location.search:(location.pathname==='/user/settings'?'/user/settings':'/user');
+  const path=portal==='report'?'/report':portal==='admin'?'/admin'+location.search:(location.pathname==='/user/settings'?'/user/settings':'/user');
   button.href='/auth/google/start?'+new URLSearchParams({portal,redirectTo:path});
   if(error){params.delete('login_error');history.replaceState(null,'',location.pathname+(params.size?'?'+params:'')+location.hash)}
   function render(){
