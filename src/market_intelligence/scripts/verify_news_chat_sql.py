@@ -92,7 +92,31 @@ async def verify():
         assert await s.scalar(select(func.count()).select_from(ChatConversation).where(ChatConversation.user_id==uid,ChatConversation.deleted_at.is_(None)))==500
     accessible=await api.conversations(pid,token=token)
     assert len(accessible['conversations'])==500 and history_cid in {uuid.UUID(c['id']) for c in accessible['conversations']}
-    print('Chat SQL passed: real session/02:00 deadline, expiry refusal, cascade privacy erase, orphan retention, retained reservation, schema isolation, 65 equal-timestamp messages without skips/duplicates, exact-full final cursor, concurrent conversation cap and all 500 conversations accessible.')
+    # Changing projects must not reset the User-portal's shared daily budget.
+    owner_id=uuid.UUID('30000000-0000-4000-8000-000000000001')
+    other_pid=uuid.UUID('20000000-0000-4000-8000-000000000002')
+    other_aid=uuid.UUID('10000000-0000-4000-8000-000000000002')
+    budget_token='synthetic-shared-budget-session'
+    async with SessionLocal() as s:
+        owner=await s.get(AdminUser,owner_id)
+        owner_session=AdminSession(user_id=owner_id,token_hash=hashlib.sha256(budget_token.encode()).hexdigest(),portal='user',expires_at=svc.now()+timedelta(minutes=30),mfa_verified=True,created_at=svc.now())
+        other_pub=await svc.publication(s,other_pid,owner)
+        other_conversation=ChatConversation(user_id=owner_id,assistant_id=other_aid,publication_id=other_pid,provider='openai',context=context_for(other_pub.message_text,None))
+        s.add_all([owner_session,other_conversation]);await s.flush()
+        policy=await svc.policy(s)
+        ledger=ChatGeneration(user_id=owner_id,assistant_id=aid,idempotency_key='sql-shared-budget-ledger',session_hash='',question='',answer='',language='en',model=policy.models[0].model_dump(mode='json'),citations=[],status='completed',cancel_requested=False,reserved_usd=policy.user_daily_budget_usd,actual_usd=policy.user_daily_budget_usd,usage={},deadline=svc.now(),created_at=svc.now(),finished_at=svc.now())
+        s.add(ledger);await s.commit()
+    try:
+        other_q=Question(question='Shared daily budget check',model_key='openai:fixture-v1',language='en',context_version=other_conversation.context['version'],idempotency_key='sql-shared-budget-other-project')
+        try:await svc.send(other_conversation.id,other_q,owner,budget_token)
+        except HTTPException as exc:assert exc.status_code==429 and exc.detail=='budget_exhausted'
+        else:raise AssertionError('Switching projects reset the shared daily budget')
+    finally:
+        async with SessionLocal() as s:
+            for table,key in [(ChatGeneration,ledger.id),(ChatConversation,other_conversation.id),(AdminSession,owner_session.id)]:
+                await s.delete(await s.get(table,key))
+            await s.commit()
+    print('Chat SQL passed: real session/02:00 deadline, expiry refusal, cascade privacy erase, orphan retention, retained reservation, schema isolation, 65 equal-timestamp messages without skips/duplicates, exact-full final cursor, concurrent conversation cap, all 500 conversations accessible, and shared daily budget across projects.')
 
 
 async def main():

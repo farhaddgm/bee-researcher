@@ -6,6 +6,7 @@
 .news-study-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:24px;padding:24px;min-height:0;overflow:auto;overscroll-behavior:contain}
 .news-study-layout[data-chat-enabled=false]{grid-template-columns:minmax(0,1fr)}
 #newsChat[hidden],#newsChat [hidden],.chat-tabs[hidden],#chat-selection[hidden]{display:none!important}
+#newsChat[data-unavailable=true]>:not(.chat-heading):not(.chat-status){display:none!important}
 .news-study-layout>.deep-reading-layout{display:flex;flex-direction:column;min-width:0}
 #newsChat{min-width:0;border-inline-start:1px solid var(--line);padding-inline-start:24px;display:flex;flex-direction:column;gap:14px}
 .chat-heading{display:flex;align-items:center;gap:8px;position:relative}

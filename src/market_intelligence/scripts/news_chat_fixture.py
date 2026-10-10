@@ -53,7 +53,7 @@ async def seed():
             s.add(analysis);await s.flush()
             s.add(Publication(id=pid,assistant_id=aid,analysis_id=analysis.id,idempotency_key=str(pid),status=pubstatus,message_text='Published synthetic headline\nA verified fixture paragraph about batteries.\nA second published paragraph. <script>not executed</script>',published_at=datetime.now(timezone.utc)))
         models=[ModelSpec(provider=p,model_id='fixture-v1',label=p+' fixture model',input_usd='1',output_usd='3',enabled=True,verified=True,price_reference='Synthetic test price, 2026-10-09') for p in ('openai','anthropic','google')]
-        policy=Policy(enabled=True,models=models,projects={str(a):{'enabled':True,'model_keys':[m.key for m in models]} for a in (PROJECT,PRIVATE_PROJECT)})
+        policy=Policy(enabled=True,models=models)
         row=await s.get(ChatPolicy,1);row.config=policy.model_dump(mode='json')
         await s.commit()
 

@@ -56,11 +56,12 @@ async def publication(s, pid, user):
 
 def model_for(p: Policy, aid: uuid.UUID, key: str) -> ModelSpec:
     settings = get_settings()
-    project = p.projects.get(str(aid))
-    if not settings.news_chat_enabled or not p.enabled or project is None or not project.enabled:
+    # User-portal feature. Project ACL remains in publication()/models API;
+    # a policy allowlist must never exclude newly created workspaces.
+    if not settings.news_chat_enabled or not p.enabled:
         raise HTTPException(403, "chat_disabled")
     for model in p.models:
-        if model.key == key and model.key in project.model_keys and model.enabled and model.verified:
+        if model.key == key and model.enabled and model.verified:
             if not providers.configured(settings, model.provider):
                 raise HTTPException(503, "provider_unconfigured")
             return model
@@ -124,17 +125,15 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         own = ChatGeneration.user_id == user.id
         # Aggregate in SQL: accepting a question must not load every user's
         # private transcript or scan it in Python just to calculate a budget.
-        total, user_total, project_total, count, recent = (await s.execute(select(
+        total, user_total, count, recent = (await s.execute(select(
             func.coalesce(func.sum(charge), 0),
             func.coalesce(func.sum(charge).filter(own), 0),
-            func.coalesce(func.sum(charge).filter(ChatGeneration.assistant_id == c.assistant_id), 0),
             func.count().filter(own),
             func.count().filter(own, ChatGeneration.created_at >= now() - timedelta(minutes=1)),
         ).where(ChatGeneration.created_at >= day))).one()
         if count >= p.user_daily_requests or recent >= 5:
             raise HTTPException(429, "quota_exceeded")
-        if (total + reserve > p.daily_budget_usd or user_total + reserve > p.user_daily_budget_usd or
-            project_total + reserve > p.projects[str(c.assistant_id)].daily_budget_usd):
+        if total + reserve > p.daily_budget_usd or user_total + reserve > p.user_daily_budget_usd:
             raise HTTPException(429, "budget_exhausted")
         session = await s.scalar(select(AdminSession).where(AdminSession.token_hash == hashlib.sha256(token.encode()).hexdigest(), AdminSession.user_id == user.id, AdminSession.portal == "user"))
         if session is None:
