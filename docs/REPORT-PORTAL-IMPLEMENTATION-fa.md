@@ -46,7 +46,7 @@ provider فقط `/responses` با `store:false` و بدون tools اجرا می�
 
 ## نصب و بازگشت امن
 
-۱. commit همین نسخه باید CI، گیت واقعی SQL/مرورگر Report و رگرسیون Admin/User را بگذراند؛ artifact امضاشدهٔ GHCR با commit/version/digest دقیق تطبیق داده شود.
+۱. commit همین نسخه باید CI، گیت واقعی SQL/مرورگر Report و رگرسیون Admin/User را بگذراند؛ artifact امضاشدهٔ GHCR با commit/version/digest دقیق تطبیق داده شود. ابزار `ops/scoped-release/verify_provenance.py` امضا، SBOM و binding امضاشده را با repository/workflow/SHA دقیق و بدون bypass بررسی می‌کند؛ نسخه و commit نیز در preflight تصویر تطبیق داده می‌شوند.
 
 ۲. `ops/scoped-release/migrate_report_portal.py` فقط پس از بکاپ خصوصی schema Researcher، migration افزایشی `0045 → 0046` را اجرا می‌کند. نقش runtime محدود می‌ماند؛ audit/deletion append-only هستند. سایر schemaها یا سرویس‌ها تغییر نمی‌کنند.
 
