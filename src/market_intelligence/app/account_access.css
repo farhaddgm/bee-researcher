@@ -6,8 +6,7 @@ body[data-login-mode="google"] #loginForm{display:none!important}
 #login #googleLoginBtn{width:100%!important;height:auto!important;box-sizing:border-box;white-space:normal;padding:12px 14px;line-height:1.6}
 #googleLoginBtn span{min-width:0;white-space:normal}
 #googleLoginBtn svg{width:22px;height:22px;flex:none}
-.auth-title{margin:16px 0 8px;text-align:center;font-size:22px;line-height:1.5}
-.auth-description,.auth-provider-note{font-size:13px;line-height:1.8;color:var(--muted,#64748b);text-align:center;overflow-wrap:anywhere}
+.auth-provider-note{font-size:13px;line-height:1.8;color:var(--muted,#64748b);text-align:center;overflow-wrap:anywhere}
 .auth-provider-note{padding:10px;border-radius:10px;background:var(--soft,#eef3fc)}
 #loginForm .auth-field-label{display:block;font-size:13px;font-weight:600;margin:12px 0 6px}
 #loginForm input{width:100%;box-sizing:border-box}
