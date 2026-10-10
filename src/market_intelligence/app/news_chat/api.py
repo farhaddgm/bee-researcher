@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+import hashlib
+from datetime import timedelta
 from typing import Any, cast
 
 from fastapi import APIRouter, Cookie, HTTPException, Request
@@ -80,19 +82,51 @@ async def start(pid: uuid.UUID, payload: Start, token: str | None = Cookie(None,
     user = await admin.current_reader(token)
     svc.require(user)
     async with SessionLocal() as s:
+        await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": svc.LOCK})
+        if payload.conversation_id:
+            existing = await s.get(ChatConversation, payload.conversation_id)
+            if existing:
+                if existing.user_id != user.id or existing.publication_id != pid:
+                    raise HTTPException(404, "news_unavailable")
+                if existing.deleted_at or svc.window_expired(existing.context):
+                    raise HTTPException(410, "conversation_closed")
+                return {"id": str(existing.id), "provider": existing.provider, "context": svc.public_context(existing.context)}
         pub = await svc.publication(s, pid, user)
         m = svc.model_for(await svc.policy(s), pub.assistant_id, payload.model_key)
         # Count and insert share the cross-process admission lock. Two tabs
         # cannot both claim the last available conversation slot.
-        await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": svc.LOCK})
         count = await s.scalar(select(func.count()).select_from(ChatConversation).where(ChatConversation.user_id == user.id, ChatConversation.deleted_at.is_(None))) or 0
         if count >= 500:
             raise HTTPException(429, "quota_exceeded")
-        c = ChatConversation(id=uuid.uuid4(), user_id=user.id, assistant_id=pub.assistant_id, publication_id=pid,
-                             context=context_for(pub.message_text, pub.published_at.isoformat() if pub.published_at else None), provider=m.provider, created_at=svc.now())
+        ctx = context_for(pub.message_text, pub.published_at.isoformat() if pub.published_at else None)
+        ctx.update(_ephemeral=True, _session_hash=hashlib.sha256((token or "").encode()).hexdigest(),
+                   _expires_at=(svc.now() + timedelta(seconds=svc.WINDOW_LEASE_SECONDS)).isoformat())
+        c = ChatConversation(id=payload.conversation_id or uuid.uuid4(), user_id=user.id, assistant_id=pub.assistant_id, publication_id=pid,
+                             context=ctx, provider=m.provider, created_at=svc.now())
         s.add(c)
         await s.commit()
-        return {"id": str(c.id), "provider": c.provider, "context": c.context}
+        return {"id": str(c.id), "provider": c.provider, "context": svc.public_context(c.context)}
+
+
+@router.post("/user/api/publications/{pid}/conversations/{cid}/close")
+async def close_window(pid: uuid.UUID, cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE)):
+    user = await admin.current_reader(token, touch=False)
+    async with SessionLocal() as s:
+        await svc.close_window(s, cid, pid, user)
+    return {"status": "deleted"}
+
+
+@router.post("/user/api/conversations/{cid}/heartbeat")
+async def heartbeat(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE)):
+    user = await admin.current_reader(token, touch=False)
+    async with SessionLocal() as s:
+        await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": svc.LOCK})
+        c = await svc.conversation(s, cid, user)
+        if not c.context.get("_ephemeral") or c.context.get("_session_hash") != hashlib.sha256((token or "").encode()).hexdigest():
+            raise HTTPException(403, "chat_access_denied")
+        c.context = {**c.context, "_expires_at": (svc.now() + timedelta(seconds=svc.WINDOW_LEASE_SECONDS)).isoformat()}
+        await s.commit()
+    return {"status": "active"}
 
 
 @router.get("/user/api/conversations/{cid}/messages")
@@ -110,7 +144,7 @@ async def messages(cid: uuid.UUID, before: uuid.UUID | None = None, token: str |
         # transaction. Fetch a look-ahead row, not an empty extra page.
         rows = (await s.scalars(query.order_by(ChatGeneration.created_at.desc(), ChatGeneration.id.desc()).limit(31))).all()
         page = rows[:30]
-        return {"messages": [svc.view(g) for g in reversed(page)], "context": c.context, "older_before": str(page[-1].id) if len(rows) > 30 else None}
+        return {"messages": [svc.view(g) for g in reversed(page)], "context": svc.public_context(c.context), "older_before": str(page[-1].id) if len(rows) > 30 else None}
 
 
 @router.post("/user/api/conversations/{cid}/messages", status_code=202)
@@ -161,11 +195,10 @@ async def cancel(gid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE))
 async def remove(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE)):
     user = await admin.current_reader(token)
     async with SessionLocal() as s:
-        c = await svc.conversation(s, cid, user)
-        c.deleted_at, c.context = svc.now(), {}
-        for g in (await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == cid).with_for_update())).all():
-            g.cancel_requested, g.question, g.answer, g.citations = True, "", "", []
-        await s.commit()
+        c = await s.get(ChatConversation, cid)
+        if c is None or c.user_id != user.id:
+            raise HTTPException(404, "news_unavailable")
+        await svc.close_window(s, cid, c.publication_id, user)
     return {"status": "deleted"}
 
 

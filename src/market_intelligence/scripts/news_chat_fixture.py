@@ -36,7 +36,7 @@ async def seed():
             s.add(AssistantWorkspace(id=aid, name=name, slug='synthetic-'+str(aid)[-1], business_name='', status='active',config={}))
         password_hash = await admin.hash_password_async(PASSWORD)
         users=[]
-        for n, name, role, grant, project in [(1,'chat-owner','admin',True,PROJECT),(2,'chat-reader','viewer',True,PROJECT),(3,'chat-other','viewer',True,PRIVATE_PROJECT),(4,'chat-no-grant','viewer',False,PROJECT),(5,'chat-admin','admin',False,PROJECT)]:
+        for n, name, role, grant, project in [(1,'chat-owner','admin',True,PROJECT),(2,'chat-reader','viewer',True,PROJECT),(3,'chat-other','viewer',True,PRIVATE_PROJECT),(4,'chat-no-grant','viewer',False,PROJECT),(5,'chat-admin','admin',False,PROJECT),(6,'chat-insights','viewer',True,PROJECT)]:
             u=AdminUser(id=uuid.UUID(f'30000000-0000-4000-8000-00000000000{n}'),username=name,email=name+'@gmail.com',display_name=name,role=role,active=True,password_hash=password_hash,login_method='both',preferences={'user_portal_access':{'enabled':True,'feedback_enabled':False},'news_chat_enabled':grant})
             s.add(u);users.append((u,project))
         await s.flush()
@@ -51,7 +51,7 @@ async def seed():
             s.add(article);await s.flush()
             analysis=ArticleAnalysis(assistant_id=aid,article_id=article.id,status='succeeded',headline='Fixture',news_summary='Internal hidden summary',business_connection='INTERNAL BUSINESS SECRET',opportunity='',risk='',suggested_action='',time_horizon='short',confidence=1,model='fixture')
             s.add(analysis);await s.flush()
-            s.add(Publication(id=pid,assistant_id=aid,analysis_id=analysis.id,idempotency_key=str(pid),status=pubstatus,message_text='Published synthetic headline\nA verified fixture paragraph about batteries.\nA second published paragraph. <script>not executed</script>',published_at=datetime.now(timezone.utc)))
+            s.add(Publication(id=pid,assistant_id=aid,analysis_id=analysis.id,idempotency_key=str(pid),status=pubstatus,message_text='Published synthetic headline\nA verified fixture paragraph about batteries.\nA second published paragraph. <script>not executed</script>\n\n🔍 <b>Opportunity:</b> PREGENERATED_OPPORTUNITY_HIDDEN\n\n⚠️ <b>Risk:</b> PREGENERATED_RISK_HIDDEN\n\n🔗 <b>Source:</b> Synthetic source',published_at=datetime.now(timezone.utc)))
         models=[ModelSpec(provider=p,model_id='fixture-v1',label=p+' fixture model',input_usd='1',output_usd='3',enabled=True,verified=True,price_reference='Synthetic test price, 2026-10-09') for p in ('openai','anthropic','google')]
         policy=Policy(enabled=True,models=models)
         row=await s.get(ChatPolicy,1);row.config=policy.model_dump(mode='json')
@@ -63,6 +63,10 @@ async def fake_stream(settings, model, messages):
     data='\n'.join(m['content'] for m in messages)
     if 'INTERNAL BUSINESS SECRET' in data or 'INTERNAL FULL ORIGINAL' in data:
         raise RuntimeError('Private analysis entered a chat prompt')
+    if 'PREGENERATED_' in data:
+        raise RuntimeError('Hidden opportunity/risk analysis entered the news chat')
+    if 'DETAIL_FOLLOW_UP' in data and not any(m['role'] == 'assistant' and 'Synthetic answer' in m['content'] for m in messages[:-1]):
+        raise RuntimeError('Follow-up lost the same-news analysis conversation')
     if model.provider != 'openai' and 'PRIVATE_OPENAI_HISTORY' in data:
         raise RuntimeError('Private history was transferred to a different provider')
     if messages[-1]['content']=='FAIL':

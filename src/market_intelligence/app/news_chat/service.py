@@ -24,6 +24,7 @@ from app.news_chat.schemas import ModelSpec, Policy, Question
 
 ACTIVE = ("queued", "running")
 LOCK = 71394001
+WINDOW_LEASE_SECONDS = 120
 
 
 def now():
@@ -73,8 +74,54 @@ async def conversation(s, cid, user):
     row = await s.scalar(select(ChatConversation).where(ChatConversation.id == cid, ChatConversation.user_id == user.id, ChatConversation.deleted_at.is_(None)))
     if row is None:
         raise HTTPException(404, "news_unavailable")
+    if window_expired(row.context):
+        raise HTTPException(410, "conversation_closed")
     await publication(s, row.publication_id, user)
     return row
+
+
+def public_context(context: dict) -> dict:
+    return {key: context[key] for key in ("version", "scope", "complete", "published_at", "segments") if key in context}
+
+
+def window_expired(context: dict) -> bool:
+    if not context.get("_ephemeral"):
+        return False
+    try:
+        return datetime.fromisoformat(context["_expires_at"]) <= now()
+    except (KeyError, TypeError, ValueError):
+        return True
+
+
+async def erase_conversation(s, c):
+    """Clear transcript and cancel work, without resetting quotas or spend."""
+    c.deleted_at, c.context = now(), {}
+    for g in (await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == c.id).order_by(ChatGeneration.id).with_for_update())).all():
+        g.cancel_requested, g.question, g.answer, g.citations, g.session_hash = True, "", "", [], ""
+        if g.status == "queued":
+            g.status, g.finished_at, g.actual_usd = "stopped", now(), Decimal(0)
+        # Running requests retain their conservative reservation until the
+        # worker reconciles actual usage; erasing must not forgive paid work.
+
+
+async def close_window(s, cid, pid, user):
+    # The shared admission lock closes BOTH races: close-before-create and
+    # close-during-send. A tombstone prevents a late POST from resurrecting a
+    # closed browser window. It contains no report, question or answer.
+    await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK})
+    c = await s.get(ChatConversation, cid)
+    if c is not None:
+        if c.user_id != user.id or c.publication_id != pid:
+            raise HTTPException(404, "news_unavailable")
+        await erase_conversation(s, c)
+    else:
+        pub = await publication(s, pid, user)
+        count = await s.scalar(select(func.count()).select_from(ChatConversation).where(ChatConversation.user_id == user.id, ChatConversation.created_at > now() - timedelta(days=1))) or 0
+        if count >= 1000:
+            raise HTTPException(429, "quota_exceeded")
+        s.add(ChatConversation(id=cid, user_id=user.id, assistant_id=pub.assistant_id, publication_id=pid,
+                               context={}, provider="closed", created_at=now(), deleted_at=now()))
+    await s.commit()
 
 
 def view(g):
@@ -89,6 +136,7 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
     if not q.question.strip():
         raise HTTPException(422, "question_required")
     async with SessionLocal() as s:
+        await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK})
         c = await conversation(s, cid, user)
         pub = await publication(s, c.publication_id, user)
         if c.context["version"] != q.context_version or context_for(pub.message_text, None)["version"] != q.context_version:
@@ -100,11 +148,11 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         if q.selected_segment and q.selected_segment not in {seg["id"] for seg in c.context["segments"]}:
             raise HTTPException(422, "invalid_selection")
         # Across all processes: reservation, idempotency and capacity are atomic.
-        await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK})
         prior = await s.scalar(select(ChatGeneration).where(ChatGeneration.user_id == user.id, ChatGeneration.idempotency_key == q.idempotency_key))
         if prior:
             if (prior.conversation_id != cid or prior.question != q.question or prior.model["model_id"] != m.model_id
-                or prior.language != q.language or prior.usage.get("selected_segment") != q.selected_segment):
+                or prior.language != q.language or prior.usage.get("selected_segment") != q.selected_segment
+                or prior.usage.get("intent", "question") != q.intent):
                 raise HTTPException(409, "idempotency_conflict")
             return view(prior)
         active = await s.scalar(select(func.count()).select_from(ChatGeneration).where(ChatGeneration.status.in_(ACTIVE))) or 0
@@ -113,7 +161,7 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
             raise HTTPException(429, "chat_busy")
         history = list((await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == cid, ChatGeneration.status == "completed").order_by(ChatGeneration.created_at.desc(), ChatGeneration.id.desc()).limit(20))).all())
         try:
-            messages = prompt(c.context, q.question, q.language, [view(g) for g in reversed(history)], q.selected_segment, m.max_input_chars)
+            messages = prompt(c.context, q.question, q.language, [view(g) for g in reversed(history)], q.selected_segment, m.max_input_chars, q.intent)
         except ValueError:
             raise HTTPException(422, "context_too_large") from None
         # Conservative upper bound: <= one Unicode scalar per token is not
@@ -141,7 +189,7 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         deadline = min(session.expires_at, admin._reader_nightly_expiry(session.created_at), session.created_at + timedelta(hours=get_settings().session_absolute_hours), now() + timedelta(seconds=get_settings().news_chat_timeout_seconds))
         g = ChatGeneration(id=uuid.uuid4(), conversation_id=cid, user_id=user.id, assistant_id=c.assistant_id, idempotency_key=q.idempotency_key,
                            session_hash=session.token_hash, question=q.question, answer="", language=q.language, model=m.model_dump(mode="json"),
-                           citations=[], status="queued", cancel_requested=False, reserved_usd=reserve, usage={"input_bound": input_bound, "selected_segment": q.selected_segment}, deadline=deadline, created_at=now())
+                           citations=[], status="queued", cancel_requested=False, reserved_usd=reserve, usage={"input_bound": input_bound, "selected_segment": q.selected_segment, "intent": q.intent}, deadline=deadline, created_at=now())
         s.add(g)
         await s.commit()
         return view(g)
@@ -208,7 +256,7 @@ async def generate(gid):
             context = c.context
             model = ModelSpec.model_validate(g.model)
             history = list((await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == c.id, ChatGeneration.status == "completed").order_by(ChatGeneration.created_at.desc(), ChatGeneration.id.desc()).limit(20))).all())
-            messages = prompt(context, g.question, g.language, [view(x) for x in reversed(history)], g.usage.get("selected_segment"), model.max_input_chars)
+            messages = prompt(context, g.question, g.language, [view(x) for x in reversed(history)], g.usage.get("selected_segment"), model.max_input_chars, g.usage.get("intent", "question"))
             deadline = g.deadline
         last_write = time.monotonic()
         async with asyncio.timeout(max(0.1, (deadline - now()).total_seconds())), aclosing(monitored_events(gid, providers.stream(get_settings(), model, messages))) as events:
@@ -286,6 +334,18 @@ async def worker(stop: asyncio.Event):
 
 async def maintenance_once():
     async with work_lease(), SessionLocal() as s:
+        await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK})
+        # Crash, tab loss, offline close, logout and nightly session expiry:
+        # a short live-window lease bounds storage even when close cannot be
+        # delivered. Browser heartbeats never renew the login's idle timeout.
+        valid_sessions = select(AdminSession.token_hash).where(AdminSession.portal == "user", AdminSession.expires_at > now())
+        abandoned = (await s.scalars(select(ChatConversation).where(
+            ChatConversation.deleted_at.is_(None), ChatConversation.context["_ephemeral"].as_boolean().is_(True),
+            or_(ChatConversation.context["_expires_at"].as_string() <= now().isoformat(),
+                ChatConversation.context["_session_hash"].as_string().not_in(valid_sessions)),
+        ).limit(500))).all()
+        for c in abandoned:
+            await erase_conversation(s, c)
         await s.execute(update(ChatGeneration).where(ChatGeneration.status.in_(ACTIVE), ChatGeneration.deadline < now() - timedelta(seconds=10)).values(status="unknown", error_code="generation_unknown", finished_at=now(), session_hash=""))
         cutoff = now() - timedelta(days=get_settings().news_chat_retention_days)
         # Covers orphaned billing rows too. Skip already-cleared rows rather
@@ -294,6 +354,7 @@ async def maintenance_once():
         # The frozen database trigger clears text even for cascade deletion;
         # the nullable FK preserves the corresponding consumption records.
         await s.execute(delete(ChatConversation).where(ChatConversation.created_at < cutoff))
+        await s.execute(delete(ChatConversation).where(ChatConversation.deleted_at < now() - timedelta(days=1)))
         await s.commit()
 
 
