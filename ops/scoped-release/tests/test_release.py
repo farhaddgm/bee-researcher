@@ -15,6 +15,21 @@ REF = "ghcr.io/farhaddgm/bee-researcher-market-intelligence@sha256:" + "b" * 64
 
 
 class ScopedReleaseTests(unittest.TestCase):
+    def test_new_release_restores_verified_image_cmd_not_inherited_rollback(self):
+        image={"Config":{"Cmd":["./start-service.sh"]}}
+        with patch.object(release,'inspect',return_value=image) as inspect:
+            service=release.production_service(REF,{"MARKET_INTELLIGENCE_VERSION":"3.40.0"})
+        inspect.assert_called_once_with(REF)
+        self.assertEqual(service['command'],['./start-service.sh'])
+        self.assertEqual(service['image'],REF)
+        self.assertEqual(service['environment']['MARKET_INTELLIGENCE_VERSION'],'3.40.0')
+
+    def test_missing_candidate_cmd_is_refused_before_cutover(self):
+        for command in (None,[],"./start-service.sh",[None],[""]):
+            with patch.object(release,'inspect',return_value={"Config":{"Cmd":command}}):
+                with self.assertRaisesRegex(RuntimeError,'explicit startup command'):
+                    release.production_service(REF,{})
+
     def test_legacy_rollback_keeps_auth_and_forward_schema_without_migrating(self):
         current={"Image":"old-image","Config":{"Labels":{"org.opencontainers.image.version":"3.39.1"}}}
         service=release.rollback_service(current,{"MARKET_INTELLIGENCE_VERSION":"3.39.1"},"3.40.0")
@@ -137,7 +152,7 @@ class ScopedReleaseTests(unittest.TestCase):
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         response.read.return_value = json.dumps({"version": "3.39.1"}).encode()
-        container = {"State": {"Health": {"Status": "healthy"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV}}}
+        container = {"State": {"Running": True, "Health": {"Status": "healthy"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV}}}
         with patch.object(release, "inspect", return_value=container), patch.object(release.urllib.request, "urlopen", return_value=response):
             release.wait_health(REV, "3.39.1")
             with self.assertRaises(RuntimeError):
@@ -148,7 +163,7 @@ class ScopedReleaseTests(unittest.TestCase):
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         response.read.return_value = json.dumps({"version": "3.39.1"}).encode()
-        container = {"State": {"Health": {"Status": "healthy"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV}}}
+        container = {"State": {"Running": True, "Health": {"Status": "healthy"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV}}}
         starting = urllib.error.HTTPError("https://researcher.beeproject.ir/ready", 503, "starting", {}, None)
         with patch.object(release, "inspect", return_value=container), patch.object(release.time, "sleep"), \
                 patch.object(release.urllib.request, "urlopen", side_effect=[response, starting, response, response]) as request:
@@ -160,10 +175,38 @@ class ScopedReleaseTests(unittest.TestCase):
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
         response.read.return_value = json.dumps({"version": "3.39.1"}).encode()
-        container = {"State": {"Health": {"Status": "healthy"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV}}}
+        container = {"State": {"Running": True, "Health": {"Status": "starting"}}, "Config": {"Labels": {"org.opencontainers.image.revision": REV},"Healthcheck":{"Test":["CMD","probe /ready"]}}}
         with patch.object(release, "inspect", return_value=container), patch.object(release.urllib.request, "urlopen", return_value=response) as request:
             release.wait_health(REV, "3.39.1", ready_required=False)
             request.assert_called_once_with("https://researcher.beeproject.ir/health", timeout=15)
+
+    def test_final_readiness_still_requires_docker_healthy_and_public_ready(self):
+        starting={"State":{"Running":True,"Health":{"Status":"starting"}},"Config":{"Labels":{"org.opencontainers.image.revision":REV}}}
+        healthy={**starting,"State":{"Running":True,"Health":{"Status":"healthy"}}}
+        response=Mock()
+        response.__enter__=Mock(return_value=response)
+        response.__exit__=Mock(return_value=False)
+        response.read.return_value=json.dumps({"version":"3.40.0"}).encode()
+        with patch.object(release,'inspect',side_effect=[starting,healthy]) as inspect, \
+                patch.object(release.time,'sleep'),patch.object(release.urllib.request,'urlopen',return_value=response) as request:
+            release.wait_health(REV,'3.40.0',ready_required=True)
+        self.assertEqual(inspect.call_count,2)
+        self.assertEqual([call.args[0] for call in request.call_args_list],['https://researcher.beeproject.ir/health','https://researcher.beeproject.ir/ready'])
+
+    def test_starting_liveness_never_accepts_another_source_commit(self):
+        container={"State":{"Running":True,"Health":{"Status":"starting"}},"Config":{"Labels":{"org.opencontainers.image.revision":"c"*40}}}
+        with patch.object(release,'inspect',return_value=container),patch.object(release.urllib.request,'urlopen') as request:
+            with self.assertRaisesRegex(RuntimeError,'source binding'):
+                release.wait_health(REV,'3.40.0',ready_required=False)
+        request.assert_not_called()
+
+    def test_stopped_container_never_passes_liveness(self):
+        container={"State":{"Running":False,"Health":{"Status":"healthy"}}}
+        with patch.object(release,'inspect',return_value=container), \
+                patch.object(release.time,'monotonic',side_effect=[0,0,2]),patch.object(release.time,'sleep'), \
+                patch.object(release.urllib.request,'urlopen') as request:
+            with self.assertRaises(TimeoutError):release.wait_health(REV,'3.40.0',timeout=1,ready_required=False)
+        request.assert_not_called()
 
     def test_atomic_cutover_releases_admission_before_full_readiness(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -175,7 +218,7 @@ class ScopedReleaseTests(unittest.TestCase):
                 "MARKET_INTELLIGENCE_POSTGRES_USER=bee_researcher_runtime", "MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED=true",
                 "MARKET_INTELLIGENCE_POSTGRES_PASSWORD=synthetic$not-a-real-secret", "UNRELATED_SERVICE_TOKEN=not-copied"]},
                 "HostConfig": {"ReadonlyRootfs": True, "CapDrop": ["ALL"]}}
-            live = {"Image": "new-image", "Config": {"User": "market-intelligence"}}
+            live = {"Image": "new-image", "Config": {"User": "market-intelligence", "Cmd": ["./start-service.sh"]}}
             controller = Mock(returncode=0)
             controller.stdout.readline.return_value = "RESEARCHER_DRAINED\n"
             controller.poll.return_value = 0
@@ -193,7 +236,7 @@ class ScopedReleaseTests(unittest.TestCase):
             controller.communicate.side_effect = released
             args = SimpleNamespace(image=REF, revision=REV, version="3.39.1", expected_current_revision=REV)
             with patch.object(release, "ROOT", root), patch.object(release, "candidate", return_value="new-image"), \
-                    patch.object(release, "inspect", side_effect=[current, {"State": {"ExitCode": 0}}, live]), \
+                    patch.object(release, "inspect", side_effect=[current, {"Config":{"Cmd":["./start-service.sh"]}}, {"State": {"ExitCode": 0}}, live]), \
                     patch.object(release, "compose_command", return_value=["docker", "compose"]), \
                     patch.object(release, "run", return_value=""), patch.object(release, "verify_shutdown", return_value={"exit_code": 143}), patch.object(release, "wait_health", side_effect=readiness), \
                     patch.object(release.subprocess, "Popen", return_value=controller), \
@@ -203,6 +246,7 @@ class ScopedReleaseTests(unittest.TestCase):
             controller.communicate.assert_called_once_with("release\n", timeout=30)
             overrides = list((root / "ops/bee-researcher-direct/private").glob("*/production.override.json"))
             self.assertEqual(len(overrides), 1)
+            self.assertEqual(json.loads(overrides[0].read_text())["services"]["market-intelligence"]["command"],["./start-service.sh"])
             self.assertEqual(overrides[0].stat().st_mode & 0o777, 0o600)
             env = json.loads(overrides[0].read_text())["services"]["market-intelligence"]["environment"]
             self.assertEqual(env["MARKET_INTELLIGENCE_POSTGRES_PASSWORD"], "synthetic$$not-a-real-secret")
@@ -243,7 +287,7 @@ class ScopedReleaseTests(unittest.TestCase):
             controller.communicate.side_effect = released
             args = SimpleNamespace(image=REF, revision=REV, version="3.39.1", expected_current_revision=REV)
             with patch.object(release, "ROOT", root), patch.object(release, "candidate", return_value="new-image"), \
-                    patch.object(release, "inspect", side_effect=[current, {"State": {"ExitCode": 0}}]), \
+                    patch.object(release, "inspect", side_effect=[current, {"Config":{"Cmd":["./start-service.sh"]}}, {"State": {"ExitCode": 0}}]), \
                     patch.object(release, "compose_command", return_value=["docker", "compose"]), \
                     patch.object(release, "run", return_value=""), patch.object(release, "verify_shutdown", return_value={"exit_code": 143}), patch.object(release, "wait_health", side_effect=readiness), \
                     patch.object(release.subprocess, "Popen", return_value=controller), \

@@ -99,6 +99,17 @@ def rollback_service(current, environment, version):
     return service
 
 
+def production_service(ref, environment):
+    # A prior forward-schema rollback leaves its temporary auth-only command
+    # in the inherited compose stack. Restore the verified image's own CMD,
+    # including runtime_permissions; never inherit that compatibility bypass.
+    configuration = inspect(ref)["Config"]
+    command = configuration.get("Cmd")
+    if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
+        raise RuntimeError("candidate must declare an explicit startup command")
+    return {"image": ref, "command": command, "stop_grace_period": "600s", "environment": dict(environment)}
+
+
 def verify_shutdown(stopped, since):
     state = stopped["State"]
     if state.get("Running") or state.get("OOMKilled") or state.get("Error") or state.get("ExitCode") not in {0, 143}:
@@ -123,7 +134,13 @@ def wait_health(revision, version, *, timeout=120, ready_required=True):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         container = inspect(APP)
-        if container["State"].get("Health", {}).get("Status") == "healthy":
+        # Docker itself probes /ready. Requiring Docker healthy before
+        # releasing admission is the SAME scheduler-heartbeat deadlock as
+        # directly querying /ready. During drain, independently require a
+        # running container, bound source and public /health instead. The
+        # normal final gate still requires both Docker healthy and /ready.
+        state = container["State"]
+        if state.get("Running") and (not ready_required or state.get("Health", {}).get("Status") == "healthy"):
             if container["Config"]["Labels"].get("org.opencontainers.image.revision") != revision:
                 raise RuntimeError("running source binding mismatch")
             try:
@@ -195,8 +212,8 @@ def deploy(args):
         "MARKET_INTELLIGENCE_DEPLOYMENT_DRAIN_ENABLED": "true",
     })
     override = private / "production.override.json"
-    save(override, {"services": {"market-intelligence": {
-        "image": args.image, "stop_grace_period": "600s", "environment": environment}}}, private=True)
+    production = production_service(args.image, environment)
+    save(override, {"services": {"market-intelligence": production}}, private=True)
     command = compose_command(current, override)
     run(command + ["config", "--quiet"], env=compose_env)
     controller = None
@@ -245,6 +262,8 @@ def deploy(args):
         live = inspect(APP)
         if live["Image"] != image_id or live["Config"]["User"] != current["Config"]["User"]:
             raise RuntimeError("runtime image/user changed unexpectedly")
+        if live["Config"].get("Cmd") != production["command"]:
+            raise RuntimeError("native candidate startup command was not restored")
         if controller:
             phase = "release_admission"
             controller.communicate("release\n", timeout=30)
@@ -259,6 +278,7 @@ def deploy(args):
             "migration_performed": False, "rekey_performed": False, "other_services_restarted": False,
             "runtime_environment_preserved_in_private_override": True,
             "compose_interpolation_bound_to_runtime": True, "shutdown": shutdown,
+            "native_image_command_restored": True,
         })
         print(json.dumps({"healthy": True, "version": args.version, "receipt": str(artifact / "deployment-receipt.json")}))
     except BaseException as exc:

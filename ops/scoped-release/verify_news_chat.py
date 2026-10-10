@@ -1,12 +1,21 @@
 """Reproducible isolated chat acceptance gate; no runtime secrets or production DB."""
 from __future__ import annotations
 import argparse
+import io
+import json
 import os
 from pathlib import Path
 import subprocess
+import sys
+import select
 import tempfile
 import time
+import urllib.error
+from urllib.parse import urlsplit
+from unittest.mock import patch
 import uuid
+sys.path.insert(0,str(Path(__file__).resolve().parent))
+import deploy as release
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "src/market_intelligence"
@@ -26,6 +35,14 @@ def installer_options(directory):
             '-e', 'npm_config_cache=/tmp/bee-npm-cache', '-v', f'{directory}:/tools']
 
 
+def startup_healthcheck_options():
+    # Production receives this readiness-bound healthcheck from Compose,
+    # not Dockerfile. Plain docker run must reproduce it explicitly.
+    return ['--health-cmd', 'python -c "import urllib.request; urllib.request.urlopen(\'http://127.0.0.1:8010/ready\',timeout=2)"',
+            '--health-interval', '15s', '--health-timeout', '5s',
+            '--health-start-period', '30s', '--health-retries', '10']
+
+
 def run(*args, timeout=300, capture=False):
     return subprocess.run(["docker", *map(str,args)],check=True,timeout=timeout,
                           text=True,capture_output=capture)
@@ -38,8 +55,8 @@ def main():
     parser.add_argument('--artifacts',type=Path,help='Optional directory for synthetic UI screenshots')
     args=parser.parse_args()
     suffix=uuid.uuid4().hex[:12];net='bee-news-chat-test-'+suffix
-    names={k:'bee-news-chat-'+k+'-'+suffix for k in ('pg','redis','app','startup')}
-    containers=[];network=False
+    names={k:'bee-news-chat-'+k+'-'+suffix for k in ('pg','redis','app','startup','drain')}
+    containers=[];network=False;controller=None
     with tempfile.TemporaryDirectory(prefix='bee-news-chat-browser-') as tools:
         try:
             modules=args.node_modules.resolve() if args.node_modules else Path(tools)/'node_modules'
@@ -72,7 +89,7 @@ def main():
             run('exec',names['redis'],'redis-cli','-a','synthetic-chat-redis-fixture','ACL','SETUSER',
                 'startup-fixture','on','>synthetic-startup-redis-fixture','~*','+@all',capture=True)
             startup=dict(env)
-            startup.update({'ENVIRONMENT':'production','ADMIN_COOKIE_SECURE':'true','POSTGRES_USER':'startup_fixture',
+            startup.update({'ENVIRONMENT':'production','ADMIN_COOKIE_SECURE':'true','SCHEDULER_ENABLED':'true','POSTGRES_USER':'startup_fixture',
                 'POSTGRES_PASSWORD':'synthetic-startup-database-fixture','REDIS_USERNAME':'startup-fixture',
                 'REDIS_PASSWORD':'synthetic-startup-redis-fixture','NEWS_CHAT_ENABLED':'false',
                 'OPENAI_API_KEY':'','NEWS_CHAT_ANTHROPIC_KEY':'','NEWS_CHAT_GOOGLE_KEY':'',
@@ -86,7 +103,16 @@ def main():
             startup_options=['--network',net,'--read-only','--tmpfs','/tmp:size=32m,mode=1777',
                 '--cap-drop','ALL','--security-opt','no-new-privileges:true']
             for key,value in startup.items():startup_options.extend(['-e',f'MARKET_INTELLIGENCE_{key}={value}'])
-            run('run','-d','--name',names['startup'],*startup_options,args.image,capture=True)
+            # Hold the real admission barrier BEFORE boot. This is the cold
+            # heartbeat condition that unit mocks and a normal startup miss.
+            controller=subprocess.Popen(['docker','run','--rm','-i','--name',names['drain'],
+                '--entrypoint','python',*startup_options,args.image,'-m','app.deployment_drain',
+                '--timeout','30','--hold-seconds','180'],stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+            containers.append(names['drain'])
+            if not select.select([controller.stdout],[],[],45)[0] or controller.stdout.readline().strip()!='RESEARCHER_DRAINED':
+                raise RuntimeError('Isolated startup admission barrier did not become ready')
+            run('run','-d','--name',names['startup'],*startup_options,*startup_healthcheck_options(),args.image,capture=True)
             containers.append(names['startup'])
             probe="import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8010/health',timeout=2); assert r.status==200; assert json.load(r)['status']=='healthy'"
             for attempt in range(60):
@@ -98,6 +124,30 @@ def main():
                     diagnostics=run('logs','--tail','60',names['startup'],capture=True)
                     raise RuntimeError('Actual startup CMD failed: '+diagnostics.stdout+diagnostics.stderr)
                 time.sleep(.5)
+            original_inspect=release.inspect
+            def fixture_inspect(ref):
+                if ref!=release.APP:raise RuntimeError('Unexpected acceptance inspect target')
+                return original_inspect(names['startup'])
+            def fixture_http(url,timeout=15):
+                path=urlsplit(url).path
+                if path not in ('/health','/ready'):raise RuntimeError('Unexpected acceptance HTTP path')
+                # Real HTTP inside the isolated container; only transport is
+                # adapted because this gate must not expose host ports.
+                request="import json,urllib.request,urllib.error; path="+repr(path)+";\ntry:\n r=urllib.request.urlopen('http://127.0.0.1:8010'+path,timeout=2); print(json.dumps({'status':r.status,'body':r.read().decode()}))\nexcept urllib.error.HTTPError as e:\n print(json.dumps({'status':e.code,'body':e.read().decode()}))"
+                result=json.loads(run('exec',names['startup'],'python','-c',request,capture=True).stdout)
+                if result['status']>=400:raise urllib.error.HTTPError(url,result['status'],'isolated readiness',{},None)
+                return io.BytesIO(result['body'].encode())
+            source=original_inspect(names['startup'])['Config']['Labels']['org.opencontainers.image.revision']
+            version=json.load(fixture_http('https://researcher.beeproject.ir/health'))['version']
+            with patch.object(release,'inspect',side_effect=fixture_inspect),patch.object(release.urllib.request,'urlopen',side_effect=fixture_http):
+                release.wait_health(source,version,timeout=10,ready_required=False)
+                try:fixture_http('https://researcher.beeproject.ir/ready')
+                except urllib.error.HTTPError as exc:assert exc.code==503
+                else:raise RuntimeError('Isolated cold heartbeat was not blocked by admission')
+                controller.communicate('release\n',timeout=30)
+                if controller.returncode:raise RuntimeError('Isolated controller did not confirm admission release')
+                release.wait_health(source,version,timeout=120,ready_required=True)
+            print('Real held-drain boot passed: independent liveness before release; Docker healthy and /ready only after release.')
             run('stop','--time','30',names['startup'],capture=True)
             print('Actual production startup CMD passed with restricted PostgreSQL/Redis identities, OAuth prerequisites and 0045 schema.')
             run('run','-d','--name',names['app'],'--entrypoint','python',*common,args.image,'scripts/news_chat_fixture.py',capture=True);containers.append(names['app'])
@@ -128,6 +178,9 @@ def main():
                     PW,'scripts/'+script,timeout=360)
             print('Isolated news-chat acceptance gate passed; no live credentials or calls.')
         finally:
+            if controller and controller.poll() is None:
+                try:controller.communicate('release\n',timeout=30)
+                except (subprocess.TimeoutExpired,BrokenPipeError):pass
             # Explicit IDs created in this invocation only. Never prune Docker.
             for name in reversed(containers):
                 # Include only anonymous volumes belonging to this test's
