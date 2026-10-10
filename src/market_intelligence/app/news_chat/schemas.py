@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from typing import Literal
+from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 LANGUAGES = ("fa", "en", "tr", "ar", "es", "it", "de", "fr")
@@ -55,6 +56,7 @@ class Policy(Strict):
 
 class Start(Strict):
     model_key: str = Field(min_length=3, max_length=120)
+    conversation_id: UUID | None = None
 
 
 class Question(Start):
@@ -63,6 +65,7 @@ class Question(Start):
     language: Literal["fa", "en", "tr", "ar", "es", "it", "de", "fr"] = "fa"
     context_version: str = Field(min_length=64, max_length=64)
     selected_segment: str | None = Field(default=None, max_length=20, pattern=r"^report-[0-9]+$")
+    intent: Literal["question", "opportunities", "risks"] = "question"
 
 
 class Feedback(Strict):
