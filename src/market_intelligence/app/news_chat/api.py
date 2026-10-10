@@ -49,7 +49,9 @@ async def models(assistant_id: uuid.UUID, token: str | None = Cookie(None, alias
             except HTTPException:
                 continue
             rows.append({"key": m.key, "provider": m.provider, "label": m.label})
-    return {"models": rows, "daily_requests": p.user_daily_requests, "enabled": bool(rows)}
+    return {"models": rows, "daily_requests": p.user_daily_requests, "enabled": bool(rows),
+            "scope": "user_portal", "reason": None if rows else (
+                "chat_disabled" if not get_settings().news_chat_enabled or not p.enabled else "model_unavailable")}
 
 
 @router.get("/user/api/publications/{pid}/chat-context")
@@ -191,23 +193,16 @@ async def get_policy(token: str | None = Cookie(None, alias=ADMIN_SESSION_COOKIE
     await owner(token)
     async with SessionLocal() as s:
         p = await svc.policy(s)
-        return {"policy": p.model_dump(mode="json"), "server_enabled": get_settings().news_chat_enabled,
+        return {"policy": p.model_dump(mode="json"), "scope": "user_portal", "server_enabled": get_settings().news_chat_enabled,
                 "configured": {provider: providers.configured(get_settings(), provider) for provider in ("openai", "anthropic", "google")}}
 
 
 @router.put("/admin/api/news-chat/policy")
 async def put_policy(payload: Policy, token: str | None = Cookie(None, alias=ADMIN_SESSION_COOKIE)):
     actor = await owner(token)
-    # A policy may not invent projects, and enabled models require credentials.
-    from app.models import AssistantWorkspace
+    # Retire legacy project overrides on save. Membership remains separate.
+    payload = payload.model_copy(update={"projects": {}})
     async with SessionLocal() as s:
-        for aid in payload.projects:
-            try:
-                uid = uuid.UUID(aid)
-            except ValueError:
-                raise HTTPException(422, "invalid_project") from None
-            if await s.get(AssistantWorkspace, uid) is None:
-                raise HTTPException(422, "invalid_project")
         for m in payload.models:
             if m.enabled and (not m.verified or not providers.configured(get_settings(), m.provider)):
                 raise HTTPException(422, "provider_unconfigured")

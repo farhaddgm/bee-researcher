@@ -98,15 +98,30 @@ class NewsChatContextTests(unittest.TestCase):
         self.assertFalse(service.allowed(user))
         self.assertFalse(service.allowed(None))
 
-    def test_no_model_without_flag_project_approval_verification_and_secret(self):
+    def test_global_models_apply_to_existing_and_future_projects_without_overrides(self):
         aid=uuid.uuid4();p=Policy(enabled=True, models=[spec(enabled=True, verified=True)], projects={str(aid):{"enabled":True,"model_keys":[spec().key]}})
         with patch("app.news_chat.service.get_settings", return_value=SimpleNamespace(news_chat_enabled=False)):
             with self.assertRaises(HTTPException):
                 service.model_for(p,aid,spec().key)
         with patch("app.news_chat.service.get_settings", return_value=SimpleNamespace(news_chat_enabled=True)), patch("app.news_chat.providers.configured", return_value=True):
             self.assertEqual(spec().key, service.model_for(p,aid,spec().key).key)
-            with self.assertRaises(HTTPException):
-                service.model_for(p,uuid.uuid4(),spec().key)
+            self.assertEqual(spec().key, service.model_for(p,uuid.uuid4(),spec().key).key)
+            p.projects={}
+            self.assertEqual(spec().key, service.model_for(p,uuid.uuid4(),spec().key).key)
+
+    def test_legacy_project_opt_out_does_not_disable_portal_feature(self):
+        aid=uuid.uuid4();p=Policy(enabled=True,models=[spec(enabled=True,verified=True)],projects={str(aid):{'enabled':False}})
+        with patch('app.news_chat.service.get_settings',return_value=SimpleNamespace(news_chat_enabled=True)),patch('app.news_chat.providers.configured',return_value=True):
+            self.assertEqual(spec().key,service.model_for(p,aid,spec().key).key)
+
+    def test_global_flag_model_and_provider_safety_gates_remain(self):
+        aid=uuid.uuid4()
+        with patch('app.news_chat.service.get_settings',return_value=SimpleNamespace(news_chat_enabled=True)),patch('app.news_chat.providers.configured',return_value=True):
+            for enabled,verified,policy_enabled in [(False,True,True),(True,False,True),(True,True,False)]:
+                with self.subTest(enabled=enabled,verified=verified,policy_enabled=policy_enabled),self.assertRaises(HTTPException):
+                    service.model_for(Policy(enabled=policy_enabled,models=[spec(enabled=enabled,verified=verified)]),aid,spec().key)
+        with patch('app.news_chat.service.get_settings',return_value=SimpleNamespace(news_chat_enabled=True)),patch('app.news_chat.providers.configured',return_value=False),self.assertRaises(HTTPException):
+            service.model_for(Policy(enabled=True,models=[spec(enabled=True,verified=True)]),aid,spec().key)
 
     def test_cost_requires_known_nonnegative_usage(self):
         self.assertIsNone(providers.cost(spec(), {}))
@@ -238,6 +253,22 @@ class NewsChatHttpContracts(unittest.TestCase):
         self.assertIn("t('model')+': '+providerNames[row.provider]+' · '+row.model",source)
         self.assertIn("location.origin+'/user/news/'+pid",source)
         self.assertIn("t('references')",source)
+
+    def test_unavailable_chat_explains_why_and_has_no_active_composer(self):
+        source=self.client.get('/assets/news-chat/chat.js').text
+        self.assertIn("unavailable(available.reason==='chat_disabled'?'featureOff':'unavailable')",source)
+        self.assertIn("e.status===403?'permissionNeeded'",source)
+        self.assertIn('#newsChat[data-unavailable=true]',self.client.get('/assets/news-chat/chat.css').text)
+        catalog=self.client.get('/assets/news-chat/i18n.js').text
+        self.assertIn('permissionNeeded:',catalog)
+        self.assertIn('scope:',catalog)
+
+    def test_owner_settings_are_portal_wide_not_a_project_form(self):
+        source=self.client.get('/assets/news-chat/admin.js').text
+        for legacy in ('projectDrafts','projectBudget','refreshAllowed','/admin/api/assistants'):
+            self.assertNotIn(legacy,source)
+        self.assertIn("translated('p','scope'",source)
+        self.assertIn('projects:{}',source)
 
     def test_keyset_indexes_cover_timestamp_ties(self):
         from app.news_chat.models import ChatConversation, ChatGeneration

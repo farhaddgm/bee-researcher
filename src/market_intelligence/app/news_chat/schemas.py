@@ -40,7 +40,8 @@ class Policy(Strict):
     user_daily_budget_usd: Decimal = Field(default=Decimal("1"), gt=0, le=100)
     user_daily_requests: int = Field(default=30, ge=1, le=100)
     models: list[ModelSpec] = Field(default_factory=list, max_length=12)
-    projects: dict[str, ProjectPolicy] = Field(default_factory=dict)
+    # Compatibility with saved pre-3.40.1 JSON only; no project gates/budgets.
+    projects: dict[str, ProjectPolicy] = Field(default_factory=dict, json_schema_extra={"deprecated": True})
 
     @model_validator(mode="after")
     def unique_models(self):
