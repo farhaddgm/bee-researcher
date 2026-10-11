@@ -150,6 +150,35 @@ class VoiceWireTests(unittest.IsolatedAsyncioTestCase):
         frame=json.loads(providers.audio_chunk(b'\x00\x01',True));self.assertEqual('input_audio_chunk',frame['message_type'])
         self.assertEqual(b'\x00\x01',base64.b64decode(frame['audio_base_64']));self.assertTrue(frame['commit'])
 
+    async def test_dialogue_wire_requires_final_message_before_marking_audio_complete(self):
+        pcm=b'\x01\x02'*100;text='Published words '*30
+        for complete in (True,False):
+            sent=[];captured=[];chunks=[]
+            class Socket:
+                async def send(self,raw):sent.append(json.loads(raw))
+                async def messages(self):
+                    yield json.dumps({'audio':base64.b64encode(pcm).decode()})
+                    yield json.dumps({'is_final_audio_for_turn':True})
+                    if complete:yield json.dumps({'is_final':True})
+                def __aiter__(self):return self.messages()
+            @asynccontextmanager
+            async def ws(url,**kwargs):captured.append((url,kwargs));yield Socket()
+            async def chunk(raw):chunks.append(raw)
+            with patch.object(providers,'key',return_value='TEST_ONLY'),patch.object(providers,'connect',side_effect=ws):
+                if complete:
+                    raw,timing=await providers.ttd_tts(text,voice(transport='ttd',model_id='eleven_v3_conversational'),'fa',True,on_chunk=chunk)
+                    self.assertEqual(pcm,raw);self.assertEqual(raw,b''.join(chunks));self.assertEqual([],timing)
+                else:
+                    with self.assertRaises(providers.VoiceError) as exc:
+                        await providers.ttd_tts(text,voice(transport='ttd',model_id='eleven_v3_conversational'),'fa')
+                    self.assertEqual('voice_provider_incomplete',exc.exception.code)
+            url,options=captured[0];query=parse_qs(urlsplit(url).query)
+            self.assertEqual('/v1/text-to-dialogue/stream-input',urlsplit(url).path)
+            self.assertEqual(['pcm_16000'],query['output_format']);self.assertEqual(['eleven_v3_conversational'],query['model_id'])
+            self.assertEqual({'xi-api-key':'TEST_ONLY'},options['additional_headers']);self.assertIsNone(options['proxy'])
+            self.assertEqual({'voices':['testvoice001']},sent[0]);self.assertEqual([{'flush':True},{'close_socket':True}],sent[-2:])
+            self.assertEqual(text,''.join(part['text'] for event in sent if 'inputs' in event for part in event['inputs']))
+
     async def test_unauthorized_socket_never_finalizes_or_refunds_another_session(self):
         ws=SimpleNamespace(headers={'origin':'http://local','host':'local'},cookies={},close=AsyncMock(),accept=AsyncMock())
         with patch.object(gateway,'origin_allowed',return_value=True),patch.object(service,'live_session',side_effect=HTTPException(404)),patch.object(service,'finish_session',new_callable=AsyncMock) as finish:

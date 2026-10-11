@@ -88,7 +88,7 @@ async def http_tts(text,voice,language,zero_retention=False,on_chunk=None):
 async def ttd_tts(text,voice,language,zero_retention=False,on_chunk=None):
     params={'model_id':voice.model_id,'output_format':'pcm_16000','language_code':language,
             'sync_alignment':str(voice.timing).lower(),'enable_logging':str(not zero_retention).lower()}
-    output=bytearray();timing=[];forwarded=0
+    output=bytearray();timing=[];forwarded=0;terminal=False
     async with connect('wss://api.elevenlabs.io/v1/text-to-dialogue/stream-input?'+urlencode(params),
             additional_headers={'xi-api-key':key()},proxy=None,open_timeout=10,max_size=2_000_000) as ws:
         first={'voices':[voice.voice_id]}
@@ -108,9 +108,10 @@ async def ttd_tts(text,voice,language,zero_retention=False,on_chunk=None):
                 if len(output)>min(MAX_BYTES-44,600*32000):raise VoiceError('audio_too_large')
                 end=len(output)//2*2
                 if on_chunk and end>forwarded:await on_chunk(bytes(output[forwarded:end]));forwarded=end
-                if part.get('is_final'):break
+                if part.get('is_final'):terminal=True;break
             except (ValueError,KeyError,TypeError):raise VoiceError('voice_provider_invalid') from None
-    if not output or len(output)%2:raise VoiceError('voice_provider_invalid')
+    if not terminal:raise VoiceError('voice_provider_incomplete')
+    if not output or len(output)%2 or output[:4]==b'RIFF':raise VoiceError('voice_provider_invalid')
     return bytes(output),timing
 
 
