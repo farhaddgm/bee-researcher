@@ -7,7 +7,7 @@ import uuid
 from datetime import timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -63,9 +63,21 @@ async def verify():
             assert e.status_code == 409
         else:
             raise AssertionError("Empty conversation entered memory")
+        # Saving an active temporary window removes its expiry/session lease.
+        async with SessionLocal() as s:
+            c = await s.get(ChatConversation, ids[-1])
+            c.context = {**c.context, "_ephemeral": True, "_session_hash": hashlib.sha256(token.encode()).hexdigest(), "_expires_at": (svc.now()+timedelta(minutes=1)).isoformat()}
+            await s.commit()
         first = await api.save_memory(ids[-1], token=token)
         second = await api.save_memory(ids[-1], token=token)
         assert first["saved_at"] == second["saved_at"], "Repeated save changed memory ordering"
+        assert (await api.heartbeat(ids[-1], token=token))["status"] == "saved"
+        async with SessionLocal() as s:
+            c = await s.get(ChatConversation, ids[-1])
+            assert not c.context.get("_ephemeral") and "_session_hash" not in c.context
+            await svc.close_window(s, ids[-1], pid, user)
+        assert (await api.messages(ids[-1], token=token))["messages"][0]["answer"] == "Saved old answer", "Closing erased an explicit save"
+
         seen = []
         before = None
         while True:
@@ -100,8 +112,13 @@ async def verify():
             assert e.status_code == 404
         else:
             raise AssertionError("Private project memory became accessible")
+        async with SessionLocal() as s:
+            await s.execute(update(AdminSession).where(AdminSession.user_id == uid).values(expires_at=svc.now()-timedelta(minutes=1)))
+            await s.commit()
         await svc.maintenance_once()
         async with SessionLocal() as s:
+            await s.execute(update(AdminSession).where(AdminSession.user_id == uid).values(expires_at=svc.now()+timedelta(minutes=30)))
+            await s.commit()
             rows = (await s.scalars(select(ChatGeneration).where(ChatGeneration.user_id == uid))).all()
             assert len(rows) == 35 and all(r.answer == "Saved old answer" for r in rows), "Retention erased saved memory"
         await api.unsave_memory(ids[0], token=token)
