@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, literal, select, text, tuple_
 from app import admin
 from app.config import get_settings
 from app.database import SessionLocal
+from app.models import Publication
 from app.models import AdminSession, AdminUser
 from app.security_controls import ADMIN_SESSION_COOKIE
 from app.news_chat import providers, service as svc
