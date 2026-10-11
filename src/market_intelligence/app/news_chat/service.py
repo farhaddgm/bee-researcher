@@ -76,12 +76,16 @@ async def conversation(s, cid, user):
         raise HTTPException(404, "news_unavailable")
     if window_expired(row.context):
         raise HTTPException(410, "conversation_closed")
-    await publication(s, row.publication_id, user)
+    pub = await publication(s, row.publication_id, user)
+    if row.context.get('scope') == 'selected_research':
+        from app.reader_research.api import sources_visible
+        if not await sources_visible(s, pub.assistant_id, row.context['source_ids']):
+            raise HTTPException(404, 'news_unavailable')
     return row
 
 
 def public_context(context: dict) -> dict:
-    return {key: context[key] for key in ("version", "scope", "complete", "published_at", "segments") if key in context}
+    return {key: context[key] for key in ("version", "scope", "complete", "published_at", "segments", "source_ids", "memory_ids", "include_business") if key in context}
 
 
 def window_expired(context: dict) -> bool:
@@ -140,8 +144,13 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK})
         c = await conversation(s, cid, user)
         pub = await publication(s, c.publication_id, user)
-        if c.context["version"] != q.context_version or context_for(pub.message_text, None)["version"] != q.context_version:
+        if c.context.get('scope') == 'selected_research':
+            from app.reader_research.service import validate_context
+            await validate_context(s, c, pub, user)
+        if c.context["version"] != q.context_version or (c.context.get('scope') != 'selected_research' and context_for(pub.message_text, None)["version"] != q.context_version):
             raise HTTPException(409, "context_changed")
+        if q.intent == 'compare' and len(c.context.get('source_ids', [c.publication_id])) < 2:
+            raise HTTPException(422, 'comparison_requires_two_sources')
         p = await policy(s)
         m = model_for(p, c.assistant_id, q.model_key)
         if c.provider != m.provider:
@@ -200,7 +209,11 @@ async def authorized_generation(s, gid, user):
     g = await s.scalar(select(ChatGeneration).where(ChatGeneration.id == gid, ChatGeneration.user_id == user.id))
     if g is None or not g.conversation_id:
         raise HTTPException(404, "news_unavailable")
-    await conversation(s, g.conversation_id, user)
+    c = await conversation(s, g.conversation_id, user)
+    if g.status in ACTIVE and c.context.get('scope') == 'selected_research':
+        from app.reader_research.service import validate_context
+        pub = await publication(s, c.publication_id, user)
+        await validate_context(s, c, pub, user)
     p = await policy(s)
     model_for(p, g.assistant_id, g.model["provider"] + ":" + g.model["model_id"])
     return g

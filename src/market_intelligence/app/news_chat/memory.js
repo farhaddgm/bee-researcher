@@ -3,6 +3,7 @@
   'use strict';
   const reader=window.BeeReader,i18n=window.BeeNewsChatI18n;
   if(!reader||!i18n)return;
+  const directMemory=new URLSearchParams(location.search).get('conversation');
   const t=i18n.t,$=id=>document.getElementById(id),node=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n};
   const label=(n,key)=>{n.dataset.chatKey=key;n.textContent=t(key);return n};
   const button=(key,action)=>{const n=label(node('button',undefined,'btn'),key);n.type='button';n.addEventListener('click',action);return n};
@@ -11,7 +12,10 @@
   panel.append(label(node('summary'),'projectMemory'));
   const project=node('p',undefined,'chat-meta'),status=node('p',undefined,'chat-status'),items=node('div',undefined,'memory-items');status.role='status';
   const more=button('older',()=>load(true)),refresh=button('refreshMemory',()=>load());more.hidden=true;
-  panel.append(project,status,refresh,items,more);$('feedPage')?.prepend(panel);
+  const searchForm=node('form',undefined,'memory-search'),filters={};
+  for(const [key,type,param] of [['memorySearch','search','q'],['modelFilter','text','model'],['fromDate','date','after_date'],['toDate','date','until_date']]){const l=node('label'),input=node('input');input.type=type;if(type!=='date')input.maxLength=120;l.append(label(node('span'),key),input);searchForm.append(l);filters[param]=input}
+  const search=label(node('button',undefined,'btn'),'search');search.type='submit';const reset=button('reset',()=>{searchForm.reset();load()});searchForm.append(search,reset);searchForm.addEventListener('submit',event=>{event.preventDefault();load()});
+  panel.append(project,status,searchForm,refresh,items,more);$('feedPage')?.prepend(panel);
   const sidebar=button('projectMemory',()=>{if(location.pathname.replace(/\/+$/,'').endsWith('/user/settings')){location.assign('/user?memory=1');return}if($('sidebar')?.classList.contains('open'))$('mobileMenuButton')?.click();panel.open=true;panel.scrollIntoView({block:'start'});load()});sidebar.className='sidebar-item';sidebar.title=t('projectMemory');
   const mark=node('span','◈','sidebar-icon'),copy=label(node('span'),'projectMemory');mark.setAttribute('aria-hidden','true');sidebar.removeAttribute('data-chat-key');sidebar.replaceChildren(mark,copy);
   $('sidebar')?.querySelector('.sidebar-spacer')?.before(sidebar);
@@ -55,10 +59,16 @@
     if(busy||workspace!==selected.id||(older&&!cursor))return;
     const generation=seq;busy=true;refresh.disabled=more.disabled=true;status.textContent=t('loading');
     try{
-      const data=await api('/user/api/assistants/'+workspace+'/memory'+(older?'?before='+cursor:''));
+      const params=new URLSearchParams();for(const [key,input] of Object.entries(filters))if(input.value.trim())params.set(key,input.value.trim());if(older)params.set('before',cursor);
+      const data=await api('/user/api/assistants/'+workspace+'/memory?'+params);
       if(generation!==seq)return;
       for(const entry of data.memories)items.append(card(entry));cursor=data.older_before;more.hidden=!cursor;
       status.textContent=items.children.length?t('memoryHelp'):t('memoryEmpty');
+      const direct=directMemory;
+      if(!older&&direct&&/^[0-9a-f-]{36}$/i.test(direct)){
+        const entry=await api('/user/api/conversations/'+direct+'/memory-reference');if(generation!==seq)return;
+        if(entry.assistant_id===workspace){let target=items.querySelector('[data-memory="'+direct+'"]');if(!target){target=card(entry);items.prepend(target)}const trigger=target.querySelector('button[aria-controls]');if(trigger&&trigger.getAttribute('aria-expanded')!=='true')trigger.click()}
+      }
     }catch(e){if(generation===seq){items.replaceChildren();more.hidden=true;status.textContent=t(e.status===401?'expired':e.status===403||e.status===404?'denied':'error')}}
     finally{if(generation===seq){busy=false;refresh.disabled=more.disabled=false}}
   }

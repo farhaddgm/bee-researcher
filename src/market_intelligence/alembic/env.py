@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.config import get_settings
 from app.models import Base
 from app.report_portal import models as report_models  # Register additive metadata.
+from app.reader_research import models as reader_research_models  # Register additive metadata.
 
 
 config = context.config
