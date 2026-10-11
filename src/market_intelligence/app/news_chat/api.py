@@ -4,13 +4,13 @@ import asyncio
 import json
 import uuid
 import hashlib
-from datetime import timedelta
-from typing import Any, cast
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Cookie, HTTPException, Request
+from fastapi import APIRouter, Cookie, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pathlib import Path
-from sqlalchemy import delete, func, literal, select, text, tuple_
+from sqlalchemy import Text, delete, func, literal, or_, select, text, tuple_
 
 from app import admin
 from app.config import get_settings
@@ -21,7 +21,7 @@ from app.security_controls import ADMIN_SESSION_COOKIE
 from app.news_chat import providers, service as svc
 from app.news_chat.context import context_for
 from app.news_chat.models import ChatConversation, ChatGeneration, ChatPolicy
-from app.news_chat.schemas import Feedback, Grant, Policy, Start
+from app.news_chat.schemas import Feedback, Grant, Policy, ResearchStart
 
 router = APIRouter()
 COOKIE = admin.USER_SESSION_COOKIE
@@ -79,7 +79,9 @@ async def conversations(pid: uuid.UUID, token: str | None = Cookie(None, alias=C
 
 
 @router.post("/user/api/publications/{pid}/conversations", status_code=201)
-async def start(pid: uuid.UUID, payload: Start, token: str | None = Cookie(None, alias=COOKIE)):
+async def start(pid: uuid.UUID, payload: ResearchStart, token: str | None = Cookie(None, alias=COOKIE)):
+    # Preserve existing internal callers of the original Start schema.
+    payload = ResearchStart.model_validate(payload.model_dump())
     user = await admin.current_reader(token)
     svc.require(user)
     async with SessionLocal() as s:
@@ -91,6 +93,12 @@ async def start(pid: uuid.UUID, payload: Start, token: str | None = Cookie(None,
                     raise HTTPException(404, "news_unavailable")
                 if existing.deleted_at or svc.window_expired(existing.context):
                     raise HTTPException(410, "conversation_closed")
+                if payload.source_ids or payload.memory_ids or payload.include_business:
+                    from app.reader_research.service import selected_context
+                    pub = await svc.publication(s, pid, user)
+                    requested = await selected_context(s, pub, user, payload.source_ids, payload.memory_ids, payload.include_business)
+                    if requested['version'] != existing.context['version']:
+                        raise HTTPException(409, 'idempotency_conflict')
                 return {"id": str(existing.id), "provider": existing.provider, "context": svc.public_context(existing.context)}
         pub = await svc.publication(s, pid, user)
         m = svc.model_for(await svc.policy(s), pub.assistant_id, payload.model_key)
@@ -100,6 +108,9 @@ async def start(pid: uuid.UUID, payload: Start, token: str | None = Cookie(None,
         if count >= 500:
             raise HTTPException(429, "quota_exceeded")
         ctx = context_for(pub.message_text, pub.published_at.isoformat() if pub.published_at else None)
+        if payload.source_ids or payload.memory_ids or payload.include_business:
+            from app.reader_research.service import selected_context
+            ctx = await selected_context(s, pub, user, payload.source_ids, payload.memory_ids, payload.include_business)
         ctx.update(_ephemeral=True, _session_hash=hashlib.sha256((token or "").encode()).hexdigest(),
                    _expires_at=(svc.now() + timedelta(seconds=svc.WINDOW_LEASE_SECONDS)).isoformat())
         c = ChatConversation(id=payload.conversation_id or uuid.uuid4(), user_id=user.id, assistant_id=pub.assistant_id, publication_id=pid,
@@ -181,8 +192,22 @@ async def unsave_memory(cid: uuid.UUID, token: str | None = Cookie(None, alias=C
     return {"status": "removed"}
 
 
+@router.get('/user/api/conversations/{cid}/memory-reference')
+async def memory_reference(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE)):
+    user = await admin.current_reader(token)
+    async with SessionLocal() as s:
+        c = await svc.conversation(s, cid, user)
+        if not c.saved_at:
+            raise HTTPException(404, 'news_unavailable')
+        return {'id': str(c.id), 'assistant_id': str(c.assistant_id), 'publication_id': str(c.publication_id),
+                'title': next((seg['text'][:180] for seg in c.context.get('segments', [])), ''),
+                'provider': c.provider, 'saved_at': c.saved_at.isoformat()}
+
+
 @router.get("/user/api/assistants/{aid}/memory")
-async def project_memory(aid: uuid.UUID, before: uuid.UUID | None = None, token: str | None = Cookie(None, alias=COOKIE)):
+async def project_memory(aid: uuid.UUID, before: uuid.UUID | None = None, q: Annotated[str, Query(max_length=120)] = '',
+                         model: Annotated[str, Query(max_length=120)] = '', after_date: date | None = None, until_date: date | None = None,
+                         token: str | None = Cookie(None, alias=COOKIE)):
     user = await admin.current_reader(token)
     svc.require(user)
     available = await admin.reader_assistants(user)
@@ -192,6 +217,26 @@ async def project_memory(aid: uuid.UUID, before: uuid.UUID | None = None, token:
         query = select(ChatConversation).join(Publication, Publication.id == ChatConversation.publication_id).where(
             ChatConversation.user_id == user.id, ChatConversation.assistant_id == aid,
             ChatConversation.saved_at.is_not(None), ChatConversation.deleted_at.is_(None), Publication.status == "published")
+        if after_date and until_date and after_date > until_date:
+            raise HTTPException(422, 'invalid_date_range')
+        if after_date:
+            query = query.where(ChatConversation.saved_at >= datetime.combine(after_date, time.min, timezone.utc))
+        if until_date:
+            query = query.where(ChatConversation.saved_at <= datetime.combine(until_date, time.max, timezone.utc))
+        matching = select(ChatGeneration.id).where(ChatGeneration.conversation_id == ChatConversation.id)
+        if q.strip():
+            pattern = '%' + q.strip().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+            matching = matching.where(or_(ChatGeneration.question.ilike(pattern, escape='\\'), ChatGeneration.answer.ilike(pattern, escape='\\')))
+        if model:
+            matching = matching.where(func.concat(ChatGeneration.model['provider'].as_string(), ':', ChatGeneration.model['model_id'].as_string()) == model)
+        if q.strip() and not model:
+            query = query.where(or_(matching.exists(), ChatConversation.context['segments'].cast(Text).ilike(pattern, escape='\\')))
+        elif q.strip() and model:
+            model_match = select(ChatGeneration.id).where(ChatGeneration.conversation_id == ChatConversation.id,
+                func.concat(ChatGeneration.model['provider'].as_string(), ':', ChatGeneration.model['model_id'].as_string()) == model)
+            query = query.where(or_(matching.exists(), ChatConversation.context['segments'].cast(Text).ilike(pattern, escape='\\') & model_match.exists()))
+        elif model:
+            query = query.where(matching.exists())
         if before:
             prior = await s.scalar(query.where(ChatConversation.id == before))
             if prior is None:

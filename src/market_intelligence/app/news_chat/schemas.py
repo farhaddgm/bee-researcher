@@ -59,13 +59,25 @@ class Start(Strict):
     conversation_id: UUID | None = None
 
 
+class ResearchStart(Start):
+    source_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    memory_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    include_business: bool = False
+
+    @model_validator(mode='after')
+    def unique_selection(self):
+        if len(set(self.source_ids)) != len(self.source_ids) or len(set(self.memory_ids)) != len(self.memory_ids):
+            raise ValueError('duplicate selection')
+        return self
+
+
 class Question(Start):
     question: str = Field(min_length=1, max_length=4000)
     idempotency_key: str = Field(min_length=16, max_length=64, pattern=r"^[a-zA-Z0-9_-]+$")
     language: Literal["fa", "en", "tr", "ar", "es", "it", "de", "fr"] = "fa"
     context_version: str = Field(min_length=64, max_length=64)
     selected_segment: str | None = Field(default=None, max_length=20, pattern=r"^report-[0-9]+$")
-    intent: Literal["question", "opportunities", "risks"] = "question"
+    intent: Literal["question", "opportunities", "risks", "compare", "verify", "impact", "action_draft", "timeline"] = "question"
 
 
 class Feedback(Strict):

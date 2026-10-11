@@ -55,7 +55,7 @@ def context_for(text: str, published_at: str | None) -> dict:
 
 
 def validate_citations(answer: str, context: dict) -> tuple[str, list, bool]:
-    segments = {s["id"]: s["text"] for s in context["segments"]}
+    segments = {s["id"]: s for s in context["segments"]}
     valid: list[dict] = []
     invalid = False
     def replace(match):
@@ -65,13 +65,15 @@ def validate_citations(answer: str, context: dict) -> tuple[str, list, bool]:
             invalid = True
             return ""
         if not any(c["segment_id"] == sid for c in valid):
-            valid.append({"segment_id": sid, "quote": segments[sid][:300], "scope": "published_report", "version": context["version"]})
+            seg = segments[sid]
+            valid.append({"segment_id": sid, "quote": seg['text'][:300], "scope": seg.get('scope', 'published_report'),
+                          "version": context["version"], **{key: seg[key] for key in ('publication_id', 'memory_id') if key in seg}})
         return f"[{sid}]"
     return re.sub(r"\[(report-[\w-]+)\]", replace, answer), valid, invalid
 
 
 def prompt(context: dict, question: str, language: str, history: list, selected: str | None, max_chars: int, intent: str = "question") -> list:
-    source = "\n".join(f'[{s["id"]}] {s["text"]}' for s in context["segments"])
+    source = "\n".join(f'[{s["id"]}] ' + (('(' + s.get('scope', '') + '; ' + str(s.get('publication_id') or s.get('memory_id') or '') + '; publication date: ' + str(s.get('published_at') or 'not supplied') + ') ') if context.get('scope') == 'selected_research' else '') + s['text'] for s in context['segments'])
     language_name = {'fa':'Persian (Farsi)','en':'English','tr':'Turkish','ar':'Modern Standard Arabic',
                      'es':'Spanish','it':'Italian','de':'German','fr':'French'}[language]
     system = (
@@ -88,6 +90,20 @@ def prompt(context: dict, question: str, language: str, history: list, selected:
     )
     if not context["complete"]:
         system += " Only part of the report is available; disclose this limitation."
+    if context.get('scope') == 'selected_research':
+        system = system.replace('Use only the selected published report', 'Use only the explicitly selected published reports')
+        system += (' Selected private memory is prior AI/user discussion, not independent evidence. User business context is user-provided, unverified data. '
+                   'Cite each source separately. Never treat repeat reports or agreement as independent verification. '
+                   'You have access only to supplied selections; never imply access to the full project or internal company systems.')
+    instructions = {
+        'compare': 'Produce a Markdown comparison table: claim/topic, agreement, differences, supporting citations, unknown information. Follow with a cautious synthesis. Compare all selected reports. Do not invent disagreement.',
+        'verify': 'Separate reported claims, supplied evidence, publication dates, source limitations and unverified details in a table. You cannot independently fact-check or browse. Mark uncorroborated claims explicitly.',
+        'impact': 'Analyze opportunities, risks, assumptions, missing business data and possible next actions. Use user business context only when supplied. Label business consequences as uncertain inferences; do not invent company details.',
+        'timeline': 'Order supplied dated reports chronologically and describe changes and unresolved questions. Dates are publication dates, not necessarily event dates. Identify repeats; do not fabricate a change between similar reports.',
+        'action_draft': 'Return a draft action in JSON with title, description, assignee and due_on (ISO date or null). Use an empty assignee and null date when unknown. Include report citations in description. This is a suggestion only; never claim an action was assigned or scheduled.'
+    }
+    if intent in instructions:
+        system += ' ' + instructions[intent]
     if selected:
         system += " The user asks specifically about segment " + selected + "."
     if intent in {"opportunities", "risks"}:

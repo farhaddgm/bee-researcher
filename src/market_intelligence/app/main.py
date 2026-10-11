@@ -1042,6 +1042,8 @@ async def user_ui(request: Request) -> HTMLResponse:
 
 from app.news_chat.api import router as news_chat_router
 app.include_router(news_chat_router)
+from app.reader_research.api import router as reader_research_router
+app.include_router(reader_research_router)
 from app.report_portal.api import router as report_router
 app.include_router(report_router)
 
@@ -1185,12 +1187,14 @@ async def user_api_publications(
         raise HTTPException(status_code=403, detail="workspace access denied")
     rows = await list_publications(status="published", limit=limit, assistant_id=assistant_id, query=query)
     from app.news_chat.context import reader_report_text
+    from app.reader_research.service import duplicate_key
     return {
         "count": len(rows),
         "publications": [
             {
                 "id": row["id"],
                 "message_text": reader_report_text(str(row["message_text"])),
+                "research_fingerprint": duplicate_key(reader_report_text(str(row['message_text']))),
                 "source_name": row["source_name"],
                 "created_at": row["created_at"],
                 "published_at": row["published_at"],

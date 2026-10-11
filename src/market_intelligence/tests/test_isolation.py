@@ -93,6 +93,8 @@ class IsolationTest(unittest.TestCase):
                 "market_intelligence.internal_report_jobs",
                 "market_intelligence.report_audit_events",
                 "market_intelligence.report_deletions",
+                "market_intelligence.reader_research_profiles",
+                "market_intelligence.reader_research_records",
             },
             set(Base.metadata.tables),
         )
