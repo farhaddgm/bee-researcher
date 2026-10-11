@@ -176,17 +176,23 @@ async def save_memory(cid: uuid.UUID, token: str | None = Cookie(None, alias=COO
         if completed is None:
             raise HTTPException(409, "completed_answer_required")
         c.saved_at = c.saved_at or svc.now()
-        c.context = {k: v for k, v in c.context.items() if not k.startswith("_")}
+        c.context = {k: v for k, v in c.context.items() if not k.startswith("_") or k=="_voice_continuous_started_at"}
         await s.commit()
         return {"id": str(c.id), "assistant_id": str(c.assistant_id), "saved_at": c.saved_at.isoformat()}
 
 
 @router.delete("/user/api/conversations/{cid}/memory")
-async def unsave_memory(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE)):
+async def unsave_memory(cid: uuid.UUID, remove_audio: bool = False, token: str | None = Cookie(None, alias=COOKIE)):
     user = await admin.current_reader(token)
     async with SessionLocal() as s:
         await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": svc.LOCK})
         c = await svc.conversation(s, cid, user)
+        from app.news_voice.models import VoiceAudio
+        audio=await s.scalar(select(VoiceAudio.id).where(VoiceAudio.conversation_id==cid,VoiceAudio.deleted_at.is_(None),VoiceAudio.saved_at.is_not(None)).limit(1))
+        if audio and not remove_audio:raise HTTPException(409,'audio_removal_confirmation_required')
+        if remove_audio:
+            from app.news_voice.service import erase_conversation as erase_voice
+            await erase_voice(s,cid)
         c.saved_at = None
         await s.commit()
     return {"status": "removed"}

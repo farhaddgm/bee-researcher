@@ -21,6 +21,7 @@ from app.news_chat import providers
 from app.news_chat.models import ChatConversation, ChatGeneration, ChatPolicy
 from app.news_chat.context import context_for
 from app.news_chat.schemas import ModelSpec, Policy
+from scripts import news_voice_fixture
 
 PROJECT = uuid.UUID('10000000-0000-4000-8000-000000000001')
 PRIVATE_PROJECT = uuid.UUID('10000000-0000-4000-8000-000000000002')
@@ -40,7 +41,7 @@ async def seed():
         s.add(AssistantWorkspace(id=research_project,name='Synthetic research workspace',slug='synthetic-research',business_name='',status='active',config={}))
         password_hash = await admin.hash_password_async(PASSWORD)
         users=[]
-        for n, name, role, grant, project in [(1,'chat-owner','admin',True,PROJECT),(2,'chat-reader','viewer',True,PROJECT),(3,'chat-other','viewer',True,PRIVATE_PROJECT),(4,'chat-no-grant','viewer',False,PROJECT),(5,'chat-admin','admin',False,PROJECT),(6,'chat-insights','viewer',True,PROJECT)]:
+        for n, name, role, grant, project in [(1,'chat-owner','admin',True,PROJECT),(2,'chat-reader','viewer',True,PROJECT),(3,'chat-other','viewer',True,PRIVATE_PROJECT),(4,'chat-no-grant','viewer',False,PROJECT),(5,'chat-admin','admin',False,PROJECT),(6,'chat-insights','viewer',True,PROJECT),(9,'voice-reader','viewer',True,PROJECT)]:
             u=AdminUser(id=uuid.UUID(f'30000000-0000-4000-8000-00000000000{n}'),username=name,email=name+'@gmail.com',display_name=name,role=role,active=True,password_hash=password_hash,login_method='both',preferences={'user_portal_access':{'enabled':True,'feedback_enabled':False},'news_chat_enabled':grant})
             s.add(u);users.append((u,project))
         await s.flush()
@@ -116,6 +117,8 @@ async def fake_stream(settings, model, messages):
 async def prepare():
     try:
         await seed()
+        news_voice_fixture.configure()
+        await news_voice_fixture.seed()
     finally:
         # Close on the SAME loop before Uvicorn starts its different one.
         await engine.dispose()

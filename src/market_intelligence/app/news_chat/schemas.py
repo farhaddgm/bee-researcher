@@ -78,6 +78,7 @@ class Question(Start):
     context_version: str = Field(min_length=64, max_length=64)
     selected_segment: str | None = Field(default=None, max_length=20, pattern=r"^report-[0-9]+$")
     intent: Literal["question", "opportunities", "risks", "compare", "verify", "impact", "action_draft", "timeline"] = "question"
+    voice_session_ids: list[UUID] = Field(default_factory=list, max_length=10)
 
 
 class Feedback(Strict):

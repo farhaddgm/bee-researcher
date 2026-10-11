@@ -213,6 +213,8 @@ async def usage(aid: uuid.UUID, before: uuid.UUID | None = None, token: str | No
         own = ChatGeneration.user_id == user.id
         total, personal, count = (await s.execute(select(func.coalesce(func.sum(charge), 0),
             func.coalesce(func.sum(charge).filter(own), 0), func.count().filter(own)).where(ChatGeneration.created_at >= day))).one()
+        from app.news_chat.budget import totals
+        total,personal=await totals(s,user.id)
         q = select(ChatGeneration).where(own, ChatGeneration.assistant_id == aid)
         if before:
             prior = await s.scalar(q.where(ChatGeneration.id == before))
