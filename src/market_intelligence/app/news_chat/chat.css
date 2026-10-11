@@ -3,12 +3,19 @@
 #newsDialog:has(#newsChat)>.dialog-head{flex-shrink:0;min-width:0;padding:18px 24px;margin:0;border-bottom:1px solid var(--line);background:var(--panel)}
 #newsDialog:has(#newsChat)>.dialog-head h2{min-width:0;overflow-wrap:anywhere;font-size:18px;line-height:1.6;margin:0;max-height:4.8em;overflow:hidden}
 #newsDialog:has(#newsChat) #closeDialog{flex-shrink:0}
-.news-study-layout{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:24px;padding:24px;min-height:0;overflow:auto;overscroll-behavior:contain}
+.news-study-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:24px;padding:24px;min-height:0;overflow:auto;overscroll-behavior:contain}
 .news-study-layout[data-chat-enabled=false]{grid-template-columns:minmax(0,1fr)}
 #newsChat[hidden],#newsChat [hidden],.chat-tabs[hidden],#chat-selection[hidden]{display:none!important}
 #newsChat[data-unavailable=true]>:not(.chat-heading):not(.chat-status){display:none!important}
 .news-study-layout>.deep-reading-layout{display:flex;flex-direction:column;min-width:0}
-#newsChat{min-width:0;border-inline-start:1px solid var(--line);padding-inline-start:24px;display:flex;flex-direction:column;gap:14px}
+.news-study-layout>.reading-tools{border-inline-start:0;border-top:1px solid var(--line);padding-inline-start:0;padding-top:18px;min-width:0}
+#newsChat{min-width:0;border-top:1px solid var(--line);padding-top:18px;display:flex;flex-direction:column;gap:14px}
+.chat-summary{display:flex;gap:8px;flex-wrap:wrap}.chat-summary[hidden]{display:none!important}
+#newsChat[data-response-mode=audio] .chat-answer{display:none}
+.project-chat-memory{border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:20px;background:var(--panel);min-width:0;overflow-wrap:anywhere}
+.project-chat-memory>summary{font-size:16px;font-weight:700;cursor:pointer}.memory-items{display:grid;gap:14px;margin-top:14px}
+.memory-card{border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}.memory-card h3{margin:0;font-size:15px;line-height:1.8}.memory-messages{display:grid;gap:14px;margin-top:16px;max-height:55vh;overflow:auto;padding:4px}
+.memory-card [hidden],.project-chat-memory>[hidden]{display:none!important}.memory-card a.btn{display:inline-flex;text-decoration:none}
 .chat-heading{display:flex;align-items:center;gap:8px;position:relative}
 .chat-heading h3{margin:0;font-size:18px;flex:1}.chat-info{border:1px solid var(--muted);border-radius:50%;background:transparent;color:var(--muted);width:24px;height:24px;cursor:help}
 .chat-tip{position:absolute;inset-inline-end:0;top:calc(100% + 8px);width:min(340px,100%);padding:14px;background:var(--panel);border:1px solid var(--line);border-radius:12px;z-index:30;box-shadow:var(--shadow);font-size:12px;line-height:1.8;opacity:0;visibility:hidden;pointer-events:none;display:grid;gap:8px;overflow-wrap:anywhere}

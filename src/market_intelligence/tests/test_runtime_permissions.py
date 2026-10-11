@@ -6,7 +6,7 @@ from app.config import Settings
 
 
 class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
-    async def check(self, *, revision='0046_report_portal', admin=False, create=False,
+    async def check(self, *, revision='0047_project_chat_memory', admin=False, create=False,
                     journal_write=False, missing=None, environment='production'):
         connection=MagicMock()
         connection.execute=AsyncMock(return_value=SimpleNamespace(one=lambda:(admin,False,False,False,False)))
@@ -31,7 +31,7 @@ class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
         return connection
 
     def test_packaged_head_is_derived_from_actual_image_migrations(self):
-        self.assertEqual(preflight.packaged_schema_head(),'0046_report_portal')
+        self.assertEqual(preflight.packaged_schema_head(),'0047_project_chat_memory')
 
     def test_startup_configuration_errors_never_print_secret_inputs(self):
         marker='PRIVATE_CONFIG_CANARY_secret_value_1234567890'
@@ -52,7 +52,7 @@ class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
             await self.check(missing=('market_intelligence.internal_report_versions','SELECT'))
 
     async def test_old_or_unknown_schema_is_refused(self):
-        for revision in ('0044_security_events','unknown',None):
+        for revision in ('0044_security_events','0046_report_portal','unknown',None):
             with self.assertRaisesRegex(RuntimeError,'separate migration'):
                 await self.check(revision=revision)
 

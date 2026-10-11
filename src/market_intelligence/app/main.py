@@ -803,7 +803,8 @@ async def private_indexing_headers(request: Request, call_next):
         response.headers["Content-Security-Policy-Report-Only"] = (
             f"{policy_base}; report-uri {settings.csp_report_uri}"
         )
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+    microphone = "(self)" if request.url.path == "/user" or request.url.path.startswith("/user/") else "()"
+    response.headers["Permissions-Policy"] = f"camera=(), microphone={microphone}, geolocation=(), payment=()"
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     if request.url.path.startswith("/admin") or request.url.path.startswith("/bee-cfo") or request.url.path not in {

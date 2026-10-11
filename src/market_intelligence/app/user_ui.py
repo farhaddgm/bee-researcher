@@ -261,6 +261,7 @@ USER_HTML = r'''<!doctype html>
     /* Narrow bridge: the chat module cannot read other users, hidden articles,
        credentials, or business data from the legacy reader state. */
     window.BeeReader={
+      workspace:()=>({id:state.assistantId,name:state.assistants.find(a=>String(a.id)===String(state.assistantId))?.name||''}),
       current:()=>({id:state.dialogId,assistantId:findItem(state.dialogId)?.assistant_id||state.assistantId,item:findItem(state.dialogId)}),
       open:item=>{if(!findItem(item.id))state.rawItems.push(item);openDialog(item.id)},
       appendNote:async text=>{if(!state.dialogId||!state.annotationDraft)return false;const note=$('dialogNote').value;const next=note+(note?'\n\n':'')+text;if(next.length>6000)return false;const draft={...state.annotationDraft,note:next};const saved=await saveReaderState(state.dialogId,draft,{announce:false});if(saved){state.annotationDraft=draft;syncDialogReadingTools()}return saved},
@@ -328,5 +329,5 @@ USER_HTML = r'''<!doctype html>
 from app.auth_ui import decorate_auth_html
 USER_HTML = decorate_auth_html(USER_HTML, admin=False)
 USER_HTML = USER_HTML.replace('</head>', '<link rel="stylesheet" href="/assets/news-chat/chat.css"></head>', 1).replace(
-    '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-chat/chat.js"></script></body>', 1,
+    '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-chat/voice.js"></script><script src="/assets/news-chat/chat.js"></script><script src="/assets/news-chat/memory.js"></script></body>', 1,
 )

@@ -15,6 +15,7 @@ from sqlalchemy import delete, func, literal, select, text, tuple_
 from app import admin
 from app.config import get_settings
 from app.database import SessionLocal
+from app.models import Publication
 from app.models import AdminSession, AdminUser
 from app.security_controls import ADMIN_SESSION_COOKIE
 from app.news_chat import providers, service as svc
@@ -29,7 +30,7 @@ ROOT = Path(__file__).parent
 
 @router.get("/assets/news-chat/{asset}", include_in_schema=False)
 async def asset(asset: str):
-    types = {"chat.js": "application/javascript", "chat.css": "text/css", "i18n.js": "application/javascript", "admin.js": "application/javascript"}
+    types = {"chat.js": "application/javascript", "chat.css": "text/css", "i18n.js": "application/javascript", "admin.js": "application/javascript", "voice.js": "application/javascript", "memory.js": "application/javascript"}
     if asset not in types:
         raise HTTPException(404)
     return FileResponse(ROOT / asset, media_type=types[asset], headers={"Cache-Control": "no-cache"})
@@ -74,7 +75,7 @@ async def conversations(pid: uuid.UUID, token: str | None = Cookie(None, alias=C
         # The enforced account cap is 500. Do not make its older conversations
         # unreachable behind a silently shorter fifty-option selector.
         rows = (await s.scalars(select(ChatConversation).where(ChatConversation.user_id == user.id, ChatConversation.publication_id == pid, ChatConversation.deleted_at.is_(None)).order_by(ChatConversation.created_at.desc(), ChatConversation.id.desc()).limit(500))).all()
-        return {"conversations": [{"id": str(c.id), "provider": c.provider, "created_at": c.created_at.isoformat(), "context_version": c.context["version"]} for c in rows]}
+        return {"conversations": [{"id": str(c.id), "provider": c.provider, "created_at": c.created_at.isoformat(), "context_version": c.context["version"], "saved_at": c.saved_at.isoformat() if c.saved_at else None} for c in rows]}
 
 
 @router.post("/user/api/publications/{pid}/conversations", status_code=201)
@@ -122,6 +123,8 @@ async def heartbeat(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKI
     async with SessionLocal() as s:
         await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": svc.LOCK})
         c = await svc.conversation(s, cid, user)
+        if c.saved_at:
+            return {"status": "saved"}
         if not c.context.get("_ephemeral") or c.context.get("_session_hash") != hashlib.sha256((token or "").encode()).hexdigest():
             raise HTTPException(403, "chat_access_denied")
         c.context = {**c.context, "_expires_at": (svc.now() + timedelta(seconds=svc.WINDOW_LEASE_SECONDS)).isoformat()}
@@ -144,7 +147,62 @@ async def messages(cid: uuid.UUID, before: uuid.UUID | None = None, token: str |
         # transaction. Fetch a look-ahead row, not an empty extra page.
         rows = (await s.scalars(query.order_by(ChatGeneration.created_at.desc(), ChatGeneration.id.desc()).limit(31))).all()
         page = rows[:30]
-        return {"messages": [svc.view(g) for g in reversed(page)], "context": svc.public_context(c.context), "older_before": str(page[-1].id) if len(rows) > 30 else None}
+        return {"messages": [svc.view(g) for g in reversed(page)], "context": svc.public_context(c.context), "saved_at": c.saved_at.isoformat() if c.saved_at else None, "older_before": str(page[-1].id) if len(rows) > 30 else None}
+
+
+@router.put("/user/api/conversations/{cid}/memory")
+async def save_memory(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE)):
+    user = await admin.current_reader(token)
+    async with SessionLocal() as s:
+        await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": svc.LOCK})
+        c = await svc.conversation(s, cid, user)
+        # Synchronize saving with retention and explicit deletion. Saving is
+        # idempotent and refers to the whole persisted thread, not the UI page.
+        c = await s.scalar(select(ChatConversation).where(ChatConversation.id == c.id, ChatConversation.deleted_at.is_(None)).with_for_update())
+        if c is None:
+            raise HTTPException(404, "news_unavailable")
+        completed = await s.scalar(select(ChatGeneration.id).where(ChatGeneration.conversation_id == cid, ChatGeneration.status == "completed", ChatGeneration.answer != "").limit(1))
+        if completed is None:
+            raise HTTPException(409, "completed_answer_required")
+        c.saved_at = c.saved_at or svc.now()
+        c.context = {k: v for k, v in c.context.items() if not k.startswith("_")}
+        await s.commit()
+        return {"id": str(c.id), "assistant_id": str(c.assistant_id), "saved_at": c.saved_at.isoformat()}
+
+
+@router.delete("/user/api/conversations/{cid}/memory")
+async def unsave_memory(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE)):
+    user = await admin.current_reader(token)
+    async with SessionLocal() as s:
+        await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": svc.LOCK})
+        c = await svc.conversation(s, cid, user)
+        c.saved_at = None
+        await s.commit()
+    return {"status": "removed"}
+
+
+@router.get("/user/api/assistants/{aid}/memory")
+async def project_memory(aid: uuid.UUID, before: uuid.UUID | None = None, token: str | None = Cookie(None, alias=COOKIE)):
+    user = await admin.current_reader(token)
+    svc.require(user)
+    available = await admin.reader_assistants(user)
+    if str(aid) not in {str(a["id"]) for a in cast(list[dict[str, Any]], available["assistants"])}:
+        raise HTTPException(404, "news_unavailable")
+    async with SessionLocal() as s:
+        query = select(ChatConversation).join(Publication, Publication.id == ChatConversation.publication_id).where(
+            ChatConversation.user_id == user.id, ChatConversation.assistant_id == aid,
+            ChatConversation.saved_at.is_not(None), ChatConversation.deleted_at.is_(None), Publication.status == "published")
+        if before:
+            prior = await s.scalar(query.where(ChatConversation.id == before))
+            if prior is None:
+                raise HTTPException(404, "news_unavailable")
+            query = query.where(tuple_(ChatConversation.saved_at, ChatConversation.id) < tuple_(literal(prior.saved_at), literal(prior.id)))
+        rows = (await s.scalars(query.order_by(ChatConversation.saved_at.desc(), ChatConversation.id.desc()).limit(31))).all()
+        page = rows[:30]
+        return {"memories": [{"id": str(c.id), "publication_id": str(c.publication_id), "provider": c.provider,
+                              "title": next((s["text"][:180] for s in c.context.get("segments", [])), ""),
+                              "saved_at": c.saved_at.isoformat() if c.saved_at else None} for c in page],
+                "older_before": str(page[-1].id) if len(rows) > 30 else None}
 
 
 @router.post("/user/api/conversations/{cid}/messages", status_code=202)
@@ -198,7 +256,7 @@ async def remove(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE))
         c = await s.get(ChatConversation, cid)
         if c is None or c.user_id != user.id:
             raise HTTPException(404, "news_unavailable")
-        await svc.close_window(s, cid, c.publication_id, user)
+        await svc.close_window(s, cid, c.publication_id, user, preserve_saved=False)
     return {"status": "deleted"}
 
 

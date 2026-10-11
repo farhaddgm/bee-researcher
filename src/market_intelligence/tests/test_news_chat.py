@@ -239,7 +239,7 @@ class NewsChatHttpContracts(unittest.TestCase):
         self.client=TestClient(app)
 
     def test_new_assets_are_self_hosted_and_allowlisted(self):
-        for name in ("chat.js","chat.css","i18n.js","admin.js"):
+        for name in ("chat.js","chat.css","i18n.js","admin.js","voice.js","memory.js"):
             response=self.client.get("/assets/news-chat/"+name)
             self.assertEqual(200,response.status_code)
         self.assertEqual(404,self.client.get("/assets/news-chat/service.py").status_code)
