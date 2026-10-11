@@ -180,6 +180,12 @@ class Settings(BaseSettings):
     news_chat_google_key: SecretStr | None = None
     news_chat_timeout_seconds: int = Field(default=90, ge=10, le=180)
     news_chat_retention_days: int = Field(default=30, ge=1, le=90)
+    # Voice is independently provisioned; credentials never enter policy JSON.
+    news_voice_enabled: bool = False
+    elevenlabs_api_key: SecretStr | None = None
+    elevenlabs_api_key_file: str = ""
+    news_voice_keyring_file: str = ""
+    news_voice_storage_path: str = "/var/lib/bee-researcher/voice"
     telegram_bot_token: SecretStr | None = None
     # Dedicated source credentials are environment-only. The back-office
     # stores a reference name, never the secret itself.

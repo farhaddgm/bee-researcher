@@ -331,5 +331,5 @@ USER_HTML = r'''<!doctype html>
 from app.auth_ui import decorate_auth_html
 USER_HTML = decorate_auth_html(USER_HTML, admin=False)
 USER_HTML = USER_HTML.replace('</head>', '<link rel="stylesheet" href="/assets/news-chat/chat.css"><link rel="stylesheet" href="/assets/reader-research/research.css"></head>', 1).replace(
-    '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/reader-research/i18n.js"></script><script src="/assets/news-chat/voice.js"></script><script src="/assets/news-chat/chat.js"></script><script src="/assets/news-chat/memory.js"></script><script src="/assets/reader-research/research.js"></script></body>', 1,
+    '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-voice/i18n.js"></script><script src="/assets/reader-research/i18n.js"></script><script src="/assets/news-chat/voice.js"></script><script src="/assets/news-chat/chat.js"></script><script src="/assets/news-chat/memory.js"></script><script src="/assets/reader-research/research.js"></script></body>', 1,
 )

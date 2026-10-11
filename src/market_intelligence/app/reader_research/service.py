@@ -135,6 +135,10 @@ async def selected_context(s, pub, user, source_ids, memory_ids, include_busines
         if len(text) > 6000 or len(turns) > 5:
             complete = False
         bounded = '\n'.join('Question: ' + t.question + '\nAnswer: ' + t.answer for t in reversed(turns[:5]))[:6000]
+        if c.context.get('scope')=='voice_brief':
+            text='\n'.join(str(seg.get('text','')) for seg in c.context.get('segments',[]))
+            bounded=text[:6000];complete=False
+            memory_versions[str(cid)]=hashlib.sha256(text.encode()).hexdigest()
         segments.append({'id': 'report-' + str(len(segments)), 'text': bounded,
                          'memory_id': str(cid), 'scope': 'selected_private_memory'})
     business = ''

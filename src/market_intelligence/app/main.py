@@ -262,7 +262,7 @@ def _login_document(body: str, portal: str, *, password: bool = False) -> str:
     body = body.replace("<body>", f"<body {attrs}>", 1)
     if portal == "admin":
         body = body.replace('</head>', '<link rel="stylesheet" href="/assets/news-chat/chat.css"></head>', 1).replace(
-            '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-chat/admin.js"></script></body>', 1,
+            '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-voice/i18n.js"></script><script src="/assets/news-chat/admin.js"></script><script src="/assets/news-voice/admin.js"></script></body>', 1,
         )
     return externalize_document(body)
 
@@ -439,6 +439,10 @@ async def lifespan(_: FastAPI):
         from app.news_chat.service import worker, maintenance
         tasks.extend(asyncio.create_task(worker(stop)) for _ in range(4))
         tasks.append(asyncio.create_task(maintenance(stop)))
+    # Existing audio/save/deletion work survives either feature kill switch.
+    from app.news_voice.service import worker as voice_worker, maintenance as voice_maintenance
+    tasks.extend(asyncio.create_task(voice_worker(stop)) for _ in range(2))
+    tasks.append(asyncio.create_task(voice_maintenance(stop)))
     if settings.report_portal_enabled:
         from app.report_portal.service import worker as report_worker, maintenance as report_maintenance
         from app.report_portal.policy import enabled as report_enabled
@@ -507,6 +511,10 @@ app.include_router(bee_cfo_router)
 
 @app.exception_handler(RequestValidationError)
 async def private_validation_errors(request: Request, exc: RequestValidationError):
+    if (request.url.path.startswith(("/user/api/voice", "/admin/api/news-voice/")) or
+        "/audio-saves" in request.url.path or "/voice-sessions" in request.url.path or
+        request.url.path.endswith(("/audio", "/brief-audio"))):
+        return JSONResponse(status_code=422, content={"detail": "voice_invalid_fields"})
     if request.url.path.startswith("/report/api/"):
         allowed={"business_id","assistant_id","title","text","tags","reporter","event_date","language","classification","revision","draft_key","idempotency_key","confirmed","models","daily_cap","daily_budget_usd","retention_days","report_id","offset"}
         return JSONResponse(status_code=422, content={"detail": "report_invalid_fields",
@@ -1042,6 +1050,8 @@ async def user_ui(request: Request) -> HTMLResponse:
 
 from app.news_chat.api import router as news_chat_router
 app.include_router(news_chat_router)
+from app.news_voice.api import router as news_voice_router
+app.include_router(news_voice_router)
 from app.reader_research.api import router as reader_research_router
 app.include_router(reader_research_router)
 from app.report_portal.api import router as report_router

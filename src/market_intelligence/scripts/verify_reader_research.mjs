@@ -10,7 +10,6 @@ const aid='10000000-0000-4000-8000-000000000003',otherAid='10000000-0000-4000-80
 const pids=Array.from({length:8},(_,i)=>'40000000-0000-4000-8000-00000000000'+(i+1));
 const mid='50000000-0000-4000-8000-000000000001',peerMid='50000000-0000-4000-8000-000000000003';
 const browser=await chromium.launch({headless:true}),ctx=await browser.newContext({viewport:{width:1440,height:1000}});
-await ctx.addInitScript(()=>{window.__briefSpeech=[];window.SpeechSynthesisUtterance=class{constructor(text){this.text=text}};Object.defineProperty(window,'speechSynthesis',{value:{getVoices:()=>['fa','en','tr','ar','es','it','de','fr'].map(lang=>({lang:lang+'-XX'})),speak:u=>{window.__briefSpeech.push(u.text);setTimeout(()=>u.onend?.(),5)},cancel:()=>{}},configurable:true})});
 const page=await ctx.newPage(),errors=[];page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
 const peerCtx=await browser.newContext(),peer=await peerCtx.newPage();peer.on('pageerror',e=>errors.push(e.message));
 async function api(target,path,method='GET',body){return target.evaluate(async({path,method,body})=>{const csrf=document.cookie.split('; ').find(c=>c.startsWith('research_bee_user_csrf='))?.split('=').slice(1).join('=');const r=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','x-csrf-token':decodeURIComponent(csrf||'')},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json().catch(()=>({}))}},{path,method,body})}
@@ -33,7 +32,7 @@ try{
   assert.equal((await api(page,endpoint('feed'))).data.news.length,8);
   assert.equal((await api(page,endpoint('usage'))).data.requests_today,0);
   const daily=page.locator('#research-view-dailyBrief');assert(await daily.locator('.research-card').count()>=1);
-  await daily.getByRole('button',{name:'Play brief',exact:true}).click();await page.waitForFunction(()=>window.__briefSpeech.length>0);
+  await daily.getByRole('button',{name:'Play brief',exact:true}).click();await daily.locator('audio').waitFor();assert((await daily.locator('audio').getAttribute('src')).startsWith('/user/api/voice-audio/'));
   assert.equal((await api(page,endpoint('usage'))).data.requests_today,0,'Daily playback created a paid request');
   await daily.getByRole('button',{name:'Pause',exact:true}).click();
   // Private profile survives reload, applies to the feed, and cannot overwrite stale revisions.
@@ -81,5 +80,5 @@ try{
   await peer.locator('.news-card[data-news-id="'+pids[0]+'"] [data-action=open]').click();await peer.locator('#newsChat [type=submit]:not([disabled])').waitFor();await peer.locator('#news-chat-question').fill('Convert this published report to a proposed action');await peer.locator('#newsChat [type=submit]').click();await peer.waitForFunction(()=>document.querySelector('.chat-turn')&&document.querySelector('#newsChat [type=submit]')&&!document.querySelector('#newsChat [type=submit]').disabled);await peer.locator('#newsChat').getByRole('button',{name:'Actions',exact:true}).click();await peer.locator('#readerResearchDesk[data-ready=true]').waitFor();await peer.locator('#research-view-actions:not([hidden])').waitFor();assert((await field(peer.locator('[data-research-form=action]'),'description').inputValue()).includes('Synthetic answer'));assert.equal((await api(peer,endpoint('records?kind=action'))).data.records.length,0,'Discuss draft created an action without confirmation');
   if(process.env.BEE_CHAT_ARTIFACT_DIR){await mkdir(process.env.BEE_CHAT_ARTIFACT_DIR,{recursive:true});await page.evaluate(()=>{document.documentElement.lang='fa';document.documentElement.dir='rtl'});await page.setViewportSize({width:1440,height:1000});await page.screenshot({path:join(process.env.BEE_CHAT_ARTIFACT_DIR,'research-desk-fa-desktop.png'),fullPage:true});await page.setViewportSize({width:390,height:1000});await page.screenshot({path:join(process.env.BEE_CHAT_ARTIFACT_DIR,'research-desk-fa-mobile.png'),fullPage:true})}
   assert.deepEqual(errors,[],'Browser runtime errors');
-  console.log('Reader ideas 6–20 passed: real HTTP/SQL/worker, speech stubs, selective context, privacy/sharing, actions/decisions, tracking/trends, consumption, 8 locales × 4 widths and accessibility.');
+  console.log('Reader ideas 6–20 passed: real HTTP/SQL/worker, synthetic ElevenLabs PCM, selective context, privacy/sharing, actions/decisions, tracking/trends, consumption, 8 locales × 4 widths and accessibility.');
 }finally{await peerCtx.close();await ctx.close();await browser.close()}

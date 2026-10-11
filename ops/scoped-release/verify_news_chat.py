@@ -155,6 +155,9 @@ def main():
             if args.artifacts:
                 output=args.artifacts.resolve();output.mkdir(parents=True,exist_ok=True)
                 artifacts=['-v',f'{output}:/artifacts','-e','BEE_CHAT_ARTIFACT_DIR=/artifacts']
+            run('run','--rm','--entrypoint','node','--network',net,*browser_mounts(modules),PW,'scripts/verify_voice_pcm.mjs')
+            run('run','--rm','--entrypoint','node','--network','container:'+names['app'],*browser_mounts(modules),*artifacts,
+                '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test','-e','BEE_CHAT_TEST_URL=http://127.0.0.1:8010',PW,'scripts/verify_news_voice.mjs')
             # Loopback provides a trustworthy browser context for native
             # clipboard APIs. It still has no host ports or Internet route.
             run('run','--rm','--entrypoint','node','--network','container:'+names['app'],*browser_mounts(modules),*artifacts,
@@ -186,8 +189,16 @@ def main():
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_news_chat_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_project_memory_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_reader_research_sql.py')
+            run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_news_voice_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_job_recovery_sql.py')
             print('Isolated news-chat acceptance gate passed; no live credentials or calls.')
+        except Exception:
+            if names['app'] in containers:
+                # This command targets only the explicitly created synthetic
+                # fixture, never the live application or live runtime data.
+                diagnostics=run('logs','--tail','40',names['app'],capture=True)
+                print(diagnostics.stdout+diagnostics.stderr,file=sys.stderr)
+            raise
         finally:
             if controller and controller.poll() is None:
                 try:controller.communicate('release\n',timeout=30)

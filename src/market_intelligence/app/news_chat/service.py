@@ -77,7 +77,7 @@ async def conversation(s, cid, user):
     if window_expired(row.context):
         raise HTTPException(410, "conversation_closed")
     pub = await publication(s, row.publication_id, user)
-    if row.context.get('scope') == 'selected_research':
+    if row.context.get('scope') in {'selected_research','voice_brief'}:
         from app.reader_research.api import sources_visible
         if not await sources_visible(s, pub.assistant_id, row.context['source_ids']):
             raise HTTPException(404, 'news_unavailable')
@@ -99,6 +99,8 @@ def window_expired(context: dict) -> bool:
 
 async def erase_conversation(s, c):
     """Clear transcript and cancel work, without resetting quotas or spend."""
+    from app.news_voice.service import erase_conversation as erase_voice
+    await erase_voice(s,c.id)
     c.deleted_at, c.context, c.saved_at = now(), {}, None
     for g in (await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == c.id).order_by(ChatGeneration.id).with_for_update())).all():
         g.cancel_requested, g.question, g.answer, g.citations, g.session_hash = True, "", "", [], ""
@@ -117,6 +119,11 @@ async def close_window(s, cid, pid, user, *, preserve_saved=True):
     if c is not None:
         if c.user_id != user.id or c.publication_id != pid:
             raise HTTPException(404, "news_unavailable")
+        from app.news_voice.service import save_lease, close_ephemeral
+        if preserve_saved and save_lease(c):
+            await s.commit()
+            return
+        await close_ephemeral(s,c.id)
         if not c.saved_at or not preserve_saved:
             await erase_conversation(s, c)
     else:
@@ -133,7 +140,8 @@ def view(g):
     return {"id": str(g.id), "conversation_id": str(g.conversation_id), "question": g.question,
             "answer": g.answer, "status": g.status, "error_code": g.error_code,
             "provider": g.model["provider"], "model": g.model["label"], "model_key": g.model["provider"] + ":" + g.model["model_id"],
-            "citations": g.citations, "feedback": g.feedback, "language": g.language, "created_at": g.created_at.isoformat()}
+            "citations": g.citations, "feedback": g.feedback, "language": g.language, "created_at": g.created_at.isoformat(),
+            "voice_session_ids":g.usage.get('voice_session_ids',[])}
 
 
 async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict:
@@ -162,7 +170,8 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         if prior:
             if (prior.conversation_id != cid or prior.question != q.question or prior.model["model_id"] != m.model_id
                 or prior.language != q.language or prior.usage.get("selected_segment") != q.selected_segment
-                or prior.usage.get("intent", "question") != q.intent):
+                or prior.usage.get("intent", "question") != q.intent
+                or prior.usage.get('voice_session_ids',[]) != [str(sid) for sid in q.voice_session_ids]):
                 raise HTTPException(409, "idempotency_conflict")
             return view(prior)
         active = await s.scalar(select(func.count()).select_from(ChatGeneration).where(ChatGeneration.status.in_(ACTIVE))) or 0
@@ -191,6 +200,8 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         ).where(ChatGeneration.created_at >= day))).one()
         if count >= p.user_daily_requests or recent >= 5:
             raise HTTPException(429, "quota_exceeded")
+        from app.news_chat.budget import totals
+        total,user_total=await totals(s,user.id)
         if total + reserve > p.daily_budget_usd or user_total + reserve > p.user_daily_budget_usd:
             raise HTTPException(429, "budget_exhausted")
         session = await s.scalar(select(AdminSession).where(AdminSession.token_hash == hashlib.sha256(token.encode()).hexdigest(), AdminSession.user_id == user.id, AdminSession.portal == "user"))
@@ -199,8 +210,18 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         deadline = min(session.expires_at, admin._reader_nightly_expiry(session.created_at), session.created_at + timedelta(hours=get_settings().session_absolute_hours), now() + timedelta(seconds=get_settings().news_chat_timeout_seconds))
         g = ChatGeneration(id=uuid.uuid4(), conversation_id=cid, user_id=user.id, assistant_id=c.assistant_id, idempotency_key=q.idempotency_key,
                            session_hash=session.token_hash, question=q.question, answer="", language=q.language, model=m.model_dump(mode="json"),
-                           citations=[], status="queued", cancel_requested=False, reserved_usd=reserve, usage={"input_bound": input_bound, "selected_segment": q.selected_segment, "intent": q.intent}, deadline=deadline, created_at=now())
+                           citations=[], status="queued", cancel_requested=False, reserved_usd=reserve, usage={"input_bound": input_bound, "selected_segment": q.selected_segment, "intent": q.intent,
+                           "voice_session_ids":[str(sid) for sid in q.voice_session_ids]}, deadline=deadline, created_at=now())
         s.add(g)
+        if q.voice_session_ids:
+            from app.news_voice.models import VoiceSession
+            if len(set(q.voice_session_ids))!=len(q.voice_session_ids):raise HTTPException(422,'voice_input_invalid')
+            await s.flush()
+            for sid in q.voice_session_ids:
+                voice_session=await s.get(VoiceSession,sid,with_for_update=True)
+                if not voice_session or voice_session.user_id!=user.id or voice_session.conversation_id!=cid or voice_session.status!='completed':raise HTTPException(404,'news_unavailable')
+                if voice_session.generation_id is not None:raise HTTPException(409,'voice_input_already_linked')
+                voice_session.generation_id=g.id
         await s.commit()
         return view(g)
 
@@ -359,12 +380,14 @@ async def maintenance_once():
                 ChatConversation.context["_session_hash"].as_string().not_in(valid_sessions)),
         ).limit(500))).all()
         for c in abandoned:
-            await erase_conversation(s, c)
+            from app.news_voice.service import save_lease
+            if not save_lease(c):await erase_conversation(s, c)
         await s.execute(update(ChatGeneration).where(ChatGeneration.status.in_(ACTIVE), ChatGeneration.deadline < now() - timedelta(seconds=10)).values(status="unknown", error_code="generation_unknown", finished_at=now(), session_hash=""))
         cutoff = now() - timedelta(days=get_settings().news_chat_retention_days)
         # Saved threads are retained until explicitly removed from memory.
-        expired = (await s.scalars(select(ChatConversation.id).where(ChatConversation.created_at < cutoff, ChatConversation.saved_at.is_(None)).with_for_update())).all()
-        retained = select(ChatConversation.id).where(ChatConversation.saved_at.is_not(None), ChatConversation.deleted_at.is_(None))
+        held=ChatConversation.context['_voice_save_until'].as_string()>now().isoformat()
+        expired = (await s.scalars(select(ChatConversation.id).where(ChatConversation.created_at < cutoff, ChatConversation.saved_at.is_(None),func.coalesce(held,False).is_(False)).with_for_update())).all()
+        retained = select(ChatConversation.id).where(or_(ChatConversation.saved_at.is_not(None),held), ChatConversation.deleted_at.is_(None))
         # Covers orphaned billing rows too. Skip already-cleared rows rather
         # than repeatedly rewriting the lifetime financial ledger every tick.
         await s.execute(update(ChatGeneration).where(ChatGeneration.created_at < cutoff, or_(ChatGeneration.conversation_id.is_(None), ChatGeneration.conversation_id.not_in(retained)), or_(ChatGeneration.question != "", ChatGeneration.answer != "", ChatGeneration.session_hash != "")).values(question="", answer="", citations=[], session_hash="", cancel_requested=True))

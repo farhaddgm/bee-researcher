@@ -1,5 +1,7 @@
 # Reader voice and project memory
 
+The sections below record the 3.43.0 baseline. The 3.45.0 ElevenLabs replacement and its pending activation requirements are documented at the end and in the operations guide.
+
 The news dialog now follows report → **Summarize simply** → **Discuss this news**. The existing summary shortcut still fills a question for review before sending. Chat offers Text, Audio and Text and audio together; the last option shows the same answer while speaking it. Voice input fills the editable question and requires Send. No model request occurs on opening, choosing a mode, dictating or replaying an answer.
 
 Speech recognition and synthesis use browser/device facilities. Recognition may send audio to the browser vendor's service, disclosed beside the microphone. Availability varies by device, browser and installed language voices, including Persian. Missing support and speech errors show a localized message and return to text. Physical microphone quality and vendor services are outside synthetic automated tests. This increment does not provide continuous Realtime voice or server-generated audio files.
@@ -24,3 +26,7 @@ Run `ops/scoped-release/migrate_project_memory.py --image <verified-digest> --re
 - Existing startup, chat, reader and admin acceptance gates remain required. CI runs the added SQL checks through `ops/scoped-release/verify_news_chat.py`.
 
 Product research and the prioritized 20 ideas are in [USER-BACKOFFICE-20-IDEAS-fa.md](USER-BACKOFFICE-20-IDEAS-fa.md).
+
+## ElevenLabs extension in 3.45.0
+
+The implementation replaces device speech services with server-proxied ElevenLabs STT/TTS and adds actual audio files, explicit Save audio, private project-memory playback/download and separate microphone-recording consent. See the [product proposal](ELEVENLABS-VOICE-PROPOSAL-fa.md), [technical design](ELEVENLABS-VOICE-TECHNICAL-DESIGN-fa.md), [acceptance backlog](ELEVENLABS-VOICE-BACKLOG-fa.md) and [operations guide](ELEVENLABS-VOICE-OPERATIONS-fa.md). The earlier sections above describe the 3.43.0 baseline; their device speech and test-double claims do not describe this extension. Live account activation remains pending server credentials, approved voices, verified tariff and provider/device acceptance; the feature defaults off.
