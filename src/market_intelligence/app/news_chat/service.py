@@ -95,7 +95,7 @@ def window_expired(context: dict) -> bool:
 
 async def erase_conversation(s, c):
     """Clear transcript and cancel work, without resetting quotas or spend."""
-    c.deleted_at, c.context = now(), {}
+    c.deleted_at, c.context, c.saved_at = now(), {}, None
     for g in (await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == c.id).order_by(ChatGeneration.id).with_for_update())).all():
         g.cancel_requested, g.question, g.answer, g.citations, g.session_hash = True, "", "", [], ""
         if g.status == "queued":
@@ -104,7 +104,7 @@ async def erase_conversation(s, c):
         # worker reconciles actual usage; erasing must not forgive paid work.
 
 
-async def close_window(s, cid, pid, user):
+async def close_window(s, cid, pid, user, *, preserve_saved=True):
     # The shared admission lock closes BOTH races: close-before-create and
     # close-during-send. A tombstone prevents a late POST from resurrecting a
     # closed browser window. It contains no report, question or answer.
@@ -113,7 +113,7 @@ async def close_window(s, cid, pid, user):
     if c is not None:
         if c.user_id != user.id or c.publication_id != pid:
             raise HTTPException(404, "news_unavailable")
-        if not c.saved_at:
+        if not c.saved_at or not preserve_saved:
             await erase_conversation(s, c)
     else:
         pub = await publication(s, pid, user)

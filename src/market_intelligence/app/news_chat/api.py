@@ -256,7 +256,7 @@ async def remove(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE))
         c = await s.get(ChatConversation, cid)
         if c is None or c.user_id != user.id:
             raise HTTPException(404, "news_unavailable")
-        await svc.close_window(s, cid, c.publication_id, user)
+        await svc.close_window(s, cid, c.publication_id, user, preserve_saved=False)
     return {"status": "deleted"}
 
 

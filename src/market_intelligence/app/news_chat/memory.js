@@ -13,7 +13,7 @@
   const more=button('older',()=>load(true)),refresh=button('refreshMemory',()=>load());more.hidden=true;
   panel.append(project,status,refresh,items,more);$('feedPage')?.prepend(panel);
   const sidebar=button('projectMemory',()=>{if(location.pathname.replace(/\/+$/,'').endsWith('/user/settings')){location.assign('/user?memory=1');return}if($('sidebar')?.classList.contains('open'))$('mobileMenuButton')?.click();panel.open=true;panel.scrollIntoView({block:'start'});load()});sidebar.className='sidebar-item';sidebar.title=t('projectMemory');
-  const mark=node('span','◈','sidebar-icon'),copy=label(node('span'),'projectMemory');sidebar.removeAttribute('data-chat-key');sidebar.replaceChildren(mark,copy);
+  const mark=node('span','◈','sidebar-icon'),copy=label(node('span'),'projectMemory');mark.setAttribute('aria-hidden','true');sidebar.removeAttribute('data-chat-key');sidebar.replaceChildren(mark,copy);
   $('sidebar')?.querySelector('.sidebar-spacer')?.before(sidebar);
   async function api(path,options={}){
     const r=await fetch(path,{credentials:'same-origin',...options});const data=await r.json().catch(()=>({}));
