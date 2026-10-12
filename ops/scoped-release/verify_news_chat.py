@@ -197,6 +197,7 @@ def main():
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_reader_research_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_reader_tools_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_token_quotas_sql.py')
+            run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_answer_length_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_news_voice_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_job_recovery_sql.py')
             print('Isolated news-chat acceptance gate passed; no live credentials or calls.')

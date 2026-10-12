@@ -4,11 +4,27 @@
   const reader=window.BeeReader,copy=window.BeeNewsChatI18n;
   if(!reader||!copy)return;
   const t=copy.t,$=id=>document.getElementById(id);
-  const base={provider:'openai',model_key:'',language:'en',voice_key:'',voice_consent:false,retain_voice:false,continuous_voice:false,voice_terms:''};
+  const lengthBase={short:{min:200,max:600},medium:{min:600,max:1600},long:{min:1600,max:4000}};
+  const lengthModes=[['short','lengthShort'],['medium','lengthMedium'],['long','lengthLong'],['auto','lengthAuto']];
+  const base={response_length:'auto',length_characters:lengthBase,provider:'openai',model_key:'',language:'en',voice_key:'',voice_consent:false,retain_voice:false,continuous_voice:false,voice_terms:''};
   const providers={openai:'OpenAI',anthropic:'Anthropic · Claude',google:'Google · Gemini'};
   const fields={},node=(tag,key,cls)=>{const n=document.createElement(tag);if(key){n.dataset.chatKey=key;n.textContent=t(key)}if(cls)n.className=cls;return n};
   const defaults=()=>({...base,...reader.chatDefaults()});
-  let models=[],voices=[],catalogStarted=false,catalogSeq=0;
+  let models=[],voices=[],catalogStarted=false,catalogSeq=0,editing=false;
+  function value(){
+    const result={};for(const [k,el] of Object.entries(fields))if(!k.startsWith('length_'))result[k]=el.type==='checkbox'?el.checked:el.value;
+    result.length_characters={};for(const mode of ['short','medium','long'])result.length_characters[mode]={min:fields['length_'+mode+'_min'].valueAsNumber,max:fields['length_'+mode+'_max'].valueAsNumber};
+    return result;
+  }
+  function validateLength(){
+    const inputs=['short','medium','long'].flatMap(mode=>['min','max'].map(bound=>fields['length_'+mode+'_'+bound]));
+    inputs.forEach(el=>el.setCustomValidity(''));
+    for(const el of inputs)if(!el.validity.valid)return el;
+    const ranges=value().length_characters;
+    for(const mode of ['short','medium','long'])if(ranges[mode].min>ranges[mode].max){const el=fields['length_'+mode+'_max'];el.setCustomValidity(t('lengthInvalid'));return el}
+    for(const bound of ['min','max'])if(ranges.short[bound]>ranges.medium[bound]||ranges.medium[bound]>ranges.long[bound]){const el=fields['length_medium_'+bound];el.setCustomValidity(t('lengthInvalid'));return el}
+    return null;
+  }
   function field(parent,key,name,tag='select',type){
     const label=node('label',null,'setting'),caption=node('span',key,'setting-label'),input=node(tag);
     input.id='news-chat-'+name.replaceAll('_','-');input.className='select';input.dataset.chatLabel=key;input.setAttribute('aria-label',t(key));
@@ -17,8 +33,7 @@
     input.addEventListener(tag==='input'&&type!=='checkbox'?'input':'change',()=>{
       if(name==='provider'){fields.model_key.value='';fillModels('')}
       if(name==='language')fillVoices(fields.voice_key.value);
-      const value={};for(const [k,el] of Object.entries(fields))value[k]=el.type==='checkbox'?el.checked:el.value;
-      reader.updateChatDefaults(value);
+      validateLength();editing=true;try{reader.updateChatDefaults(value())}finally{editing=false}
     });return input;
   }
   function options(select,items,selected,automatic=false){
@@ -36,6 +51,8 @@
   }
   function sync(){
     const value=defaults();fields.provider.value=value.provider;fields.language.value=value.language;fillModels(value.model_key);applyVoiceDefaults(value);
+    options(fields.response_length,lengthModes.map(([mode,key])=>[mode,t(key)]),value.response_length);
+    for(const mode of ['short','medium','long'])for(const bound of ['min','max'])fields['length_'+mode+'_'+bound].value=value.length_characters?.[mode]?.[bound]??lengthBase[mode][bound];validateLength();
   }
   async function get(path){const response=await fetch(path,{credentials:'same-origin'});if(!response.ok)throw Error('catalog_unavailable');return response.json()}
   async function loadCatalog(){
@@ -59,13 +76,17 @@
   const grid=node('div',null,'settings-grid');
   const provider=field(grid,'provider','provider');options(provider,Object.entries(providers),'openai');
   field(grid,'model','model_key');const language=field(grid,'language','language');options(language,[['fa','فارسی'],['en','English'],['tr','Türkçe'],['ar','العربية'],['es','Español'],['it','Italiano'],['de','Deutsch'],['fr','Français']],'en');
-  section.append(grid);const catalogStatus=node('p',null,'chat-status');catalogStatus.role='status';section.append(catalogStatus);
+  field(grid,'answerLength','response_length');
+  const lengths=node('fieldset',null,'chat-length-settings');lengths.id='readerAnswerLengthSettings';lengths.append(node('legend','characterRanges'));const lengthHelp=node('p','lengthHelp','chat-meta');lengthHelp.id='readerLengthHelp';lengths.append(lengthHelp);
+  for(const [mode,key] of lengthModes.filter(([mode])=>mode!=='auto')){const row=node('div',null,'chat-length-row');row.append(node('span',key,'chat-length-caption'));for(const bound of ['min','max']){const input=field(row,bound==='min'?'minCharacters':'maxCharacters','length_'+mode+'_'+bound,'input','number');input.min='1';input.max='20000';input.step='1';input.required=true;input.setAttribute('aria-describedby','readerLengthHelp');input.dataset.chatLengthMode=mode}lengths.append(row)}
+  section.append(grid,lengths);const catalogStatus=node('p',null,'chat-status');catalogStatus.role='status';section.append(catalogStatus);
   const voiceSection=node('fieldset',null,'voice-settings');voiceSection.id='readerVoiceSettings';voiceSection.append(node('legend','voiceChoice'));
   const voiceGrid=node('div',null,'settings-grid');field(voiceGrid,'voiceChoice','voice_key').id='news-chat-voice';field(voiceGrid,'voiceConsent','voice_consent','input','checkbox');field(voiceGrid,'retainVoice','retain_voice','input','checkbox');field(voiceGrid,'continuousVoice','continuous_voice','input','checkbox');
   const terms=field(voiceGrid,'voiceTerms','voice_terms','input','text');terms.maxLength=3000;voiceSection.append(voiceGrid,node('p','voiceTermsCost','chat-meta'),node('p','voiceCost','chat-meta'));section.append(voiceSection);
   $('settingsPanel')?.querySelector('.settings-actions')?.before(section);
   window.BeeChatSettings={defaults,applyVoiceDefaults,fields};
-  window.addEventListener('bee:reader-preferences',()=>{sync();loadCatalog()});
+  window.addEventListener('bee:reader-preferences',()=>{if(!editing)sync();loadCatalog()});
+  $('saveSettingsButton')?.addEventListener('click',event=>{const invalid=validateLength();if(invalid){event.preventDefault();event.stopImmediatePropagation();$('settingsSaveNote').textContent=t('lengthInvalid');invalid.focus();invalid.reportValidity()}},true);
   new MutationObserver(()=>{
     if($('app').classList.contains('hidden')){catalogSeq++;catalogStarted=false;models=[];voices=[];sync()}else loadCatalog();
   }).observe($('app'),{attributes:true,attributeFilter:['class']});

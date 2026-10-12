@@ -77,3 +77,7 @@ html[data-theme=dark] #newsChat{--muted:#b0bed0}
 .voice-library article{border-block-end:1px solid var(--border);padding-block:.7rem;overflow-wrap:anywhere}
 #newsVoiceAdmin textarea{width:100%;max-width:100%;font-family:monospace;font-size:.9rem}
 .voice-active-word {background:var(--accent);color:var(--text);text-decoration:underline;font-weight:700}
+
+/* Character targets are account defaults; the news selector is a temporary override. */
+.chat-length-settings{min-width:0;border:1px solid var(--line);border-radius:12px;margin:18px 0;padding:14px}.chat-length-settings legend{font-weight:700}.chat-length-row{display:grid;grid-template-columns:minmax(0,.6fr) repeat(2,minmax(0,1fr));gap:12px;align-items:center;margin-top:12px}.chat-length-row .setting{min-width:0;margin:0;padding:0;min-height:0;border:0;background:transparent}.chat-length-caption{font-weight:600;overflow-wrap:anywhere}.reader-chat-settings input[type=number]{width:100%;min-width:0;box-sizing:border-box;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:11px;padding:10px;font:inherit}.chat-length-row input:invalid{border-color:var(--danger)}.chat-length-settings .setting-label{font-size:12px;overflow-wrap:anywhere}
+@media(max-width:480px){.chat-length-row{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.chat-length-caption{grid-column:1/-1}}
