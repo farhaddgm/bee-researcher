@@ -5,6 +5,7 @@ from datetime import timedelta, timezone
 from pathlib import Path
 import sys
 import uuid
+from unittest.mock import patch
 from fastapi import HTTPException
 from starlette.requests import Request
 from sqlalchemy import delete, func, select, text
@@ -71,7 +72,7 @@ async def main():
         _,recent_gid=await add(uid,aid,at-timedelta(hours=1),10,20)
         await add(uid,other,at,30,40)
         await add(peerid,aid,at,40,40)
-        pending_cid,pending_gid=await add(uid,aid,at-timedelta(hours=7),status='running',reserved=500)
+        pending_cid,pending_gid=await add(uid,aid,at-timedelta(days=40),status='running',reserved=500)
         async with SessionLocal() as s:
             r=await service.report(s,aid,uid,at)
             windows={w['window']:w for w in r['windows']}
@@ -79,7 +80,8 @@ async def main():
             assert windows['six_hours']['reserved_tokens']==500
             assert windows['total']['charged_tokens']==550
             assert windows['daily']['actual_tokens']==30
-            assert windows['monthly']['actual_tokens']==50
+            assert windows['monthly']['actual_tokens']==(50 if at-timedelta(hours=25)>=service.boundaries(at)['monthly'][0] else 30)
+            assert windows['monthly']['reserved_tokens']==500 and windows['daily']['reserved_tokens']==500
             assert windows['total']['input_tokens']==20 and windows['total']['output_tokens']==30
             pending=await s.get(ChatGeneration,pending_gid);pending.status='unknown';await s.commit()
             assert (await service.counters(s,aid,uid,at))['six_hours']['reserved_tokens']==0
@@ -132,6 +134,12 @@ async def main():
         async with SessionLocal() as s:
             g=await s.get(ChatGeneration,gid);assert g.reserved_tokens==g.usage['input_bound']+g.model['max_output_tokens'];assert g.model['max_output_tokens']==250
         async with SessionLocal() as s:
+            g=await s.get(ChatGeneration,gid);g.cancel_requested=True;g.status='running';await s.commit()
+        with patch.object(chat.providers,'stream') as upstream:
+            await chat.generate(gid)
+            upstream.assert_not_called()
+        async with SessionLocal() as s:
+            g=await s.get(ChatGeneration,gid);assert g.input_tokens==0 and g.output_tokens==0 and g.actual_usd==0
             c=await s.get(ChatConversation,cid);await chat.erase_conversation(s,c);await s.commit()
             g=await s.get(ChatGeneration,gid);assert g.input_tokens==0 and g.output_tokens==0
         # Cancellation before contacting the provider settles zero.
