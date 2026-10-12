@@ -1,6 +1,7 @@
 /* Real HTTP/DB/browser E2E against news_chat_fixture.py, never production. */
 import assert from 'node:assert/strict';
 import {chromium} from 'playwright';
+import AxeBuilder from '@axe-core/playwright';
 const base=process.env.BEE_CHAT_TEST_URL;
 if(!base||process.env.MARKET_INTELLIGENCE_ENVIRONMENT!=='test')throw Error('Isolated synthetic app required');
 // The controller shares the isolated app's network namespace and uses loopback.
@@ -121,6 +122,16 @@ try{
   assert.equal((await api(owner,'/admin/api/news-chat/usage')).data.requests.length,usageBeforeSpeech,'Dictation sent a paid LLM question');
   await page.locator('.chat-answer-options summary').click();await page.locator('#newsChat .chat-controls select').nth(2).selectOption('en');await page.locator('#news-chat-response-mode [data-mode=both]').click();
   const selectedRequest=page.waitForRequest(r=>r.url().endsWith('/messages')&&r.method()==='POST');await ask('PRIVATE_OPENAI_HISTORY');assert.equal((await selectedRequest).postDataJSON().intent,'question');assert((await page.locator('.chat-answer').last().innerText()).includes('Synthetic answer'));assert.equal(await page.getByRole('button',{name:'Stop response',exact:true}).isVisible(),false);
+  // Read actual rendered surfaces and contrast with a completed question/answer.
+  const originalTheme=await page.evaluate(()=>document.documentElement.dataset.theme);
+  for(const theme of ['light','honey','dark','red']){
+    await page.evaluate(theme=>document.documentElement.dataset.theme=theme,theme);
+    const surfaces=await page.evaluate(()=>['#newsDialog','#newsChat','#newsChat .chat-messages','#newsChat .chat-question'].map(selector=>getComputedStyle(document.querySelector(selector)).backgroundColor));
+    assert.equal(new Set(surfaces).size,4,'News, sidebar, transcript and question must have distinct surfaces: '+theme);
+    const contrast=await new AxeBuilder({page}).include('#newsChat').withRules(['color-contrast']).analyze();
+    assert.deepEqual(contrast.violations.map(v=>({id:v.id,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))})),[],'Chat contrast: '+theme);
+  }
+  await page.evaluate(theme=>{if(theme)document.documentElement.dataset.theme=theme;else delete document.documentElement.dataset.theme},originalTheme);
   await page.locator('.voice-output audio').last().waitFor();assert((await page.locator('.voice-output audio').last().getAttribute('src')).startsWith('/user/api/voice-audio/'));
   assert(await page.locator('.chat-answer').last().isVisible());await page.locator('#news-chat-response-mode [data-mode=audio]').click();assert.equal(await page.locator('.chat-answer').last().isVisible(),false);await page.getByRole('button',{name:'Play answer',exact:true}).last().click();await page.locator('#news-chat-response-mode [data-mode=text]').click();assert(await page.locator('.chat-answer').last().isVisible());
   for(const locale of ['fa','en','tr','ar','es','it','de','fr']){await page.evaluate(locale=>{document.documentElement.lang=locale;document.documentElement.dir=['fa','ar'].includes(locale)?'rtl':'ltr'},locale);await page.waitForFunction(()=>document.querySelector('#newsChat > .chat-status').textContent===window.BeeNewsChatI18n.t('completed'))}
