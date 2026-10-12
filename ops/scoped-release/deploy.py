@@ -113,6 +113,16 @@ def report_volumes(key_file, state_dir):
             {'type':'bind','source':str(state),'target':'/app/report-state'}]
 
 
+def voice_volumes(key_file, state_dir):
+    """Reuse strict private-path/ownership checks, not Report keys or storage."""
+    if Path(key_file).is_symlink() or Path(state_dir).is_symlink():
+        raise RuntimeError('Voice paths cannot be symbolic links')
+    volumes=report_volumes(key_file,state_dir)
+    volumes[0]['target']='/app/private/voice-keyring.json'
+    volumes[1]['target']='/app/voice-state'
+    return volumes
+
+
 def production_service(ref, environment):
     # A prior forward-schema rollback leaves its temporary auth-only command
     # in the inherited compose stack. Restore the verified image's own CMD,
@@ -238,6 +248,16 @@ def deploy(args):
         production['environment'].update({'MARKET_INTELLIGENCE_REPORT_PORTAL_ENABLED':'true',
             'MARKET_INTELLIGENCE_REPORT_ENCRYPTION_SECRET_FILE':'/app/private/report-key',
             'MARKET_INTELLIGENCE_REPORT_DELETION_REGISTRY_FILE':'/app/report-state/deletions.log'})
+    if getattr(args,'voice_keyring_file',None) or getattr(args,'voice_state_dir',None):
+        if not args.voice_keyring_file or not args.voice_state_dir or args.version!='3.50.0':
+            raise RuntimeError('Voice activation requires both independent private mounts and the owner-settings release')
+        existing={v['Source'] for v in current.get('Mounts',[]) if 'report' in v['Destination']}
+        if str(args.voice_keyring_file.resolve()) in existing or str(args.voice_state_dir.resolve()) in existing:
+            raise RuntimeError('Voice cannot share Report keys or storage')
+        production['volumes']=production.get('volumes',[])+voice_volumes(args.voice_keyring_file,args.voice_state_dir)
+        production['environment'].update({'MARKET_INTELLIGENCE_NEWS_VOICE_ENABLED':'true',
+            'MARKET_INTELLIGENCE_NEWS_VOICE_KEYRING_FILE':'/app/private/voice-keyring.json',
+            'MARKET_INTELLIGENCE_NEWS_VOICE_STORAGE_PATH':'/app/voice-state'})
     save(override, {"services": {"market-intelligence": production}}, private=True)
     command = compose_command(current, override)
     run(command + ["config", "--quiet"], env=compose_env)
@@ -348,4 +368,6 @@ if __name__ == "__main__":
     parser.add_argument("--expected-current-revision", required=True)
     parser.add_argument("--report-key-file", type=Path)
     parser.add_argument("--report-state-dir", type=Path)
+    parser.add_argument("--voice-keyring-file", type=Path)
+    parser.add_argument("--voice-state-dir", type=Path)
     deploy(parser.parse_args())

@@ -33,7 +33,10 @@ async def lock(s):await s.execute(text('SELECT pg_advisory_xact_lock(:key)'),{'k
 
 async def policy(s):
     row=await s.get(VoicePolicy,1)
-    return Policy.model_validate(row.config if row else {})
+    value=dict(row.config) if row else {}
+    revision=value.pop('_credential_revision',None)
+    p=Policy.model_validate(value);p._credential_revision=revision
+    return p
 
 
 def configured():
@@ -48,6 +51,10 @@ def configured():
 def enabled(p):
     if not get_settings().news_voice_enabled or not p.enabled:raise HTTPException(403,'voice_disabled')
     if not configured():raise HTTPException(503,'voice_unconfigured')
+    from app.news_voice.credentials import managed
+    current=managed()
+    if current is not None and p._credential_revision!=current['revision']:
+        raise HTTPException(503,'voice_unverified')
     if not p.price_expires_at or p.price_expires_at<=now():raise HTTPException(503,'voice_price_expired')
 
 

@@ -5,25 +5,25 @@ import re
 import uuid
 from pathlib import Path
 from decimal import Decimal
-from fastapi import APIRouter, Cookie, HTTPException, Query, Request, WebSocket
+from fastapi import APIRouter, Cookie, Header, HTTPException, Query, Request, WebSocket
 from fastapi.responses import FileResponse, Response, StreamingResponse
-from sqlalchemy import func, literal, select, tuple_
+from sqlalchemy import func, literal, select, text, tuple_
 from app import admin
 from app.config import get_settings
 from app.database import SessionLocal
 from app.news_chat.api import owner
 from app.security_controls import ADMIN_SESSION_COOKIE
 from app.news_chat import service as chat
-from app.news_voice import gateway, service as svc, storage, preview
+from app.news_voice import gateway, service as svc, storage, preview, credentials, providers
 from app.news_voice.models import VoiceAudio, VoicePolicy, VoiceSaveJob, VoiceSegment, VoiceSession, VoiceUsage
-from app.news_voice.schemas import Bookmark, Brief, Playback, Policy, Reconcile, Save, Start, TTS
+from app.news_voice.schemas import Bookmark, Brief, ConnectionCheck, CredentialUpdate, Playback, Policy, Reconcile, Save, Start, TTS
 
 router=APIRouter();COOKIE=admin.USER_SESSION_COOKIE;ROOT=Path(__file__).parent
 
 
 @router.get('/assets/news-voice/{asset}',include_in_schema=False)
 async def asset(asset:str):
-    files={'pcm-worklet.js':'application/javascript','pcm.js':'application/javascript','admin.js':'application/javascript','i18n.js':'application/javascript'}
+    files={'pcm-worklet.js':'application/javascript','pcm.js':'application/javascript','admin.js':'application/javascript','admin.css':'text/css','i18n.js':'application/javascript','admin-i18n.js':'application/javascript'}
     if asset not in files:raise HTTPException(404)
     return FileResponse(ROOT/asset,media_type=files[asset],headers={'Cache-Control':'no-cache'})
 
@@ -305,17 +305,56 @@ async def usage(assistant_id:uuid.UUID,token:str|None=Cookie(None,alias=COOKIE))
 async def get_policy(token:str|None=Cookie(None,alias=ADMIN_SESSION_COOKIE)):
     await owner(token)
     async with SessionLocal() as s:return {'policy':(await svc.policy(s)).model_dump(mode='json'),
-        'configured':svc.configured(),'server_enabled':get_settings().news_voice_enabled}
+        'configured':svc.configured(),'server_enabled':get_settings().news_voice_enabled,
+        'credential':await asyncio.to_thread(credentials.status)}
+
+
+@router.put('/admin/api/news-voice/credential')
+async def put_credential(payload:CredentialUpdate,token:str|None=Cookie(None,alias=ADMIN_SESSION_COOKIE)):
+    actor=await owner(token)
+    try:
+        def update():
+            return credentials.Credentials().update(payload.api_key.get_secret_value() if payload.api_key else '',payload.expected_revision)
+        result=await asyncio.to_thread(update)
+    except credentials.CredentialError as exc:
+        raise HTTPException(409 if exc.code=='revision_conflict' else 503,exc.code) from None
+    except Exception:
+        raise HTTPException(503,'voice_credential_unavailable') from None
+    await admin._audit(actor.id,'news_voice.credential',details={'action':payload.action})
+    return {'status':'saved','credential':result}
+
+
+@router.post('/admin/api/news-voice/connection-check')
+async def connection_check(payload:ConnectionCheck,token:str|None=Cookie(None,alias=ADMIN_SESSION_COOKIE)):
+    actor=await owner(token)
+    # The shared database lock serializes diagnostics, also across workers.
+    # A transaction-scoped lock is released even on timeout/cancellation.
+    async with SessionLocal() as s:
+        available=await s.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),{'key':918473202})
+        if not available:raise HTTPException(429,'voice_rate_limited')
+        try:
+            async with asyncio.timeout(22):
+                result=await providers.catalog(payload.api_key.get_secret_value() if payload.api_key else None,payload.search,payload.page_token)
+        except providers.VoiceError as exc:
+            raise HTTPException(422,exc.code) from None
+        except TimeoutError:
+            raise HTTPException(503,'voice_provider_failed') from None
+    await admin._audit(actor.id,'news_voice.connection_check',details={'audio_tested':False})
+    return result
 
 
 @router.put('/admin/api/news-voice/policy')
-async def put_policy(payload:Policy,token:str|None=Cookie(None,alias=ADMIN_SESSION_COOKIE)):
+async def put_policy(payload:Policy,token:str|None=Cookie(None,alias=ADMIN_SESSION_COOKIE),
+        expected_credential_revision:str|None=Header(None,alias='X-Voice-Credential-Revision')):
     actor=await owner(token)
     if payload.enabled and payload.price_expires_at<=svc.now():raise HTTPException(422,'voice_price_expired')
     if payload.enabled and not svc.configured():raise HTTPException(422,'voice_unconfigured')
+    credential=credentials.status()
+    if payload.enabled and credential['source']=='owner' and expected_credential_revision!=credential['revision']:
+        raise HTTPException(409,'revision_conflict')
     async with SessionLocal() as s:
         row=await s.get(VoicePolicy,1,with_for_update=True)
         if not row:row=VoicePolicy(id=1,config={});s.add(row)
-        row.config=payload.model_dump(mode='json');await s.commit()
+        row.config={**payload.model_dump(mode='json'),'_credential_revision':credential['revision']};await s.commit()
     await admin._audit(actor.id,'news_voice.policy',details={'enabled':payload.enabled,'voice_count':len(payload.voices)})
     return {'status':'saved'}
