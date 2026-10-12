@@ -1,7 +1,6 @@
 import json
 import asyncio
 import unittest
-from html import escape
 from tests.ui_source import document_source
 import uuid
 from decimal import Decimal
@@ -194,10 +193,10 @@ class ReaderProjectionTests(unittest.IsolatedAsyncioTestCase):
              patch.object(main_module, "_reader_assistant_is_accessible", return_value=True), \
              patch.object(main_module, "list_publications", new=AsyncMock(return_value=[row])):
             response = await main_module.user_api_publications(aid, limit=20, query=None, touch=True, token="synthetic")
-        self.assertEqual(escape(reader_report_text(published)), response["publications"][0]["message_text"])
-        self.assertNotIn('<img', response["publications"][0]["message_text"])
+        self.assertEqual(reader_report_text(published), response["publications"][0]["message_text"])
+        self.assertIn('<img', response["publications"][0]["message_text"], "API must preserve literal text, not alter the native plain-text contract")
 
-    async def test_direct_detail_has_the_same_html_safe_projection(self):
+    async def test_direct_detail_has_the_same_plain_text_projection(self):
         published = 'Headline\nLiteral &lt;b&gt;quoted code&lt;/b&gt; &amp; data'
         pid = uuid.uuid4()
         item = SimpleNamespace(id=pid, assistant_id=uuid.uuid4(), analysis_id=uuid.uuid4(), message_text=published, published_at=service.now())
@@ -209,7 +208,13 @@ class ReaderProjectionTests(unittest.IsolatedAsyncioTestCase):
              patch.object(main_module, "SessionLocal", return_value=manager), \
              patch.object(service, "publication", new=AsyncMock(return_value=item)):
             response = await main_module.user_news_detail(pid, token="synthetic")
-        self.assertEqual(escape(reader_report_text(published)), response["message_text"])
+        self.assertEqual(reader_report_text(published), response["message_text"])
+
+    async def test_reader_does_not_parse_plain_news_as_html(self):
+        from app.user_ui import USER_HTML
+        source = document_source(USER_HTML)
+        self.assertIn("const plainText=value=>String(value??'')", source)
+        self.assertNotIn("holder.innerHTML=String(value", source)
 
 
 class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
@@ -282,7 +287,7 @@ class NewsChatHttpContracts(unittest.TestCase):
         self.client=TestClient(app)
 
     def test_new_assets_are_self_hosted_and_allowlisted(self):
-        for name in ("chat.js","chat.css","i18n.js","admin.js"):
+        for name in ("chat.js","chat.css","i18n.js","admin.js","voice.js","memory.js"):
             response=self.client.get("/assets/news-chat/"+name)
             self.assertEqual(200,response.status_code)
         self.assertEqual(404,self.client.get("/assets/news-chat/service.py").status_code)

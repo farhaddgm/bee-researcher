@@ -27,6 +27,14 @@ See the [implementation and onboarding guide](docs/REPORT-PORTAL-IMPLEMENTATION-
 for scope, limits, encryption, retention, provider disclosure and safe deployment.
 No real account grant or business consent is created automatically.
 
+## Reader research desk
+
+The `/user` portal includes daily audio briefs, multi-report comparison, claim
+review, optional business context, tracking/timelines, bounded trend signals,
+personal attention controls, action drafts, decisions, searchable/selectable
+memory, explicit result sharing and personal cost/quality views. See the
+[reader guide](docs/READER-RESEARCH-WORKSPACE-fa.md) for behavior and limits.
+
 ## Release safety
 
 Use a branch and Pull Request. The Market Intelligence workflow requires unit,

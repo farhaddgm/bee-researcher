@@ -13,7 +13,6 @@ from collections import deque
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from html import escape
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
@@ -263,7 +262,7 @@ def _login_document(body: str, portal: str, *, password: bool = False) -> str:
     body = body.replace("<body>", f"<body {attrs}>", 1)
     if portal == "admin":
         body = body.replace('</head>', '<link rel="stylesheet" href="/assets/news-chat/chat.css"></head>', 1).replace(
-            '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-chat/admin.js"></script></body>', 1,
+            '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-voice/i18n.js"></script><script src="/assets/news-chat/admin.js"></script><script src="/assets/news-voice/admin.js"></script></body>', 1,
         )
     return externalize_document(body)
 
@@ -440,6 +439,10 @@ async def lifespan(_: FastAPI):
         from app.news_chat.service import worker, maintenance
         tasks.extend(asyncio.create_task(worker(stop)) for _ in range(4))
         tasks.append(asyncio.create_task(maintenance(stop)))
+    # Existing audio/save/deletion work survives either feature kill switch.
+    from app.news_voice.service import worker as voice_worker, maintenance as voice_maintenance
+    tasks.extend(asyncio.create_task(voice_worker(stop)) for _ in range(2))
+    tasks.append(asyncio.create_task(voice_maintenance(stop)))
     if settings.report_portal_enabled:
         from app.report_portal.service import worker as report_worker, maintenance as report_maintenance
         from app.report_portal.policy import enabled as report_enabled
@@ -508,6 +511,10 @@ app.include_router(bee_cfo_router)
 
 @app.exception_handler(RequestValidationError)
 async def private_validation_errors(request: Request, exc: RequestValidationError):
+    if (request.url.path.startswith(("/user/api/voice", "/admin/api/news-voice/")) or
+        "/audio-saves" in request.url.path or "/voice-sessions" in request.url.path or
+        request.url.path.endswith(("/audio", "/brief-audio"))):
+        return JSONResponse(status_code=422, content={"detail": "voice_invalid_fields"})
     if request.url.path.startswith("/report/api/"):
         allowed={"business_id","assistant_id","title","text","tags","reporter","event_date","language","classification","revision","draft_key","idempotency_key","confirmed","models","daily_cap","daily_budget_usd","retention_days","report_id","offset"}
         return JSONResponse(status_code=422, content={"detail": "report_invalid_fields",
@@ -804,7 +811,8 @@ async def private_indexing_headers(request: Request, call_next):
         response.headers["Content-Security-Policy-Report-Only"] = (
             f"{policy_base}; report-uri {settings.csp_report_uri}"
         )
-    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), payment=()"
+    microphone = "(self)" if request.url.path == "/user" or request.url.path.startswith("/user/") else "()"
+    response.headers["Permissions-Policy"] = f"camera=(), microphone={microphone}, geolocation=(), payment=()"
     response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
     if request.url.path.startswith("/admin") or request.url.path.startswith("/bee-cfo") or request.url.path not in {
@@ -1042,6 +1050,10 @@ async def user_ui(request: Request) -> HTMLResponse:
 
 from app.news_chat.api import router as news_chat_router
 app.include_router(news_chat_router)
+from app.news_voice.api import router as news_voice_router
+app.include_router(news_voice_router)
+from app.reader_research.api import router as reader_research_router
+app.include_router(reader_research_router)
 from app.report_portal.api import router as report_router
 app.include_router(report_router)
 
@@ -1075,7 +1087,7 @@ async def user_news_detail(publication_id: uuid.UUID, token: str | None = Cookie
             .join(ArticleAnalysis, ArticleAnalysis.article_id == NormalizedArticle.id)
             .where(ArticleAnalysis.id == item.analysis_id, ArticleAnalysis.assistant_id == item.assistant_id,
                    NormalizedArticle.assistant_id == item.assistant_id, SourceItem.assistant_id == item.assistant_id, Source.assistant_id == item.assistant_id))
-        return {"id": str(item.id), "assistant_id": str(item.assistant_id), "message_text": escape(reader_report_text(item.message_text)),
+        return {"id": str(item.id), "assistant_id": str(item.assistant_id), "message_text": reader_report_text(item.message_text),
                 "source_name": source_name or "",
                 "published_at": item.published_at.isoformat() if item.published_at else None}
 
@@ -1185,14 +1197,14 @@ async def user_api_publications(
         raise HTTPException(status_code=403, detail="workspace access denied")
     rows = await list_publications(status="published", limit=limit, assistant_id=assistant_id, query=query)
     from app.news_chat.context import reader_report_text
+    from app.reader_research.service import duplicate_key
     return {
         "count": len(rows),
         "publications": [
             {
                 "id": row["id"],
-                # The reader's legacy plainText decoder expects HTML-safe
-                # text. Never reinterpret literal tags from the news as DOM.
-                "message_text": escape(reader_report_text(str(row["message_text"]))),
+                "message_text": reader_report_text(str(row["message_text"])),
+                "research_fingerprint": duplicate_key(reader_report_text(str(row['message_text']))),
                 "source_name": row["source_name"],
                 "created_at": row["created_at"],
                 "published_at": row["published_at"],

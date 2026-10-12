@@ -3,14 +3,14 @@
     // saved views, actionable incident inbox, and safe non-publishing bulk
     // actions.  All controls use the existing RBAC-scoped API and shell.
     (function(){
-      const selected=new Set();state.newsViews=[];state.incidents=[];state.lastBulk=null;
+      const selected=new Set();let selectedScope=null;const scopeKey=()=>String(state.currentUser?.id||'')+':'+String(state.assistantId||'');state.newsViews=[];state.incidents=[];state.lastBulk=null;
       const en=()=>state.language==='en';
       // All eight locales share the same catalog resolver.  The old helper
       // treated every non-English language as Persian, which was the source
       // of the mixed Turkish/Arabic/etc. screens seen in production.
       const label=(fa,english)=>window.__miLabel?window.__miLabel(fa,english):(en()?english:fa);
       function ensureNewsTools(){
-        const bar=document.querySelector('#view-content .filter-bar');if(!bar||document.getElementById('newsViewSelect'))return;
+        const bar=document.querySelector('#view-content .filter-bar');if(!bar||document.getElementById('bulkNewsBar'))return;
         const wrap=document.createElement('span');wrap.className='news-list-tools';wrap.innerHTML='<select id="newsViewSelect" aria-label="Saved view"></select><button class="btn small" id="saveNewsViewBtn" type="button"></button><button class="btn small" id="deleteNewsViewBtn" type="button"></button>';
         bar.appendChild(wrap);
         const bulk=document.createElement('div');bulk.id='bulkNewsBar';bulk.className='bulk-news-bar';bulk.innerHTML='<span class="muted" id="bulkNewsCount"></span><button class="btn small" id="bulkArchiveBtn" type="button"></button><button class="btn small" id="bulkRejectBtn" type="button"></button><button class="btn small" id="bulkLabelBtn" type="button"></button><button class="btn small" id="bulkUndoBtn" type="button" hidden></button><span class="muted">'+label('انتشار گروهی عمداً غیرفعال است','Bulk publishing is disabled by safety gate')+'</span>';bar.parentNode.insertBefore(bulk,bar.nextSibling);
@@ -21,9 +21,8 @@
         renderNewsTools();
       }
       function renderNewsTools(){
-        const select=document.getElementById('newsViewSelect'),save=document.getElementById('saveNewsViewBtn'),remove=document.getElementById('deleteNewsViewBtn');if(!select)return;
-        select.innerHTML='<option value="">'+label('نمای فعلی','Current view')+'</option>'+state.newsViews.map(view=>`<option value="${esc(view.id)}">${esc(view.name)}${view.is_default?' · '+label('پیش‌فرض','default'):''}</option>`).join('');
-        if(save)save.textContent=label('ذخیره نما','Save view');if(remove){remove.textContent=label('حذف نما','Delete view');remove.disabled=!select.value}
+        const select=document.getElementById('newsViewSelect'),save=document.getElementById('saveNewsViewBtn'),remove=document.getElementById('deleteNewsViewBtn');if(select)select.innerHTML='<option value="">'+label('نمای فعلی','Current view')+'</option>'+state.newsViews.map(view=>`<option value="${esc(view.id)}">${esc(view.name)}${view.is_default?' · '+label('پیش‌فرض','default'):''}</option>`).join('');
+        if(save)save.textContent=label('ذخیره نما','Save view');if(remove){remove.textContent=label('حذف نما','Delete view');remove.disabled=!select?.value}
         const bulk=document.getElementById('bulkNewsBar'),count=document.getElementById('bulkNewsCount');if(bulk){bulk.classList.toggle('active',selected.size>0);if(count)count.textContent=label(`${toFaDigits(selected.size)} خبر انتخاب شده`,` ${selected.size} selected`);['bulkArchiveBtn','bulkRejectBtn','bulkLabelBtn'].forEach((id,i)=>{const el=document.getElementById(id);if(el)el.textContent=[label('بایگانی','Archive'),label('رد','Reject'),label('برچسب','Label')][i]});const undo=document.getElementById('bulkUndoBtn');const validUndo=state.lastBulk&&Date.now()-state.lastBulk.at<10*60*1000;if(undo){undo.hidden=!validUndo;undo.textContent=label('بازگردانی','Undo')}}
       }
       async function loadNewsViews(){ensureNewsTools();if(!state.assistantId)return;const key=String(state.assistantId);if(state.newsViewsLoadedFor===key)return;try{const data=await req('/admin/api/assistants/'+key+'/news-views');state.newsViews=data.views||[];state.newsViewsLoadedFor=key;renderNewsTools()}catch(err){state.newsViews=[];renderNewsTools()}}
@@ -32,9 +31,46 @@
       function openSaveView(){const body='<div class="field"><label>'+label('نام نما','View name')+'</label><input id="newsViewName" maxlength="80" placeholder="'+label('مثلاً خبرهای نیازمند بررسی','e.g. Needs review')+'"></div><label class="field" data-ui-css="declaration-13"><input id="newsViewDefault" type="checkbox">'+label('این نما پیش‌فرض باشد','Make this the default view')+'</label>';modal(label('ذخیره نمای خبرها','Save News List view'),body,async()=>{const name=document.getElementById('newsViewName')?.value.trim();if(!name){toast(label('نام نما را وارد کنین','Enter a view name'),true);return}try{const data=await req('/admin/api/assistants/'+state.assistantId+'/news-views',{method:'POST',body:JSON.stringify({name,filters:currentFilters(),is_default:Boolean(document.getElementById('newsViewDefault')?.checked)})});state.newsViews=data.views||[];closeModal();renderNewsTools();toast(label('نما ذخیره شد','View saved'))}catch(err){toast(friendlyError(err.message),true)}},label('ذخیره','Save'))}
       async function deleteSelectedView(){const select=document.getElementById('newsViewSelect'),viewId=select?.value;if(!viewId)return;if(!window.confirm(label('این نمای ذخیره‌شده حذف شود؟','Delete this saved view?')))return;try{const data=await req('/admin/api/assistants/'+state.assistantId+'/news-views/'+viewId,{method:'DELETE'});state.newsViews=data.views||[];if(select)select.value='';renderNewsTools();toast(label('نما حذف شد','View deleted'))}catch(err){toast(friendlyError(err.message),true)}}
       window.togglePublicationSelection=id=>{if(selected.has(id))selected.delete(id);else selected.add(id);renderNewsTools()};
-      async function runBulk(action){const ids=[...selected];if(!ids.length)return;let labelValue=null;if(action==='label')labelValue=window.prompt(label('برچسب کوتاه را وارد کنین','Enter a short label'));if(action==='label'&&!labelValue)return;const message=action==='archive'?label('خبرهای انتخاب‌شده بایگانی شوند؟','Archive selected news?'):action==='reject'?label('خبرهای انتخاب‌شده رد شوند؟','Reject selected news?'):label('برچسب روی خبرهای انتخاب‌شده ثبت شود؟','Apply this label to selected news?');if(!window.confirm(message))return;try{await req('/admin/api/assistants/'+state.assistantId+'/publications/bulk',{method:'POST',body:JSON.stringify({ids,action,label:labelValue})});state.lastBulk={ids,at:Date.now()};selected.clear();renderNewsTools();toast(label('عملیات گروهی انجام شد؛ تا ۱۰ دقیقه امکان بازگردانی دارید.','Bulk action completed; undo is available for 10 minutes.'));await loadAll()}catch(err){toast(friendlyError(err.message),true)}}
-      async function undoBulk(){const last=state.lastBulk;if(!last)return;if(Date.now()-last.at>=10*60*1000){state.lastBulk=null;renderNewsTools();toast(label('مهلت بازگردانی تمام شده است.','Undo window has expired.'),true);return}if(!window.confirm(label('آخرین عملیات گروهی بازگردانی شود؟','Undo the last bulk action?')))return;try{await req('/admin/api/assistants/'+state.assistantId+'/publications/bulk/undo',{method:'POST',body:JSON.stringify({ids:last.ids})});state.lastBulk=null;selected.clear();toast(label('عملیات گروهی بازگردانی شد.','Bulk action undone'));await loadAll()}catch(err){toast(friendlyError(err.message),true)}}
-      const baseRenderPublications=renderPublications;renderPublications=function(){baseRenderPublications();ensureNewsTools();const header=document.querySelector('#view-content thead tr');if(header&&!header.querySelector('[data-publication-select-all]')){const th=document.createElement('th');th.dataset.publicationSelectAll='true';th.innerHTML='<input type="checkbox" class="publication-select" aria-label="'+label('انتخاب همه','Select all')+'">';header.insertBefore(th,header.firstChild);th.querySelector('input').onchange=event=>{document.querySelectorAll('#publicationRows [data-publication-id]').forEach(input=>{if(event.target.checked)selected.add(input.dataset.publicationId);else selected.delete(input.dataset.publicationId);input.checked=event.target.checked});renderNewsTools()}}const rows=document.querySelectorAll('#publicationRows tr');rows.forEach(row=>{if(row.dataset.bulkReady==='true')return;const title=row.querySelector('button[onclick*="openPublication"]');const match=title?.getAttribute('onclick')?.match(/openPublication\('([^']+)'\)/);if(!match)return;row.dataset.bulkReady='true';row.dataset.publicationId=match[1];const cell=document.createElement('td');cell.innerHTML=`<input type="checkbox" class="publication-select" data-publication-id="${esc(match[1])}" ${selected.has(match[1])?'checked':''} aria-label="${label('انتخاب خبر','Select news')}">`;cell.querySelector('input').onchange=()=>window.togglePublicationSelection(match[1]);row.insertBefore(cell,row.firstChild)});renderNewsTools()};
+      async function runBulk(action){const ids=[...selected];if(!ids.length)return;let labelValue=null;if(action==='label')labelValue=window.prompt(label('برچسب کوتاه را وارد کنین','Enter a short label'));if(action==='label'&&!labelValue)return;const message=action==='archive'?label('خبرهای انتخاب‌شده بایگانی شوند؟','Archive selected news?'):action==='reject'?label('خبرهای انتخاب‌شده رد شوند؟','Reject selected news?'):label('برچسب روی خبرهای انتخاب‌شده ثبت شود؟','Apply this label to selected news?');if(!window.confirm(message))return;const requestScope=scopeKey(),assistantId=String(state.assistantId);try{await req('/admin/api/assistants/'+assistantId+'/publications/bulk',{method:'POST',body:JSON.stringify({ids,action,label:labelValue})});if(scopeKey()!==requestScope)return;state.lastBulk={ids,at:Date.now()};selected.clear();renderNewsTools();toast(label('عملیات گروهی انجام شد؛ تا ۱۰ دقیقه امکان بازگردانی دارید.','Bulk action completed; undo is available for 10 minutes.'));await loadAll()}catch(err){toast(friendlyError(err.message),true)}}
+      async function undoBulk(){const last=state.lastBulk;if(!last)return;if(Date.now()-last.at>=10*60*1000){state.lastBulk=null;renderNewsTools();toast(label('مهلت بازگردانی تمام شده است.','Undo window has expired.'),true);return}if(!window.confirm(label('آخرین عملیات گروهی بازگردانی شود؟','Undo the last bulk action?')))return;const requestScope=scopeKey(),assistantId=String(state.assistantId);try{await req('/admin/api/assistants/'+assistantId+'/publications/bulk/undo',{method:'POST',body:JSON.stringify({ids:last.ids})});if(scopeKey()!==requestScope)return;state.lastBulk=null;selected.clear();toast(label('عملیات گروهی بازگردانی شد.','Bulk action undone'));await loadAll()}catch(err){toast(friendlyError(err.message),true)}}
+      const baseRenderPublications=renderPublications;
+      renderPublications=function(){
+        const scope=scopeKey();
+        if(scope!==selectedScope){selected.clear();state.lastBulk=null;selectedScope=scope;}
+        const available=new Set(state.publications.map(item=>String(item.id)));
+        for(const id of selected)if(!available.has(id))selected.delete(id);
+        baseRenderPublications();ensureNewsTools();
+        const header=document.querySelector('#view-content thead tr');
+        let selectAll=header?.querySelector('[data-publication-select-all] input');
+        if(header&&!selectAll){
+          const th=document.createElement('th');th.dataset.publicationSelectAll='true';
+          selectAll=document.createElement('input');selectAll.type='checkbox';selectAll.className='publication-select';
+          th.appendChild(selectAll);header.insertBefore(th,header.firstChild);
+        }
+        const rows=document.querySelectorAll('#publicationRows tr[data-publication-row]');
+        rows.forEach(row=>{
+          const id=row.dataset.publicationRow;
+          row.dataset.bulkReady='true';row.dataset.publicationId=id;
+          const cell=document.createElement('td');cell.className='publication-selection-cell';
+          const input=document.createElement('input');input.type='checkbox';input.className='publication-select';
+          input.dataset.publicationId=id;input.checked=selected.has(id);input.setAttribute('aria-label',label('انتخاب خبر','Select news'));
+          input.onchange=()=>{if(input.checked)selected.add(id);else selected.delete(id);syncSelection();renderNewsTools();};
+          cell.appendChild(input);row.insertBefore(cell,row.firstChild);
+        });
+        function syncSelection(){
+          const inputs=[...document.querySelectorAll('#publicationRows input[data-publication-id]')];
+          const count=inputs.filter(input=>input.checked).length;
+          if(selectAll){selectAll.checked=inputs.length>0&&count===inputs.length;selectAll.indeterminate=count>0&&count<inputs.length;selectAll.disabled=!inputs.length;}
+        }
+        if(selectAll){
+          selectAll.setAttribute('aria-label',label('انتخاب همه','Select all'));
+          selectAll.onchange=event=>{document.querySelectorAll('#publicationRows input[data-publication-id]').forEach(input=>{
+            if(event.target.checked)selected.add(input.dataset.publicationId);else selected.delete(input.dataset.publicationId);
+            input.checked=event.target.checked;
+          });syncSelection();renderNewsTools();};
+        }
+        syncSelection();renderNewsTools();
+      };
       const freshnessCopy={
         fa:{title:'تأخیر در خزش و تحلیل',detail:'برای این دستیار منبع فعال وجود دارد، اما اجرای موفق اخیر ثبت نشده یا بیش از ۳۶ ساعت از آن گذشته است.',last:'آخرین اجرای موفق',none:'اجرای موفقی ثبت نشده',action:'بررسی زمان‌بندی',severity:{critical:'بحرانی',warning:'هشدار'},sources:'منابع فعال'},
         en:{title:'Collection and analysis are delayed',detail:'This assistant has enabled sources, but no successful run is recorded or the last run was more than 36 hours ago.',last:'Last successful run',none:'No successful run recorded',action:'Review schedule',severity:{critical:'Critical',warning:'Warning'},sources:'Enabled sources'},

@@ -20,7 +20,11 @@ class ChatPolicy(Base):
 
 class ChatConversation(Base):
     __tablename__ = "news_chat_conversations"
-    __table_args__ = (Index("ix_news_chat_thread_page", "user_id", "publication_id", "created_at", "id"),)
+    __table_args__ = (
+        Index("ix_news_chat_thread_page", "user_id", "publication_id", "created_at", "id"),
+        Index("ix_news_chat_project_memory", "user_id", "assistant_id", "saved_at", "id",
+              postgresql_where=text("saved_at IS NOT NULL AND deleted_at IS NULL")),
+    )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.admin_users.id", ondelete="CASCADE"), index=True)
     assistant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.assistant_workspaces.id", ondelete="CASCADE"))
@@ -29,6 +33,7 @@ class ChatConversation(Base):
     provider: Mapped[str] = mapped_column(String(16), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    saved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ChatGeneration(Base):

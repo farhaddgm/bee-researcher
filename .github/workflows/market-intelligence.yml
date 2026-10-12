@@ -175,6 +175,10 @@ jobs:
         timeout-minutes: 4
         working-directory: src/market_intelligence
         run: npm run admin:media:e2e
+      - name: Required news table and business action E2E
+        timeout-minutes: 4
+        working-directory: src/market_intelligence
+        run: npm run admin:news:e2e
       - name: Required model settings E2E
         timeout-minutes: 3
         working-directory: src/market_intelligence

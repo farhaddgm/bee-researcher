@@ -16,7 +16,8 @@
     "admin:accounts:e2e": "node scripts/verify_account_access_browser.mjs",
     "admin:login-history:e2e": "node scripts/verify_login_history_browser.mjs",
     "admin:accessibility:e2e": "node scripts/verify_admin_accessibility.mjs",
-    "admin:catalog:e2e": "node scripts/verify_admin_catalog_viewports.mjs"
+    "admin:catalog:e2e": "node scripts/verify_admin_catalog_viewports.mjs",
+    "admin:news:e2e": "node scripts/verify_news_table_browser.mjs"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",

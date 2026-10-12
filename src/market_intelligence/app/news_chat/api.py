@@ -4,23 +4,24 @@ import asyncio
 import json
 import uuid
 import hashlib
-from datetime import timedelta
-from typing import Any, cast
+from datetime import date, datetime, time, timedelta, timezone
+from typing import Annotated, Any, cast
 
-from fastapi import APIRouter, Cookie, HTTPException, Request
+from fastapi import APIRouter, Cookie, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pathlib import Path
-from sqlalchemy import delete, func, literal, select, text, tuple_
+from sqlalchemy import Text, delete, func, literal, or_, select, text, tuple_
 
 from app import admin
 from app.config import get_settings
 from app.database import SessionLocal
+from app.models import Publication
 from app.models import AdminSession, AdminUser
 from app.security_controls import ADMIN_SESSION_COOKIE
 from app.news_chat import providers, service as svc
 from app.news_chat.context import context_for
 from app.news_chat.models import ChatConversation, ChatGeneration, ChatPolicy
-from app.news_chat.schemas import Feedback, Grant, Policy, Start
+from app.news_chat.schemas import Feedback, Grant, Policy, ResearchStart
 
 router = APIRouter()
 COOKIE = admin.USER_SESSION_COOKIE
@@ -29,7 +30,7 @@ ROOT = Path(__file__).parent
 
 @router.get("/assets/news-chat/{asset}", include_in_schema=False)
 async def asset(asset: str):
-    types = {"chat.js": "application/javascript", "chat.css": "text/css", "i18n.js": "application/javascript", "admin.js": "application/javascript"}
+    types = {"chat.js": "application/javascript", "chat.css": "text/css", "i18n.js": "application/javascript", "admin.js": "application/javascript", "voice.js": "application/javascript", "memory.js": "application/javascript"}
     if asset not in types:
         raise HTTPException(404)
     return FileResponse(ROOT / asset, media_type=types[asset], headers={"Cache-Control": "no-cache"})
@@ -74,11 +75,13 @@ async def conversations(pid: uuid.UUID, token: str | None = Cookie(None, alias=C
         # The enforced account cap is 500. Do not make its older conversations
         # unreachable behind a silently shorter fifty-option selector.
         rows = (await s.scalars(select(ChatConversation).where(ChatConversation.user_id == user.id, ChatConversation.publication_id == pid, ChatConversation.deleted_at.is_(None)).order_by(ChatConversation.created_at.desc(), ChatConversation.id.desc()).limit(500))).all()
-        return {"conversations": [{"id": str(c.id), "provider": c.provider, "created_at": c.created_at.isoformat(), "context_version": c.context["version"]} for c in rows]}
+        return {"conversations": [{"id": str(c.id), "provider": c.provider, "created_at": c.created_at.isoformat(), "context_version": c.context["version"], "saved_at": c.saved_at.isoformat() if c.saved_at else None} for c in rows]}
 
 
 @router.post("/user/api/publications/{pid}/conversations", status_code=201)
-async def start(pid: uuid.UUID, payload: Start, token: str | None = Cookie(None, alias=COOKIE)):
+async def start(pid: uuid.UUID, payload: ResearchStart, token: str | None = Cookie(None, alias=COOKIE)):
+    # Preserve existing internal callers of the original Start schema.
+    payload = ResearchStart.model_validate(payload.model_dump())
     user = await admin.current_reader(token)
     svc.require(user)
     async with SessionLocal() as s:
@@ -90,6 +93,12 @@ async def start(pid: uuid.UUID, payload: Start, token: str | None = Cookie(None,
                     raise HTTPException(404, "news_unavailable")
                 if existing.deleted_at or svc.window_expired(existing.context):
                     raise HTTPException(410, "conversation_closed")
+                if payload.source_ids or payload.memory_ids or payload.include_business:
+                    from app.reader_research.service import selected_context
+                    pub = await svc.publication(s, pid, user)
+                    requested = await selected_context(s, pub, user, payload.source_ids, payload.memory_ids, payload.include_business)
+                    if requested['version'] != existing.context['version']:
+                        raise HTTPException(409, 'idempotency_conflict')
                 return {"id": str(existing.id), "provider": existing.provider, "context": svc.public_context(existing.context)}
         pub = await svc.publication(s, pid, user)
         m = svc.model_for(await svc.policy(s), pub.assistant_id, payload.model_key)
@@ -99,6 +108,9 @@ async def start(pid: uuid.UUID, payload: Start, token: str | None = Cookie(None,
         if count >= 500:
             raise HTTPException(429, "quota_exceeded")
         ctx = context_for(pub.message_text, pub.published_at.isoformat() if pub.published_at else None)
+        if payload.source_ids or payload.memory_ids or payload.include_business:
+            from app.reader_research.service import selected_context
+            ctx = await selected_context(s, pub, user, payload.source_ids, payload.memory_ids, payload.include_business)
         ctx.update(_ephemeral=True, _session_hash=hashlib.sha256((token or "").encode()).hexdigest(),
                    _expires_at=(svc.now() + timedelta(seconds=svc.WINDOW_LEASE_SECONDS)).isoformat())
         c = ChatConversation(id=payload.conversation_id or uuid.uuid4(), user_id=user.id, assistant_id=pub.assistant_id, publication_id=pid,
@@ -122,6 +134,8 @@ async def heartbeat(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKI
     async with SessionLocal() as s:
         await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": svc.LOCK})
         c = await svc.conversation(s, cid, user)
+        if c.saved_at:
+            return {"status": "saved"}
         if not c.context.get("_ephemeral") or c.context.get("_session_hash") != hashlib.sha256((token or "").encode()).hexdigest():
             raise HTTPException(403, "chat_access_denied")
         c.context = {**c.context, "_expires_at": (svc.now() + timedelta(seconds=svc.WINDOW_LEASE_SECONDS)).isoformat()}
@@ -144,7 +158,102 @@ async def messages(cid: uuid.UUID, before: uuid.UUID | None = None, token: str |
         # transaction. Fetch a look-ahead row, not an empty extra page.
         rows = (await s.scalars(query.order_by(ChatGeneration.created_at.desc(), ChatGeneration.id.desc()).limit(31))).all()
         page = rows[:30]
-        return {"messages": [svc.view(g) for g in reversed(page)], "context": svc.public_context(c.context), "older_before": str(page[-1].id) if len(rows) > 30 else None}
+        return {"messages": [svc.view(g) for g in reversed(page)], "context": svc.public_context(c.context), "saved_at": c.saved_at.isoformat() if c.saved_at else None, "older_before": str(page[-1].id) if len(rows) > 30 else None}
+
+
+@router.put("/user/api/conversations/{cid}/memory")
+async def save_memory(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE)):
+    user = await admin.current_reader(token)
+    async with SessionLocal() as s:
+        await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": svc.LOCK})
+        c = await svc.conversation(s, cid, user)
+        # Synchronize saving with retention and explicit deletion. Saving is
+        # idempotent and refers to the whole persisted thread, not the UI page.
+        c = await s.scalar(select(ChatConversation).where(ChatConversation.id == c.id, ChatConversation.deleted_at.is_(None)).with_for_update())
+        if c is None:
+            raise HTTPException(404, "news_unavailable")
+        completed = await s.scalar(select(ChatGeneration.id).where(ChatGeneration.conversation_id == cid, ChatGeneration.status == "completed", ChatGeneration.answer != "").limit(1))
+        if completed is None:
+            raise HTTPException(409, "completed_answer_required")
+        c.saved_at = c.saved_at or svc.now()
+        c.context = {k: v for k, v in c.context.items() if not k.startswith("_") or k=="_voice_continuous_started_at"}
+        await s.commit()
+        return {"id": str(c.id), "assistant_id": str(c.assistant_id), "saved_at": c.saved_at.isoformat()}
+
+
+@router.delete("/user/api/conversations/{cid}/memory")
+async def unsave_memory(cid: uuid.UUID, remove_audio: bool = False, token: str | None = Cookie(None, alias=COOKIE)):
+    user = await admin.current_reader(token)
+    async with SessionLocal() as s:
+        await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": svc.LOCK})
+        c = await svc.conversation(s, cid, user)
+        from app.news_voice.models import VoiceAudio
+        audio=await s.scalar(select(VoiceAudio.id).where(VoiceAudio.conversation_id==cid,VoiceAudio.deleted_at.is_(None),VoiceAudio.saved_at.is_not(None)).limit(1))
+        if audio and not remove_audio:raise HTTPException(409,'audio_removal_confirmation_required')
+        if remove_audio:
+            from app.news_voice.service import erase_conversation as erase_voice
+            await erase_voice(s,cid)
+        c.saved_at = None
+        await s.commit()
+    return {"status": "removed"}
+
+
+@router.get('/user/api/conversations/{cid}/memory-reference')
+async def memory_reference(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE)):
+    user = await admin.current_reader(token)
+    async with SessionLocal() as s:
+        c = await svc.conversation(s, cid, user)
+        if not c.saved_at:
+            raise HTTPException(404, 'news_unavailable')
+        return {'id': str(c.id), 'assistant_id': str(c.assistant_id), 'publication_id': str(c.publication_id),
+                'title': next((seg['text'][:180] for seg in c.context.get('segments', [])), ''),
+                'provider': c.provider, 'saved_at': c.saved_at.isoformat()}
+
+
+@router.get("/user/api/assistants/{aid}/memory")
+async def project_memory(aid: uuid.UUID, before: uuid.UUID | None = None, q: Annotated[str, Query(max_length=120)] = '',
+                         model: Annotated[str, Query(max_length=120)] = '', after_date: date | None = None, until_date: date | None = None,
+                         token: str | None = Cookie(None, alias=COOKIE)):
+    user = await admin.current_reader(token)
+    svc.require(user)
+    available = await admin.reader_assistants(user)
+    if str(aid) not in {str(a["id"]) for a in cast(list[dict[str, Any]], available["assistants"])}:
+        raise HTTPException(404, "news_unavailable")
+    async with SessionLocal() as s:
+        query = select(ChatConversation).join(Publication, Publication.id == ChatConversation.publication_id).where(
+            ChatConversation.user_id == user.id, ChatConversation.assistant_id == aid,
+            ChatConversation.saved_at.is_not(None), ChatConversation.deleted_at.is_(None), Publication.status == "published")
+        if after_date and until_date and after_date > until_date:
+            raise HTTPException(422, 'invalid_date_range')
+        if after_date:
+            query = query.where(ChatConversation.saved_at >= datetime.combine(after_date, time.min, timezone.utc))
+        if until_date:
+            query = query.where(ChatConversation.saved_at <= datetime.combine(until_date, time.max, timezone.utc))
+        matching = select(ChatGeneration.id).where(ChatGeneration.conversation_id == ChatConversation.id)
+        if q.strip():
+            pattern = '%' + q.strip().replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_') + '%'
+            matching = matching.where(or_(ChatGeneration.question.ilike(pattern, escape='\\'), ChatGeneration.answer.ilike(pattern, escape='\\')))
+        if model:
+            matching = matching.where(func.concat(ChatGeneration.model['provider'].as_string(), ':', ChatGeneration.model['model_id'].as_string()) == model)
+        if q.strip() and not model:
+            query = query.where(or_(matching.exists(), ChatConversation.context['segments'].cast(Text).ilike(pattern, escape='\\')))
+        elif q.strip() and model:
+            model_match = select(ChatGeneration.id).where(ChatGeneration.conversation_id == ChatConversation.id,
+                func.concat(ChatGeneration.model['provider'].as_string(), ':', ChatGeneration.model['model_id'].as_string()) == model)
+            query = query.where(or_(matching.exists(), ChatConversation.context['segments'].cast(Text).ilike(pattern, escape='\\') & model_match.exists()))
+        elif model:
+            query = query.where(matching.exists())
+        if before:
+            prior = await s.scalar(query.where(ChatConversation.id == before))
+            if prior is None:
+                raise HTTPException(404, "news_unavailable")
+            query = query.where(tuple_(ChatConversation.saved_at, ChatConversation.id) < tuple_(literal(prior.saved_at), literal(prior.id)))
+        rows = (await s.scalars(query.order_by(ChatConversation.saved_at.desc(), ChatConversation.id.desc()).limit(31))).all()
+        page = rows[:30]
+        return {"memories": [{"id": str(c.id), "publication_id": str(c.publication_id), "provider": c.provider,
+                              "title": next((s["text"][:180] for s in c.context.get("segments", [])), ""),
+                              "saved_at": c.saved_at.isoformat() if c.saved_at else None} for c in page],
+                "older_before": str(page[-1].id) if len(rows) > 30 else None}
 
 
 @router.post("/user/api/conversations/{cid}/messages", status_code=202)
@@ -198,7 +307,7 @@ async def remove(cid: uuid.UUID, token: str | None = Cookie(None, alias=COOKIE))
         c = await s.get(ChatConversation, cid)
         if c is None or c.user_id != user.id:
             raise HTTPException(404, "news_unavailable")
-        await svc.close_window(s, cid, c.publication_id, user)
+        await svc.close_window(s, cid, c.publication_id, user, preserve_saved=False)
     return {"status": "deleted"}
 
 

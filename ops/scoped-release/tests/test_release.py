@@ -15,6 +15,20 @@ REF = "ghcr.io/farhaddgm/bee-researcher-market-intelligence@sha256:" + "b" * 64
 
 
 class ScopedReleaseTests(unittest.TestCase):
+    def test_voice_rollback_keeps_forward_schema_and_authentication(self):
+        current={'Image':'old-image','Config':{'Labels':{'org.opencontainers.image.version':'3.44.0'}}}
+        service=release.rollback_service(current,{},'3.45.0')
+        self.assertIn('app.auth_deployment',service['command'][-1])
+        self.assertNotIn('alembic',service['command'][-1])
+        self.assertEqual(service['image'],'old-image')
+        self.assertNotIn('command',release.rollback_service(current,{},'3.44.0'))
+
+    def test_research_cutover_rollback_preserves_records_and_schema(self):
+        current={'Image':'old-image','Config':{'Labels':{'org.opencontainers.image.version':'3.43.0'}}}
+        service=release.rollback_service(current,{},'3.44.0')
+        self.assertIn('app.auth_deployment',service['command'][-1])
+        self.assertNotIn('alembic',service['command'][-1])
+        self.assertEqual(service['image'],'old-image')
     def test_report_upgrade_rollback_preserves_forward_private_schema(self):
         for old in ('3.40.0', '3.40.1', '3.40.2'):
             current={'Image':'old-image','Config':{'Labels':{'org.opencontainers.image.version':old}}}
@@ -22,6 +36,14 @@ class ScopedReleaseTests(unittest.TestCase):
             self.assertIn('app.auth_deployment',service['command'][-1])
             self.assertNotIn('alembic',service['command'][-1])
             self.assertEqual(service['image'],'old-image')
+
+    def test_memory_cutover_rollback_keeps_forward_schema_and_auth(self):
+        current={'Image':'old-image','Config':{'Labels':{'org.opencontainers.image.version':'3.42.1'}}}
+        service=release.rollback_service(current,{},'3.43.0')
+        self.assertIn('app.auth_deployment',service['command'][-1])
+        self.assertNotIn('alembic',service['command'][-1])
+        self.assertEqual(service['image'],'old-image')
+        self.assertNotIn('command',release.rollback_service(current,{},'3.42.1'))
 
     def test_report_mounts_refuse_broad_or_missing_targets(self):
         with tempfile.TemporaryDirectory() as directory:
