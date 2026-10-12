@@ -257,6 +257,7 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("api.anthropic.com",requests[0].url.host)
         self.assertEqual("Rules",json.loads(requests[0].content)["system"])
         self.assertEqual(14,result[-1]["usage"]["input_tokens"])
+        self.assertEqual(12,result[-1]["usage"]["quota_input_tokens"])
 
     async def test_gemini_native_stream_keeps_thoughts_private(self):
         result,requests=await self.run_fixture("google",[{"candidates":[{"content":{"parts":[{"thought":True,"text":"Private thought"},{"text":"Answer"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"thoughtsTokenCount":3}}])

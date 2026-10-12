@@ -6,7 +6,7 @@ from app.config import Settings
 
 
 class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
-    async def check(self, *, revision='0050_reader_tools', admin=False, create=False,
+    async def check(self, *, revision='0051_token_quotas', admin=False, create=False,
                     journal_write=False, missing=None, environment='production'):
         connection=MagicMock()
         connection.execute=AsyncMock(return_value=SimpleNamespace(one=lambda:(admin,False,False,False,False)))
@@ -31,7 +31,7 @@ class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
         return connection
 
     def test_packaged_head_is_derived_from_actual_image_migrations(self):
-        self.assertEqual(preflight.packaged_schema_head(),'0050_reader_tools')
+        self.assertEqual(preflight.packaged_schema_head(),'0051_token_quotas')
 
     def test_startup_configuration_errors_never_print_secret_inputs(self):
         marker='PRIVATE_CONFIG_CANARY_secret_value_1234567890'
@@ -44,7 +44,7 @@ class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
     async def test_restricted_production_with_all_individual_grants_starts(self):
         connection=await self.check()
         checks=[call.args[1] for call in connection.scalar.await_args_list if len(call.args)>1 and 'table' in call.args[1]]
-        self.assertEqual(len(checks),104)
+        self.assertEqual(len(checks),108)
         self.assertEqual({p['permission'] for p in checks},{'SELECT','INSERT','UPDATE','DELETE','TRUNCATE'})
 
     async def test_private_report_grants_are_required(self):
@@ -65,7 +65,7 @@ class RuntimePermissionTests(unittest.IsolatedAsyncioTestCase):
             await self.check(journal_write=True)
 
     async def test_any_missing_chat_grant_is_refused(self):
-        for table in ('news_chat_policy','news_chat_conversations','news_chat_generations','reader_research_profiles','reader_research_records','reader_voice_policy','reader_voice_usage','reader_voice_sessions','reader_voice_audio','reader_voice_segments','reader_voice_save_jobs','reader_voice_deletion_outbox'):
+        for table in ('news_chat_policy','news_chat_conversations','news_chat_generations','reader_research_profiles','reader_research_records','reader_token_limits','reader_voice_policy','reader_voice_usage','reader_voice_sessions','reader_voice_audio','reader_voice_segments','reader_voice_save_jobs','reader_voice_deletion_outbox'):
             for permission in ('SELECT','INSERT','UPDATE','DELETE'):
                 with self.assertRaisesRegex(RuntimeError,'chat table privileges'):
                     await self.check(missing=('market_intelligence.'+table,permission))

@@ -100,6 +100,7 @@ class IsolationTest(unittest.TestCase):
                 "market_intelligence.reader_news_revisions",
                 "market_intelligence.reader_expert_requests",
                 "market_intelligence.reader_expert_replies",
+                "market_intelligence.reader_token_limits",
                 "market_intelligence.reader_voice_policy",
                 "market_intelligence.reader_voice_usage",
                 "market_intelligence.reader_voice_sessions",

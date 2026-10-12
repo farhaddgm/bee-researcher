@@ -168,6 +168,8 @@ def main():
                 '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test','-e','BEE_CHAT_TEST_URL=http://127.0.0.1:8010',PW,'scripts/verify_reader_research.mjs')
             run('run','--rm','--entrypoint','node','--network','container:'+names['app'],*browser_mounts(modules),*artifacts,
                 '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test','-e','BEE_CHAT_TEST_URL=http://127.0.0.1:8010',PW,'scripts/verify_reader_tools.mjs')
+            run('run','--rm','--entrypoint','node','--network','container:'+names['app'],*browser_mounts(modules),*artifacts,
+                '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test','-e','BEE_CHAT_TEST_URL=http://127.0.0.1:8010',PW,'scripts/verify_token_quotas.mjs')
             # The new optional surface must not break the existing Reader
             # settings, focus trap, text direction or notification preferences.
             run('run','--rm','--entrypoint','node','--network',net,*browser_mounts(modules),
@@ -194,6 +196,7 @@ def main():
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_project_memory_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_reader_research_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_reader_tools_sql.py')
+            run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_token_quotas_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_news_voice_sql.py')
             run('run','--rm','--entrypoint','python',*common,args.image,'scripts/verify_job_recovery_sql.py')
             print('Isolated news-chat acceptance gate passed; no live credentials or calls.')

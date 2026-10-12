@@ -10,7 +10,11 @@ class UIAssetsTest(unittest.TestCase):
         source_blocks = re.findall(r'<script([^>]*)>([\s\S]*?)</script>', ADMIN_HTML)
         exported = re.findall(r'<script([^>]*)></script>', body)
         self.assertEqual(len(source_blocks), len(exported))
-        for (_, source), attributes in zip(source_blocks, exported):
+        for (original_attributes, source), attributes in zip(source_blocks, exported):
+            if re.search(r'\bsrc\s*=', original_attributes):
+                self.assertEqual(original_attributes, attributes)
+                self.assertEqual(source, "")
+                continue
             name = re.search(r'/assets/ui/([^" ]+)', attributes).group(1)
             self.assertEqual(source, ASSETS[name][0])
         self.assertNotRegex(body, r'<style\b')
