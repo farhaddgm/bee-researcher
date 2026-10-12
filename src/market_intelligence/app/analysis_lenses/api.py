@@ -9,7 +9,7 @@ from typing import Any, cast
 from fastapi import APIRouter, Cookie, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select, text
 
 from app import admin
@@ -32,7 +32,18 @@ class PrivateAnalysisRoute(APIRoute):
         async def private_handle(request):
             try:
                 return await handle(request)
-            except (HTTPException, RequestValidationError):
+            except RequestValidationError as exc:
+                # Return field locations, never Pydantic's raw input/context
+                # (a rejected Owner definition can contain accidental secrets).
+                names={'body','query','path','cookie','header','lid','pid','sid','asset','offset','assistant_id','language',
+                       'definition','dimensions','localized_labels','name','summary','description','questions',
+                       'required_information','priority','enabled','examples','good','bad','fa','en','tr','ar','es','it','de','fr'}
+                for schema in (Create,Definition,Discovery,Draft,Policy,Preview,RevisionAction):
+                    names.update(schema.model_fields)
+                errors=[{'loc':[part if isinstance(part,str) and part in names else part if type(part) is int and 0<=part<100 else 'field' for part in e['loc'][:12]],
+                         'type':e['type']} for e in exc.errors()[:32]]
+                return JSONResponse(status_code=422,content={'detail':errors})
+            except HTTPException:
                 raise
             except Exception as exc:
                 logging.getLogger('app.analysis_lenses').error('analysis_request_failed exception_type=%s', type(exc).__name__)
