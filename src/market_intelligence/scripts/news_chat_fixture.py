@@ -51,7 +51,7 @@ async def seed():
             u=AdminUser(id=uuid.UUID(f'30000000-0000-4000-8000-{n:012d}'),username=name,email=name+'@gmail.com',display_name=name,role='viewer',active=True,password_hash=password_hash,login_method='both',preferences={'user_portal_access':{'enabled':True},'news_chat_enabled':True})
             s.add(u);await s.flush();s.add(AssistantMember(assistant_id=research_project,user_id=u.id,role='viewer'))
         # Dedicated actors keep quota tests independent of earlier grant-revocation probes.
-        for n,name,grant in [(12,'quota-reader',True),(13,'quota-no-grant',False)]:
+        for n,name,grant in [(12,'quota-reader',True),(13,'quota-no-grant',False),(14,'length-reader',True)]:
             u=AdminUser(id=uuid.UUID(f'30000000-0000-4000-8000-{n:012d}'),username=name,email=name+'@gmail.com',display_name=name,role='viewer',active=True,password_hash=password_hash,login_method='both',preferences={'user_portal_access':{'enabled':True},'news_chat_enabled':grant})
             s.add(u);await s.flush();s.add(AssistantMember(assistant_id=PROJECT,user_id=u.id,role='viewer'))
         for n,aid,pid,pubstatus in [(1,PROJECT,NEWS,'published'),(2,PRIVATE_PROJECT,PRIVATE_NEWS,'published'),(3,PROJECT,PREVIEW,'preview')]:
@@ -107,6 +107,11 @@ async def fake_stream(settings, model, messages):
         raise providers.ProviderError('provider_failed')
     if messages[-1]['content']=='HANG':
         await asyncio.sleep(60)
+    if messages[-1]['content'].startswith('EXPECT_LENGTH_'):
+        mode=messages[-1]['content'].removeprefix('EXPECT_LENGTH_')
+        interval={'short':'230-510','medium':'710-1510','long':'1710-4310'}.get(mode)
+        if (interval and interval+' characters' not in messages[0]['content']) or (mode=='auto' and 'Choose the answer length yourself' not in messages[0]['content']):
+            raise RuntimeError('Selected answer length was not sent to provider')
     answer='Synthetic answer grounded in the selected report [report-1].'
     if 'Prepare a meeting brief' in messages[0]['content']:
         meta=json.loads(messages[-1]['content']);duration=int(meta['duration_minutes']);a=duration//3;b=a;c=duration-a-b

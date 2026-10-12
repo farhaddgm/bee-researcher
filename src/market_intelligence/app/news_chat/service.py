@@ -13,6 +13,8 @@ from fastapi import HTTPException
 from sqlalchemy import delete, func, or_, select, text, update
 
 from app import admin
+from app.answer_length import AnswerLength
+from app.reader_preferences import ReaderChatDefaults
 from app.config import get_settings
 from app.database import SessionLocal
 from app.deployment_drain import work_lease
@@ -143,7 +145,8 @@ def view(g):
             "answer": g.answer, "status": g.status, "error_code": g.error_code,
             "provider": g.model["provider"], "model": g.model["label"], "model_key": g.model["provider"] + ":" + g.model["model_id"],
             "citations": g.citations, "feedback": g.feedback, "language": g.language, "created_at": g.created_at.isoformat(),
-            "voice_session_ids":g.usage.get('voice_session_ids',[]), "intent": g.usage.get("intent", "question")}
+            "voice_session_ids":g.usage.get('voice_session_ids',[]), "intent": g.usage.get("intent", "question"),
+            "response_length": g.usage.get("answer_length", {}).get("mode", "auto")}
 
 
 async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict:
@@ -186,6 +189,14 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
             prepared_question += '\n\nUser-selected analysis to critique (unverified):\n' + analysis
         # Across all processes: reservation, idempotency and capacity are atomic.
         prior = await s.scalar(select(ChatGeneration).where(ChatGeneration.user_id == user.id, ChatGeneration.idempotency_key == q.idempotency_key))
+        # Omitted fields use account defaults on admission, then the original
+        # snapshot on retries even if the user has since changed preferences.
+        defaults = ReaderChatDefaults.model_validate(admin._reader_preferences_from_user(user)["chat"])
+        previous_length = AnswerLength.model_validate(prior.usage.get("answer_length", {})) if prior else None
+        answer_length = AnswerLength(
+            mode=q.response_length or (previous_length.mode if previous_length else defaults.response_length),
+            characters=q.length_characters or (previous_length.characters if previous_length else defaults.length_characters),
+        )
         if prior:
             if (prior.conversation_id != cid or prior.question != prepared_question or prior.model["model_id"] != m.model_id
                 or prior.language != q.language or prior.usage.get("selected_segment") != q.selected_segment
@@ -194,6 +205,8 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
                 or prior.usage.get('target_generation_id') != (str(q.target_generation_id) if q.target_generation_id else None)
                 or prior.usage.get('analysis_hash') != analysis_hash):
                 raise HTTPException(409, "idempotency_conflict")
+            if answer_length != previous_length:
+                raise HTTPException(409, "idempotency_conflict")
             return view(prior)
         active = await s.scalar(select(func.count()).select_from(ChatGeneration).where(ChatGeneration.status.in_(ACTIVE))) or 0
         own_active = await s.scalar(select(func.count()).select_from(ChatGeneration).where(ChatGeneration.status.in_(ACTIVE), ChatGeneration.user_id == user.id))
@@ -201,7 +214,7 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
             raise HTTPException(429, "chat_busy")
         history = list((await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == cid, ChatGeneration.status == "completed").order_by(ChatGeneration.created_at.desc(), ChatGeneration.id.desc()).limit(20))).all())
         try:
-            messages = prompt(c.context, prepared_question, q.language, [view(g) for g in reversed(history)], q.selected_segment, m.max_input_chars, q.intent)
+            messages = prompt(c.context, prepared_question, q.language, [view(g) for g in reversed(history)], q.selected_segment, m.max_input_chars, q.intent, answer_length)
         except ValueError:
             raise HTTPException(422, "context_too_large") from None
         # Conservative upper bound: <= one Unicode scalar per token is not
@@ -235,7 +248,7 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         g = ChatGeneration(id=uuid.uuid4(), conversation_id=cid, user_id=user.id, assistant_id=c.assistant_id, idempotency_key=q.idempotency_key,
                            session_hash=session.token_hash, question=prepared_question, answer="", language=q.language, model=m.model_dump(mode="json"),
                            citations=[], status="queued", cancel_requested=False, reserved_usd=reserve, reserved_tokens=input_bound + m.max_output_tokens, usage={"input_bound": input_bound, "selected_segment": q.selected_segment, "intent": q.intent,
-                           "voice_session_ids":[str(sid) for sid in q.voice_session_ids],
+                           "voice_session_ids":[str(sid) for sid in q.voice_session_ids], "answer_length": answer_length.model_dump(),
                            'target_generation_id': str(q.target_generation_id) if q.target_generation_id else None, 'analysis_hash': analysis_hash}, deadline=deadline, created_at=now())
         s.add(g)
         if q.voice_session_ids:
@@ -317,7 +330,8 @@ async def generate(gid):
             context = c.context
             model = ModelSpec.model_validate(g.model)
             history = list((await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == c.id, ChatGeneration.status == "completed").order_by(ChatGeneration.created_at.desc(), ChatGeneration.id.desc()).limit(20))).all())
-            messages = prompt(context, g.question, g.language, [view(x) for x in reversed(history)], g.usage.get("selected_segment"), model.max_input_chars, g.usage.get("intent", "question"))
+            length = AnswerLength.model_validate(g.usage.get("answer_length", {}))
+            messages = prompt(context, g.question, g.language, [view(x) for x in reversed(history)], g.usage.get("selected_segment"), model.max_input_chars, g.usage.get("intent", "question"), length)
             deadline = g.deadline
         last_write = time.monotonic()
         contacted = True

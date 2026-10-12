@@ -4,6 +4,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from app.answer_length import CharacterRanges, LengthMode
 
 LANGUAGES = ("fa", "en", "tr", "ar", "es", "it", "de", "fr")
 
@@ -82,6 +83,8 @@ class Question(Start):
     voice_session_ids: list[UUID] = Field(default_factory=list, max_length=10)
     target_generation_id: UUID | None = None
     analysis_text: str = Field(default='', max_length=6000)
+    response_length: LengthMode | None = None
+    length_characters: CharacterRanges | None = None
 
     @model_validator(mode='after')
     def critique_target(self):

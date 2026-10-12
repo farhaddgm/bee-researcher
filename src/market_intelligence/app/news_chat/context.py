@@ -4,6 +4,7 @@ import re
 from html import unescape
 from html.parser import HTMLParser
 
+from app.answer_length import AnswerLength
 from app.report_language import LANGUAGES, report_copy
 
 
@@ -83,7 +84,7 @@ def validate_citations(answer: str, context: dict) -> tuple[str, list, bool]:
     return re.sub(r"\[(report-[\w-]+)\]", replace, answer), valid, invalid
 
 
-def prompt(context: dict, question: str, language: str, history: list, selected: str | None, max_chars: int, intent: str = "question") -> list:
+def prompt(context: dict, question: str, language: str, history: list, selected: str | None, max_chars: int, intent: str = "question", answer_length: AnswerLength | None = None) -> list:
     source = "\n".join(f'[{s["id"]}] ' + (('(' + s.get('scope', '') + '; ' + str(s.get('publication_id') or s.get('memory_id') or '') + '; publication date: ' + str(s.get('published_at') or 'not supplied') + ') ') if context.get('scope') == 'selected_research' else '') + s['text'] for s in context['segments'])
     language_name = {'fa':'Persian (Farsi)','en':'English','tr':'Turkish','ar':'Modern Standard Arabic',
                      'es':'Spanish','it':'Italian','de':'German','fr':'French'}[language]
@@ -133,6 +134,8 @@ def prompt(context: dict, question: str, language: str, history: list, selected:
             "Label possible consequences as inferences, not established facts. Avoid generic filler, "
             "invented company details and guarantees; if evidence is limited, say so instead of inventing points."
         )
+    if answer_length is not None:
+        system += answer_length.instruction()
     messages = [{"role": "system", "content": system}, {"role": "user", "content": "REPORT DATA:\n" + source}]
     # Preserve complete recent turns, never silently truncate the source.
     remaining = max_chars - len(system) - len(source) - len(question) - 100

@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from app.answer_length import CharacterRanges, LengthMode
+
 
 class ReaderChatDefaults(BaseModel):
     model_config = {"extra": "forbid"}
@@ -11,6 +13,8 @@ class ReaderChatDefaults(BaseModel):
     provider: Literal["openai", "anthropic", "google"] = "openai"
     model_key: str = Field(default="", max_length=120, pattern=r"^[a-zA-Z0-9_.:-]*$")
     language: Literal["fa", "en", "tr", "ar", "es", "it", "de", "fr"] = "en"
+    response_length: LengthMode = "auto"
+    length_characters: CharacterRanges = Field(default_factory=CharacterRanges)
     voice_key: str = Field(default="", max_length=120, pattern=r"^[a-zA-Z0-9_.:-]*$")
     voice_consent: bool = False
     retain_voice: bool = False
