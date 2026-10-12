@@ -32,6 +32,9 @@ try{
     if(width<=900)await page.locator('.chat-tabs [data-tab=chat]').click();
     assert(await page.locator('#newsDialog').evaluate(n=>n.scrollWidth<=n.clientWidth+2),'News overflow '+locale+'/'+width);
     assert(await page.locator('#news-chat-response-mode').isVisible());assert.equal(await page.locator('.chat-answer-options').evaluate(n=>n.open),false);
+    const controls=await page.evaluate(()=>({summary:document.querySelector('#newsChatSummary button').getBoundingClientRect().height,buttons:[...document.querySelectorAll('#news-chat-response-mode button')].map(n=>({height:n.getBoundingClientRect().height,overflow:n.scrollHeight>n.clientHeight+1}))}));
+    assert(controls.buttons.every(b=>!b.overflow),'Response mode label clipped '+locale+'/'+width);
+    if(width>900)assert(controls.buttons.every(b=>b.height<=controls.summary+2),'Response modes taller than summary '+locale);
     if(width>900){const article=await page.locator('.deep-reading-layout').boundingBox(),chat=await page.locator('#newsChat').boundingBox();assert(Math.abs(article.y-chat.y)<10,'Chat is below news instead of beside it');assert(locale==='fa'||locale==='ar'?chat.x+chat.width<=article.x+2:article.x+article.width<=chat.x+2,'Desktop columns overlap')}
     if(process.env.BEE_CHAT_ARTIFACT_DIR&&['en','fa'].includes(locale)&&[1440,390].includes(width)){await page.locator('#newsChat').evaluate(n=>n.scrollTop=0);await page.screenshot({path:process.env.BEE_CHAT_ARTIFACT_DIR+'/reader-sidebar-'+locale+'-'+width+'.png'});}
     if(width<=900){await page.locator('.chat-tabs [data-tab=news]').click();assert(await page.locator('.reading-tools').isVisible())}
