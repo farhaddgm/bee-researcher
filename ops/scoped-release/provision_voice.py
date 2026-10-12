@@ -26,7 +26,10 @@ def provision(directory):
     descriptor=os.open(key,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
     with os.fdopen(descriptor,'w') as output:
         json.dump(value,output);output.flush();os.fsync(output.fileno())
-    for target in (key,state,directory):os.chown(target,10002,10002)
+    for target in (key,state):os.chown(target,10002,10002)
+    # Keep the operator able to inspect metadata, not read the service key.
+    # Only the key file and state directory themselves are service mounts.
+    parent=directory.parent.stat();os.chown(directory,parent.st_uid,parent.st_gid)
     return {'keyring_file':str(key),'state_dir':str(state),'api_key_provisioned':False,
             'other_services_changed':False,'existing_keys_changed':False}
 
