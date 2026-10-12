@@ -21,9 +21,9 @@
   async function api(path,options={}){
     const response=await fetch(path,{credentials:'same-origin',...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});
     const data=await response.json().catch(()=>({}));
-    if(!response.ok){const err=new Error(typeof data.detail==='string'?data.detail:'request_failed');err.status=response.status;throw err}return data;
+    if(!response.ok){const err=new Error(typeof data.detail==='string'?data.detail:(data.detail?.code||'request_failed'));err.status=response.status;throw err}return data;
   }
-  function messageFor(e){if(e?.status===401)return t('expired');if(e?.status===410)return t('windowExpired');if(e?.message==='context_changed')return t('changed');if(e?.status===429)return t('budget');if(e?.status===403)return t('denied');if(e?.message==='provider_unconfigured'||e?.message==='model_unavailable')return t('unavailable');return t('error')}
+  function messageFor(e){if(e?.message==='token_quota_exhausted')return window.BeeTokenI18n?.t('tokenExhausted')||t('budget');if(e?.status===401)return t('expired');if(e?.status===410)return t('windowExpired');if(e?.message==='context_changed')return t('changed');if(e?.status===429)return t('budget');if(e?.status===403)return t('denied');if(e?.message==='provider_unconfigured'||e?.message==='model_unavailable')return t('unavailable');return t('error')}
   function drawGuide(){tip.replaceChildren(node('span',t('help')),node('span',t('report')),node('span',t('memoryPrivacy')));if(daily!==null)tip.append(node('span',t('daily')+': '+daily));if(context&&!context.complete)tip.append(node('span',t('partial')))}
   function drawStatus(){status.textContent=statusState.key?t(statusState.key):'';status.hidden=!status.textContent}
   function setStatus(key){statusState={key};drawStatus()}

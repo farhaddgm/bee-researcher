@@ -34,14 +34,14 @@
   $('feedPage')?.prepend(panel);
   const nav=button('researchDesk',()=>{if(location.pathname.endsWith('/user/settings')){location.assign('/user?research=1');return}if($('sidebar')?.classList.contains('open'))$('mobileMenuButton')?.click();panel.open=true;panel.scrollIntoView({block:'start'})});nav.className='sidebar-item';$('sidebar')?.querySelector('.sidebar-spacer')?.before(nav);
 
-  function message(e){return t(e?.status===401?'expired':e?.status===403||e?.status===404?'denied':e?.code==='revision_conflict'||e?.code==='context_changed'?'revisionConflict':e?.code==='context_too_large'?'fewerSources':e?.status===429?'budget':'error')}
+  function message(e){if(e?.code==='token_quota_exhausted')return window.BeeTokenI18n?.t('tokenExhausted')||t('budget');return t(e?.status===401?'expired':e?.status===403||e?.status===404?'denied':e?.code==='revision_conflict'||e?.code==='context_changed'?'revisionConflict':e?.code==='context_too_large'?'fewerSources':e?.status===429?'budget':'error')}
   function error(e,stamp=epoch){if(stamp===epoch){status.className='research-status research-error';status.textContent=message(e)}}
   function note(key){status.className='research-status';status.textContent=key?t(key):''}
   async function api(path,options={}){
     const controller=new AbortController();requests.add(controller);const headers=new Headers(options.headers||{});
     if(options.body)headers.set('Content-Type','application/json');
     if(options.method&&options.method!=='GET'){const cookie=document.cookie.split('; ').find(v=>v.startsWith('research_bee_user_csrf='));if(cookie)headers.set('x-csrf-token',decodeURIComponent(cookie.split('=').slice(1).join('=')))}
-    try{const response=await fetch(path,{credentials:'same-origin',...options,headers,signal:controller.signal});const data=await response.json().catch(()=>({}));if(!response.ok){const e=new Error('Request failed');e.status=response.status;e.code=typeof data.detail==='string'?data.detail:'';if(e.status===401){reset();note('expired')}throw e}return data}finally{requests.delete(controller)}
+    try{const response=await fetch(path,{credentials:'same-origin',...options,headers,signal:controller.signal});const data=await response.json().catch(()=>({}));if(!response.ok){const e=new Error('Request failed');e.status=response.status;e.code=typeof data.detail==='string'?data.detail:(data.detail?.code||'');if(e.status===401){reset();note('expired')}throw e}return data}finally{requests.delete(controller)}
   }
   const base=()=>'/user/api/assistants/'+aid+'/research/';
   function stopAudio(){audioEpoch++;voice?.stop();for(const n of dailyList.children)n.classList.remove('research-brief-active')}

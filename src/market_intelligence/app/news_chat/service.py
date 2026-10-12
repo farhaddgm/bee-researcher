@@ -107,6 +107,7 @@ async def erase_conversation(s, c):
         g.usage = {key: value for key, value in g.usage.items() if key not in {'analysis_hash', 'target_generation_id'}}
         if g.status == "queued":
             g.status, g.finished_at, g.actual_usd = "stopped", now(), Decimal(0)
+            g.input_tokens, g.output_tokens = 0, 0
         # Running requests retain their conservative reservation until the
         # worker reconciles actual usage; erasing must not forgive paid work.
 
@@ -206,6 +207,9 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         # Conservative upper bound: <= one Unicode scalar per token is not
         # guaranteed; use UTF-8 bytes for input reservation rather than chars/4.
         input_bound = sum(len(x["content"].encode()) + 100 for x in messages)
+        from app.token_quotas.service import admission
+        output_limit = await admission(s, c.assistant_id, user.id, input_bound, m.max_output_tokens, now())
+        m = m.model_copy(update={"max_output_tokens": output_limit})
         reserve = ((Decimal(input_bound) * m.input_usd + Decimal(m.max_output_tokens) * m.output_usd) / Decimal(1_000_000)).quantize(Decimal("0.00000001"), rounding=ROUND_CEILING)
         day = now().astimezone(ZoneInfo(get_settings().timezone)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
         charge = func.coalesce(ChatGeneration.actual_usd, ChatGeneration.reserved_usd)
@@ -230,7 +234,7 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         deadline = min(session.expires_at, admin._reader_nightly_expiry(session.created_at), session.created_at + timedelta(hours=get_settings().session_absolute_hours), now() + timedelta(seconds=get_settings().news_chat_timeout_seconds))
         g = ChatGeneration(id=uuid.uuid4(), conversation_id=cid, user_id=user.id, assistant_id=c.assistant_id, idempotency_key=q.idempotency_key,
                            session_hash=session.token_hash, question=prepared_question, answer="", language=q.language, model=m.model_dump(mode="json"),
-                           citations=[], status="queued", cancel_requested=False, reserved_usd=reserve, usage={"input_bound": input_bound, "selected_segment": q.selected_segment, "intent": q.intent,
+                           citations=[], status="queued", cancel_requested=False, reserved_usd=reserve, reserved_tokens=input_bound + m.max_output_tokens, usage={"input_bound": input_bound, "selected_segment": q.selected_segment, "intent": q.intent,
                            "voice_session_ids":[str(sid) for sid in q.voice_session_ids],
                            'target_generation_id': str(q.target_generation_id) if q.target_generation_id else None, 'analysis_hash': analysis_hash}, deadline=deadline, created_at=now())
         s.add(g)
@@ -304,6 +308,7 @@ async def monitored_events(gid, stream):
 
 async def generate(gid):
     answer, usage, status, error = "", {}, "unknown", None
+    contacted = False
     try:
         await live(gid)
         async with SessionLocal() as s:
@@ -315,6 +320,7 @@ async def generate(gid):
             messages = prompt(context, g.question, g.language, [view(x) for x in reversed(history)], g.usage.get("selected_segment"), model.max_input_chars, g.usage.get("intent", "question"))
             deadline = g.deadline
         last_write = time.monotonic()
+        contacted = True
         async with asyncio.timeout(max(0.1, (deadline - now()).total_seconds())), aclosing(monitored_events(gid, providers.stream(get_settings(), model, messages))) as events:
             async for event in events:
                 if event.get("text"):
@@ -357,8 +363,12 @@ async def generate(gid):
         else:
             row.answer, row.question = "", ""
         row.citations, row.status, row.error_code = citations, status, error
-        row.actual_usd = providers.cost(ModelSpec.model_validate(row.model), usage)
+        row.actual_usd = providers.cost(ModelSpec.model_validate(row.model), usage) if contacted else Decimal(0)
         row.usage = {**row.usage, **usage}
+        from app.token_quotas.service import settle
+        settle(row, usage)
+        if not contacted:
+            row.input_tokens, row.output_tokens = 0, 0
         row.finished_at, row.session_hash = now(), ""
         await s.commit()
 

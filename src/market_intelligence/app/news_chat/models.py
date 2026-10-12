@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -44,6 +44,8 @@ class ChatGeneration(Base):
         Index("uq_news_chat_idempotency", "user_id", "idempotency_key", unique=True),
         Index("uq_news_chat_active_user", "user_id", unique=True, postgresql_where=text("status IN ('queued','running')")),
         Index("ix_news_chat_created", "created_at"),
+        Index("ix_reader_token_usage", "user_id", "assistant_id", "created_at", "id"),
+        CheckConstraint("reserved_tokens >= 0 AND (input_tokens IS NULL OR input_tokens >= 0) AND (output_tokens IS NULL OR output_tokens >= 0)", name="reader_token_counts"),
         Index("ix_news_chat_history_page", "conversation_id", "created_at", "id"),
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -63,6 +65,9 @@ class ChatGeneration(Base):
     feedback: Mapped[int | None] = mapped_column(Integer)
     reserved_usd: Mapped[Decimal] = mapped_column(Numeric(18, 8), nullable=False)
     actual_usd: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
+    reserved_tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    input_tokens: Mapped[int | None] = mapped_column(BigInteger)
+    output_tokens: Mapped[int | None] = mapped_column(BigInteger)
     usage: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

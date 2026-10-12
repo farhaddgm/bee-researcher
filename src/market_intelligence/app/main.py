@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app import admin
+
 import asyncio
 import hashlib
 import ipaddress
@@ -1058,6 +1060,8 @@ from app.reader_research.api import router as reader_research_router
 app.include_router(reader_research_router)
 from app.reader_tools.api import router as reader_tools_router
 app.include_router(reader_tools_router)
+from app.token_quotas.api import router as token_quotas_router
+app.include_router(token_quotas_router)
 from app.report_portal.api import router as report_router
 app.include_router(report_router)
 
@@ -1130,7 +1134,7 @@ async def user_api_me(response: Response, token: str | None = Cookie(default=Non
     if token:
         set_reader_session_cookie(response, token)
     return {"id": str(user.id), "username": user.username, "display_name": user.display_name or user.username,
-            "email": user.email, "login_method": user.login_method, **user_portal_access_payload(user)}
+            "email": user.email, "login_method": user.login_method, "is_owner": admin.is_owner(user), **user_portal_access_payload(user)}
 
 
 @app.get("/user/api/assistants")

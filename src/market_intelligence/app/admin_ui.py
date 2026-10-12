@@ -78,3 +78,6 @@ ADMIN_HTML = ADMIN_HTML.replace("__UX_WRITING_CATALOG__", _UX_WRITING_CATALOG_JS
 ADMIN_HTML = ADMIN_HTML.replace('</head>', '<style id="admin-declarations">' + (_MODULE_ROOT / 'declarations.css').read_text(encoding='utf-8') + '</style></head>', 1)
 from app.auth_ui import decorate_auth_html
 ADMIN_HTML = decorate_auth_html(ADMIN_HTML, admin=True)
+
+# Token quotas use self-hosted assets without adding inline script or style.
+ADMIN_HTML = ADMIN_HTML.replace('</head>', '<link rel="stylesheet" href="/assets/token-quotas/quotas.css"></head>', 1).replace('</body>', '<script src="/assets/token-quotas/i18n.js"></script><script src="/assets/token-quotas/quotas.js"></script></body>', 1)

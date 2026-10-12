@@ -38,7 +38,7 @@ async def check_runtime_permissions():
             for table in ("news_chat_policy", "news_chat_conversations", "news_chat_generations", "reader_research_profiles", "reader_research_records",
                           "reader_voice_policy","reader_voice_usage","reader_voice_sessions","reader_voice_audio",
                           "reader_voice_segments","reader_voice_save_jobs","reader_voice_deletion_outbox",
-                          "reader_news_monitors","reader_news_watches","reader_expert_requests"):
+                          "reader_news_monitors","reader_news_watches","reader_expert_requests","reader_token_limits"):
                 for permission in ("SELECT", "INSERT", "UPDATE", "DELETE"):
                     if not await connection.scalar(text("SELECT has_table_privilege(current_user, :table, :permission)"),
                             {"table": "market_intelligence." + table, "permission": permission}):

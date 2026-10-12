@@ -50,6 +50,10 @@ async def seed():
         for n,name in [(7,'research-reader'),(8,'research-peer'),(10,'tools-reader'),(11,'tools-peer')]:
             u=AdminUser(id=uuid.UUID(f'30000000-0000-4000-8000-{n:012d}'),username=name,email=name+'@gmail.com',display_name=name,role='viewer',active=True,password_hash=password_hash,login_method='both',preferences={'user_portal_access':{'enabled':True},'news_chat_enabled':True})
             s.add(u);await s.flush();s.add(AssistantMember(assistant_id=research_project,user_id=u.id,role='viewer'))
+        # Dedicated actors keep quota tests independent of earlier grant-revocation probes.
+        for n,name,grant in [(12,'quota-reader',True),(13,'quota-no-grant',False)]:
+            u=AdminUser(id=uuid.UUID(f'30000000-0000-4000-8000-{n:012d}'),username=name,email=name+'@gmail.com',display_name=name,role='viewer',active=True,password_hash=password_hash,login_method='both',preferences={'user_portal_access':{'enabled':True},'news_chat_enabled':grant})
+            s.add(u);await s.flush();s.add(AssistantMember(assistant_id=PROJECT,user_id=u.id,role='viewer'))
         for n,aid,pid,pubstatus in [(1,PROJECT,NEWS,'published'),(2,PRIVATE_PROJECT,PRIVATE_NEWS,'published'),(3,PROJECT,PREVIEW,'preview')]:
             source=Source(assistant_id=aid,source_key=f'T{n:03}',name='Synthetic source',homepage_url='https://synthetic.invalid',fetch_url='https://synthetic.invalid/rss',adapter='rss')
             s.add(source);await s.flush()
