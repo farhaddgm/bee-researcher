@@ -80,7 +80,13 @@ try{
   await accountRow.getByRole('button',{name:'Edit',exact:true}).click();chatGrant=owner.getByLabel('Allow AI conversations in User',{exact:true});assert(await chatGrant.isChecked(),'Account form did not persist chat grant');await chatGrant.uncheck();accountSave=owner.waitForResponse(r=>r.url().endsWith('/admin/api/accounts/30000000-0000-4000-8000-000000000004')&&r.request().method()==='PATCH');await owner.locator('.accounts-dialog').getByRole('button',{name:'Save',exact:true}).click();assert.equal((await accountSave).status(),200);
   const adminContext=await browser.newContext(),nonOwner=await adminContext.newPage();nonOwner.on('pageerror',e=>errors.push(e.message));await login(nonOwner,'chat-admin',true);assert.equal((await api(nonOwner,'/admin/api/news-chat/policy')).status,403);assert.equal((await api(nonOwner,'/admin/api/news-chat/users/30000000-0000-4000-8000-000000000004/grant','PUT',{enabled:true})).status,403);assert.equal((await api(nonOwner,'/admin/api/accounts/30000000-0000-4000-8000-000000000004','PATCH',{news_chat_access:true})).status,403);await nonOwner.evaluate(()=>window.setView('account'));assert.equal(await nonOwner.locator('#newsChatAdmin').count(),0);await adminContext.close();
   await login(page,'chat-reader');assert.equal((await api(page,'/user/api/chat/models?assistant_id='+futureId)).status,404,'Global chat must not grant access to a future project');await page.locator(`.news-card[data-news-id="${pid}"]`).waitFor();await open();
-  assert.equal((await api(page,'/user/api/publications/'+pid+'/detail')).data.source_name,'Synthetic source');
+  const safeDetail=(await api(page,'/user/api/publications/'+pid+'/detail')).data;
+  assert.equal(safeDetail.source_name,'Synthetic source');
+  assert(safeDetail.message_text.includes('<img'),'Native plain-text detail lost literal news content');
+  assert((await page.locator('.news-card .news-body').first().innerText()).includes('<img src="https://tracker.invalid/leak"'),'Card lost literal news text');
+  assert((await page.locator('#dialogBody').innerText()).includes('<img src="https://tracker.invalid/leak"'),'Modal lost literal news text');
+  assert.equal(await page.evaluate(()=>window.literalInjected),undefined);
+  assert.equal(await page.locator('#newsDialog img').count(),0);
   assert.equal((await api(owner,'/admin/api/news-chat/usage')).data.requests.length,initialUsage,'Opening started paid generation');
   assert.equal(await page.getByRole('button',{name:'Stop response',exact:true}).isVisible(),false,'CSS overrode hidden for the inactive stop button');
   assert.equal(await page.locator('#newsChat .chat-suggestions button').count(),3);

@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr, ValidationError
 
 from app.config import Settings
+from app import main as main_module
 from app.main import app
 from app.news_chat import providers, service
 from app.news_chat.context import context_for, prompt, reader_report_text, validate_citations
@@ -29,7 +30,8 @@ def spec(provider="openai", **changes):
 class NewsChatContextTests(unittest.TestCase):
     def test_user_hides_only_generated_insights_in_all_languages_and_templates(self):
         for language in LANGUAGES:
-            for blocks in (None, [{"type": k, "visible": True} for k in ("title", "summary", "opportunity", "risk", "source", "business_connection")]):
+            for blocks in (None, [{"type": k, "visible": True} for k in ("title", "summary", "opportunity", "risk", "source", "business_connection")],
+                           [{"type": k, "visible": True, "emoji": "custom"} for k in ("opportunity", "risk", "title", "summary", "source", "business_connection")]):
                 with self.subTest(language=language, template=bool(blocks)):
                     published = render_analysis_message(headline="Risk: real news headline", summary="News facts discuss risk and opportunity.",
                         business_connection="KEEP BUSINESS CONNECTION", opportunity="HIDE OPPORTUNITY", risk="HIDE RISK", action="", confidence=1,
@@ -42,6 +44,17 @@ class NewsChatContextTests(unittest.TestCase):
                     self.assertNotIn("HIDE RISK", visible)
                     self.assertIn("HIDE RISK", published, "User projection changed the published Telegram message")
                     self.assertNotIn("HIDE", str(context_for(published, None)))
+
+    def test_styled_report_keeps_risk_prefixed_summary_and_hidden_title_does_not_leak_insights(self):
+        for blocks in ([{"type": k, "visible": True} for k in ("title", "summary", "opportunity", "risk")],
+                       [{"type": k, "visible": True} for k in ("opportunity", "risk", "summary")]):
+            published = render_analysis_message(headline="Real headline", summary="Risk: a verified factual statement, not an insight block.",
+                business_connection="", opportunity="HIDE OPPORTUNITY", risk="HIDE RISK", action="", confidence=1,
+                source_name="Synthetic", source_url="https://example.invalid", published_at=None, incomplete=False,
+                template_blocks=blocks, output_language="en")
+            visible = reader_report_text(published)
+            self.assertIn("Risk: a verified factual statement", visible)
+            self.assertNotIn("HIDE", visible)
 
     def test_detail_prompts_are_grounded_and_label_inferences(self):
         for intent in ("opportunities", "risks"):
@@ -167,6 +180,41 @@ class NewsChatContextTests(unittest.TestCase):
 
     def test_boolean_usage_does_not_fabricate_token_counts(self):
         self.assertIsNone(providers.cost(spec(),{"input_tokens":True,"output_tokens":False}))
+
+
+class ReaderProjectionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_feed_preserves_literal_markup_without_reinterpreting_it(self):
+        aid = uuid.uuid4()
+        published = 'Headline\nLiteral tag: &lt;img src="https://tracker.invalid/leak" onerror="bad()"&gt; &amp; data'
+        row = {"id": str(uuid.uuid4()), "message_text": published, "source_name": "Source", "created_at": None,
+               "published_at": None, "article_published_at": None, "relevance_score": 1}
+        with patch.object(main_module, "current_reader", new=AsyncMock()), \
+             patch.object(main_module, "reader_assistants", new=AsyncMock()), \
+             patch.object(main_module, "_reader_assistant_is_accessible", return_value=True), \
+             patch.object(main_module, "list_publications", new=AsyncMock(return_value=[row])):
+            response = await main_module.user_api_publications(aid, limit=20, query=None, touch=True, token="synthetic")
+        self.assertEqual(reader_report_text(published), response["publications"][0]["message_text"])
+        self.assertIn('<img', response["publications"][0]["message_text"], "API must preserve literal text, not alter the native plain-text contract")
+
+    async def test_direct_detail_has_the_same_plain_text_projection(self):
+        published = 'Headline\nLiteral &lt;b&gt;quoted code&lt;/b&gt; &amp; data'
+        pid = uuid.uuid4()
+        item = SimpleNamespace(id=pid, assistant_id=uuid.uuid4(), analysis_id=uuid.uuid4(), message_text=published, published_at=service.now())
+        session = AsyncMock()
+        session.scalar.return_value = "Source"
+        manager = AsyncMock()
+        manager.__aenter__.return_value = session
+        with patch.object(main_module, "current_reader", new=AsyncMock()), \
+             patch.object(main_module, "SessionLocal", return_value=manager), \
+             patch.object(service, "publication", new=AsyncMock(return_value=item)):
+            response = await main_module.user_news_detail(pid, token="synthetic")
+        self.assertEqual(reader_report_text(published), response["message_text"])
+
+    async def test_reader_does_not_parse_plain_news_as_html(self):
+        from app.user_ui import USER_HTML
+        source = document_source(USER_HTML)
+        self.assertIn("const plainText=value=>String(value??'')", source)
+        self.assertNotIn("holder.innerHTML=String(value", source)
 
 
 class ProviderContractTests(unittest.IsolatedAsyncioTestCase):

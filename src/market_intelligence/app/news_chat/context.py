@@ -26,11 +26,22 @@ def reader_report_text(text: str) -> str:
     of its wording. Both the legacy combined block and template blocks are
     supported; following source/business sections remain visible.
     """
-    parser = PlainText()
-    parser.feed(text)
-    clean = unescape("".join(parser.parts)).strip()
     headings = {report_copy(lang)[key] for lang in LANGUAGES for key in ("opportunity", "risk", "risks")}
-    heading = re.compile(r"^[^\w]*(?:" + "|".join(re.escape(h) for h in sorted(headings, key=len, reverse=True)) + r")\s*[:：](?:\s|$)", re.I)
+    names = "|".join(re.escape(h) for h in sorted(headings, key=len, reverse=True))
+    # The publisher puts only the generated label inside bold tags, whereas
+    # a headline is bold in its entirety. Filter the actual section before
+    # flattening HTML: order, hidden titles and custom emoji cannot leak it,
+    # and an ordinary summary beginning "Risk: ..." stays a news fact.
+    section = re.compile(r"^[^\n<]*<(?:b|strong)>\s*(?:" + names + r")\s*[:：]\s*</(?:b|strong)>", re.I)
+    rich = bool(re.search(r"</?(?:b|strong)>", text, re.I))
+    blocks = re.split(r"\n\s*\n", text)
+    parser = PlainText()
+    parser.feed("\n\n".join(block for block in blocks if not section.match(block.strip())))
+    clean = unescape("".join(parser.parts)).strip()
+    if rich:
+        return re.sub(r"\n{3,}", "\n\n", clean).strip()
+    # Compatibility for genuinely plain legacy reports without styled labels.
+    heading = re.compile(r"^[^\w]*(?:" + names + r")\s*[:：](?:\s|$)", re.I)
     visible = []
     hiding = False
     for index, line in enumerate(clean.splitlines()):
