@@ -93,10 +93,10 @@ async def start(pid: uuid.UUID, payload: ResearchStart, token: str | None = Cook
                     raise HTTPException(404, "news_unavailable")
                 if existing.deleted_at or svc.window_expired(existing.context):
                     raise HTTPException(410, "conversation_closed")
-                if payload.source_ids or payload.memory_ids or payload.include_business:
+                if payload.source_ids or payload.memory_ids or payload.include_business or payload.revision_ids:
                     from app.reader_research.service import selected_context
                     pub = await svc.publication(s, pid, user)
-                    requested = await selected_context(s, pub, user, payload.source_ids, payload.memory_ids, payload.include_business)
+                    requested = await selected_context(s, pub, user, payload.source_ids, payload.memory_ids, payload.include_business, payload.revision_ids)
                     if requested['version'] != existing.context['version']:
                         raise HTTPException(409, 'idempotency_conflict')
                 return {"id": str(existing.id), "provider": existing.provider, "context": svc.public_context(existing.context)}
@@ -108,9 +108,9 @@ async def start(pid: uuid.UUID, payload: ResearchStart, token: str | None = Cook
         if count >= 500:
             raise HTTPException(429, "quota_exceeded")
         ctx = context_for(pub.message_text, pub.published_at.isoformat() if pub.published_at else None)
-        if payload.source_ids or payload.memory_ids or payload.include_business:
+        if payload.source_ids or payload.memory_ids or payload.include_business or payload.revision_ids:
             from app.reader_research.service import selected_context
-            ctx = await selected_context(s, pub, user, payload.source_ids, payload.memory_ids, payload.include_business)
+            ctx = await selected_context(s, pub, user, payload.source_ids, payload.memory_ids, payload.include_business, payload.revision_ids)
         ctx.update(_ephemeral=True, _session_hash=hashlib.sha256((token or "").encode()).hexdigest(),
                    _expires_at=(svc.now() + timedelta(seconds=svc.WINDOW_LEASE_SECONDS)).isoformat())
         c = ChatConversation(id=payload.conversation_id or uuid.uuid4(), user_id=user.id, assistant_id=pub.assistant_id, publication_id=pid,
@@ -176,7 +176,14 @@ async def save_memory(cid: uuid.UUID, token: str | None = Cookie(None, alias=COO
         if completed is None:
             raise HTTPException(409, "completed_answer_required")
         c.saved_at = c.saved_at or svc.now()
-        c.context = {k: v for k, v in c.context.items() if not k.startswith("_") or k=="_voice_continuous_started_at"}
+        c.context = {k: v for k, v in c.context.items() if not k.startswith("_") or k in {"_voice_continuous_started_at", "_correction_versions"}}
+        from app.reader_tools.corrections import dependency_versions, context_evidence_versions, retain_report_history
+        ids = c.context.get('source_ids') or [str(c.publication_id)]
+        if '_correction_versions' not in c.context:
+            await dependency_versions(s, user, c.assistant_id, ids)
+            await retain_report_history(s, c.context, ids)
+            versions = await context_evidence_versions(s, c.context, ids)
+            c.context = {**c.context, '_correction_versions': versions}
         await s.commit()
         return {"id": str(c.id), "assistant_id": str(c.assistant_id), "saved_at": c.saved_at.isoformat()}
 

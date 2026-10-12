@@ -47,8 +47,8 @@ async def seed():
         await s.flush()
         for u,project in users:
             s.add(AssistantMember(assistant_id=project,user_id=u.id,role=u.role))
-        for n,name in [(7,'research-reader'),(8,'research-peer')]:
-            u=AdminUser(id=uuid.UUID(f'30000000-0000-4000-8000-00000000000{n}'),username=name,email=name+'@gmail.com',display_name=name,role='viewer',active=True,password_hash=password_hash,login_method='both',preferences={'user_portal_access':{'enabled':True},'news_chat_enabled':True})
+        for n,name in [(7,'research-reader'),(8,'research-peer'),(10,'tools-reader'),(11,'tools-peer')]:
+            u=AdminUser(id=uuid.UUID(f'30000000-0000-4000-8000-{n:012d}'),username=name,email=name+'@gmail.com',display_name=name,role='viewer',active=True,password_hash=password_hash,login_method='both',preferences={'user_portal_access':{'enabled':True},'news_chat_enabled':True})
             s.add(u);await s.flush();s.add(AssistantMember(assistant_id=research_project,user_id=u.id,role='viewer'))
         for n,aid,pid,pubstatus in [(1,PROJECT,NEWS,'published'),(2,PRIVATE_PROJECT,PRIVATE_NEWS,'published'),(3,PROJECT,PREVIEW,'preview')]:
             source=Source(assistant_id=aid,source_key=f'T{n:03}',name='Synthetic source',homepage_url='https://synthetic.invalid',fetch_url='https://synthetic.invalid/rss',adapter='rss')
@@ -104,7 +104,23 @@ async def fake_stream(settings, model, messages):
     if messages[-1]['content']=='HANG':
         await asyncio.sleep(60)
     answer='Synthetic answer grounded in the selected report [report-1].'
-    if 'Return a draft action in JSON' in messages[0]['content']:
+    if 'Prepare a meeting brief' in messages[0]['content']:
+        meta=json.loads(messages[-1]['content']);duration=int(meta['duration_minutes']);a=duration//3;b=a;c=duration-a-b
+        answer=f"Duration: {duration} minutes.\nObjective: {meta['objective']}\nAgenda: evidence {a} minutes; key questions {b} minutes; decisions {c} minutes.\nKey question: What independent evidence is missing? [report-0]\nDecision needed: whether to run a small validation experiment.\nAction checklist: confirm evidence before assigning work."
+    elif 'Act as a rigorous constructive critic' in messages[0]['content']:
+        if 'User-selected analysis to critique' not in messages[-1]['content']:
+            raise RuntimeError('Critique lost its explicit target')
+        answer='Assumption: the reported result generalizes. [report-0]\nCounterargument: applicability is uncertain. No contradictory evidence was supplied.\nHypothetical objection: sample selection could change the conclusion.\nEvidence needed: independent replication.\nRevised conclusion: treat the result as provisional.'
+    elif 'Compare the explicitly selected report and captured public-source or published-report revisions' in messages[0]['content']:
+        if 'PUBLIC_CORRECTION_CANARY' not in data:
+            raise RuntimeError('Correction analysis lost its explicitly selected public capture')
+        import re
+        sid=re.search(r'\[(report-\d+)\] \(selected_public_source_revision;',data)
+        if not sid:
+            raise RuntimeError('Public correction citation missing')
+        answer='The source now states a corrected value of 25 ['+sid.group(1)+']. The earlier inference needs review; decisions were not automatically updated. [report-0]'
+    elif 'Return a draft action in JSON' in messages[0]['content']:
+
         answer=json.dumps({'title':'Review battery evidence','description':'Review the selected published evidence [report-1].','assignee':'','due_on':None})
     elif 'Produce a Markdown comparison table' in messages[0]['content']:
         answer='| Claim | Agreement | Differences | Evidence | Unknown |\n| --- | --- | --- | --- | --- |\n| Batteries | Reports concern batteries | Different report dates | [report-0] [report-2] | Independent verification unavailable |'
@@ -126,6 +142,20 @@ async def prepare():
 
 if __name__ == '__main__':
     asyncio.run(prepare())
+    from app.reader_tools import corrections as correction_service
+    from app.article_extraction import ArticleDocument
+    class PublicCorrectionFixture:
+        def __init__(self, settings):
+            if settings.environment!='test':
+                raise RuntimeError('Synthetic correction fixture only')
+        async def fetch(self, **kwargs):
+            if not kwargs['url'].startswith('https://synthetic.invalid/') or kwargs['robots_policy']!='respect':
+                raise RuntimeError('Unexpected correction fixture source')
+            return ArticleDocument(url=kwargs['url'],canonical_url=kwargs['url'],title='Correction: battery study',author=None,
+                published_at=None,language='en',text='PUBLIC_CORRECTION_CANARY: The source corrected the reported figure to 25.',
+                raw_html=None,extraction_status='complete',extraction_method='fixture',quality_score=1,content_hash=None,
+                provenance={'fixture':True})
+    correction_service.ArticleFetcher=PublicCorrectionFixture
     providers.stream=fake_stream
     import uvicorn
     uvicorn.run(app,host='0.0.0.0',port=8010,log_level='warning')

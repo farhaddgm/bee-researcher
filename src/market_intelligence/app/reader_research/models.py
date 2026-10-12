@@ -20,7 +20,7 @@ class ResearchProfile(Base):
 class ResearchRecord(Base):
     __tablename__ = "reader_research_records"
     __table_args__ = (
-        CheckConstraint("kind IN ('topic','watch','action','decision','shared')", name="reader_research_kind"),
+        CheckConstraint("kind IN ('topic','watch','action','decision','shared','meeting')", name="reader_research_kind"),
         CheckConstraint("version > 0", name="reader_research_version"),
         Index("ix_reader_research_page", "assistant_id", "kind", "created_at", "id"),
         Index("ix_reader_research_owner", "user_id", "assistant_id"),
@@ -33,6 +33,8 @@ class ResearchRecord(Base):
     body: Mapped[str] = mapped_column(Text, nullable=False, default="")
     attributes: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     publication_ids: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    source_generation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.news_chat_generations.id", ondelete="SET NULL"))
+    source_versions: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey(f"{SCHEMA}.news_chat_conversations.id", ondelete="SET NULL"))
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

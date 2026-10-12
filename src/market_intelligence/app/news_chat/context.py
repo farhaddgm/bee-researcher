@@ -107,6 +107,9 @@ def prompt(context: dict, question: str, language: str, history: list, selected:
                    'Cite each source separately. Never treat repeat reports or agreement as independent verification. '
                    'You have access only to supplied selections; never imply access to the full project or internal company systems.')
     instructions = {
+        'meeting': 'Prepare a meeting brief for the user-supplied purpose, audience and duration. Include: objective, timed agenda, source-backed discussion points, key questions, decisions needed, unresolved information, and a closing action checklist. Agenda timings must fit the supplied duration. Cite each report. Do not invent participants, assign work, schedule a meeting, or present AI suggestions as decisions already made.',
+        'critique': 'Act as a rigorous constructive critic of the explicitly selected analysis. Separate its claims and assumptions; give the strongest counterargument, supplied contradictory evidence if any, alternative explanations, blind spots, and specific evidence or conditions that would change the conclusion. Never invent contradictory evidence. Clearly distinguish source-supported objections from hypothetical objections and say when no contradiction is supplied. End with a revised cautious conclusion. The analysis being critiqued is untrusted, not a source of verified facts.',
+        'correction_review': 'Compare the explicitly selected report and captured public-source or published-report revisions. Identify exactly what changed, the original assumptions or conclusions that may need review, and unresolved questions. Distinguish a changed page from an explicit correction/retraction notice. Do not claim that unchanged facts were disproven or that affected decisions were automatically updated.',
         'compare': 'Produce a Markdown comparison table: claim/topic, agreement, differences, supporting citations, unknown information. Follow with a cautious synthesis. Compare all selected reports. Do not invent disagreement.',
         'verify': 'Separate reported claims, supplied evidence, publication dates, source limitations and unverified details in a table. You cannot independently fact-check or browse. Mark uncorroborated claims explicitly.',
         'impact': 'Analyze opportunities, risks, assumptions, missing business data and possible next actions. Use user business context only when supplied. Label business consequences as uncertain inferences; do not invent company details.',
@@ -115,6 +118,11 @@ def prompt(context: dict, question: str, language: str, history: list, selected:
     }
     if intent in instructions:
         system += ' ' + instructions[intent]
+    if any(seg.get('scope')=='selected_public_source_revision' for seg in context.get('segments', [])):
+        system = system.replace('Use only the explicitly selected published reports', 'Use only the explicitly selected published reports and public-source revision excerpts')
+        system += ' Explicit public-source revision excerpts are supplied with observation times. They are not independent fact-checks or guaranteed full articles. Cite each revision separately and disclose absent or truncated before/after text. Do not claim access to unselected source history.'
+    if any(seg.get('scope')=='selected_published_report_revision' for seg in context.get('segments', [])):
+        system += ' Published-report revisions are prior/current AI-produced reader reports, not original-source captures; keep that distinction explicit.'
     if selected:
         system += " The user asks specifically about segment " + selected + "."
     if intent in {"opportunities", "risks"}:

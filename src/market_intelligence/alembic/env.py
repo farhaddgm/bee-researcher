@@ -10,6 +10,7 @@ from app.models import Base
 from app.report_portal import models as report_models  # Register additive metadata.
 from app.reader_research import models as reader_research_models  # Register additive metadata.
 from app.news_voice import models as news_voice_models
+from app.reader_tools import models as reader_tools_models
 
 
 config = context.config

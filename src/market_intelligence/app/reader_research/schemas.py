@@ -4,7 +4,7 @@ from uuid import UUID
 from pydantic import Field, field_validator, model_validator
 from app.news_chat.schemas import Strict
 
-Kind = Literal['topic', 'watch', 'action', 'decision', 'shared']
+Kind = Literal['topic', 'watch', 'action', 'decision', 'shared', 'meeting']
 
 
 class Weights(Strict):
@@ -37,6 +37,10 @@ class Profile(Strict):
 
 
 class Attributes(Strict):
+    meeting_kind: Literal['product', 'sales', 'management', 'custom'] = 'product'
+    duration_minutes: int = Field(default=30, ge=10, le=180)
+    objective: str = Field(default='', max_length=1000)
+    meeting_at: datetime | None = None
     term: str = Field(default='', max_length=100)
     entity_type: Literal['company', 'competitor', 'product', 'regulation', 'topic'] = 'topic'
     notifications: Literal['off', 'important', 'all'] = 'important'
@@ -47,7 +51,7 @@ class Attributes(Strict):
     status: Literal['open', 'doing', 'done', 'cancelled', 'active', 'reviewed', 'superseded'] = 'open'
     rationale: str = Field(default='', max_length=3000)
 
-    @field_validator('reviewed_at')
+    @field_validator('reviewed_at', 'meeting_at')
     @classmethod
     def aware(cls, value):
         if value is not None and value.tzinfo is None:
@@ -64,6 +68,7 @@ class Record(Strict):
     attributes: Attributes = Field(default_factory=Attributes)
     publication_ids: list[UUID] = Field(default_factory=list, max_length=5)
     conversation_id: UUID | None = None
+    generation_id: UUID | None = None
 
     @model_validator(mode='after')
     def valid_record(self):
@@ -74,6 +79,6 @@ class Record(Strict):
             raise ValueError('duplicate source')
         if self.kind in {'topic', 'watch'} and not self.attributes.term.strip():
             raise ValueError('tracking term is required')
-        if self.kind == 'shared' and (not self.body.strip() or not self.publication_ids):
+        if self.kind in {'shared', 'meeting'} and (not self.body.strip() or not self.publication_ids):
             raise ValueError('a shared result requires text and published sources')
         return self

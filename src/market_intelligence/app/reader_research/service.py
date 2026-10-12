@@ -91,7 +91,7 @@ def trends(rows):
     return sorted(results, key=lambda r: (-r['distinct_reports'], -len(r['sources']), r['term']))[:20]
 
 
-async def selected_context(s, pub, user, source_ids, memory_ids, include_business):
+async def selected_context(s, pub, user, source_ids, memory_ids, include_business, revision_ids=()):
     """Resolve selections on server; neither browser text nor hidden business data is accepted."""
     sources = source_ids or [pub.id]
     if pub.id not in sources or len(set(sources)) != len(sources):
@@ -113,6 +113,31 @@ async def selected_context(s, pub, user, source_ids, memory_ids, include_busines
             segments.append({'id': 'report-' + str(len(segments)), 'text': seg['text'],
                              'publication_id': str(pid), 'scope': 'published_report',
                              'published_at': (item.published_at or item.created_at).isoformat()})
+    from app.reader_tools.models import NewsMonitor, NewsRevision
+    correction_versions = {}
+    for pid in sources:
+        monitor = await s.get(NewsMonitor, pid)
+        correction_versions[str(pid)] = monitor.version if monitor else 0
+    evidence_versions = {}
+    for pid in sources:
+        matched = await s.scalar(select(func.max(NewsRevision.version)).where(NewsRevision.publication_id == pid, NewsRevision.channel == 'report', NewsRevision.after_hash == source_versions[str(pid)]))
+        evidence_versions[str(pid)] = {'report': matched or 0, 'source': 0, 'report_hash': source_versions[str(pid)]}
+    revision_versions = {}
+    for rid in revision_ids:
+        revision = await s.get(NewsRevision, rid)
+        if revision is None or revision.assistant_id != pub.assistant_id or revision.publication_id not in sources:
+            raise HTTPException(404, 'news_unavailable')
+        revision_versions[str(rid)] = revision.after_hash
+        entry=evidence_versions[str(revision.publication_id)]
+        entry[revision.channel] = max(entry[revision.channel], revision.version)
+        complete = complete and revision.complete
+        for label, value in [('Before', revision.before_text), ('After', revision.after_text)]:
+            if value:
+                segments.append({'id': 'report-' + str(len(segments)),
+                    'text': label + ' (observed ' + revision.created_at.isoformat() + '): ' + value[:6000],
+                    'publication_id': str(revision.publication_id), 'scope': 'selected_public_source_revision' if revision.channel=='source' else 'selected_published_report_revision',
+                    'published_at': revision.created_at.isoformat()})
+                complete = complete and len(value) <= 6000
     memory_versions = {}
     for cid in memory_ids:
         c = await s.scalar(select(ChatConversation).where(ChatConversation.id == cid, ChatConversation.user_id == user.id,
@@ -150,7 +175,8 @@ async def selected_context(s, pub, user, source_ids, memory_ids, include_busines
         segments.append({'id': 'report-' + str(len(segments)), 'text': business, 'scope': 'user_business_context'})
     data = {'scope': 'selected_research', 'complete': complete, 'published_at': None, 'segments': segments,
             'source_ids': [str(v) for v in sources], 'memory_ids': [str(v) for v in memory_ids],
-            'include_business': include_business, 'source_versions': source_versions, 'memory_versions': memory_versions}
+            'include_business': include_business, 'source_versions': source_versions, 'memory_versions': memory_versions,
+            'revision_ids': [str(v) for v in revision_ids], 'revision_versions': revision_versions, 'correction_versions': correction_versions, 'evidence_versions': evidence_versions}
     data['version'] = hashlib.sha256(json.dumps(data, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
     return data
 
@@ -160,6 +186,6 @@ async def validate_context(s, c, pub, user):
         return
     import uuid
     current = await selected_context(s, pub, user, [uuid.UUID(x) for x in c.context['source_ids']],
-        [uuid.UUID(x) for x in c.context['memory_ids']], c.context['include_business'])
+        [uuid.UUID(x) for x in c.context['memory_ids']], c.context['include_business'], [uuid.UUID(x) for x in c.context.get('revision_ids', [])])
     if current['version'] != c.context['version']:
         raise HTTPException(409, 'context_changed')

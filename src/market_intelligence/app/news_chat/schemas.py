@@ -63,10 +63,11 @@ class ResearchStart(Start):
     source_ids: list[UUID] = Field(default_factory=list, max_length=5)
     memory_ids: list[UUID] = Field(default_factory=list, max_length=5)
     include_business: bool = False
+    revision_ids: list[UUID] = Field(default_factory=list, max_length=5)
 
     @model_validator(mode='after')
     def unique_selection(self):
-        if len(set(self.source_ids)) != len(self.source_ids) or len(set(self.memory_ids)) != len(self.memory_ids):
+        if len(set(self.source_ids)) != len(self.source_ids) or len(set(self.memory_ids)) != len(self.memory_ids) or len(set(self.revision_ids)) != len(self.revision_ids):
             raise ValueError('duplicate selection')
         return self
 
@@ -77,8 +78,20 @@ class Question(Start):
     language: Literal["fa", "en", "tr", "ar", "es", "it", "de", "fr"] = "fa"
     context_version: str = Field(min_length=64, max_length=64)
     selected_segment: str | None = Field(default=None, max_length=20, pattern=r"^report-[0-9]+$")
-    intent: Literal["question", "opportunities", "risks", "compare", "verify", "impact", "action_draft", "timeline"] = "question"
+    intent: Literal["question", "opportunities", "risks", "compare", "verify", "impact", "action_draft", "timeline", "critique", "meeting", "correction_review"] = "question"
     voice_session_ids: list[UUID] = Field(default_factory=list, max_length=10)
+    target_generation_id: UUID | None = None
+    analysis_text: str = Field(default='', max_length=6000)
+
+    @model_validator(mode='after')
+    def critique_target(self):
+        if self.intent == 'critique':
+            if bool(self.target_generation_id) == bool(self.analysis_text.strip()):
+                raise ValueError('select an answer or provide analysis text')
+        elif self.target_generation_id or self.analysis_text:
+            raise ValueError('critique target is only accepted for critique')
+        return self
+
 
 
 class Feedback(Strict):
