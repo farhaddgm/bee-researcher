@@ -30,7 +30,7 @@ ROOT = Path(__file__).parent
 
 @router.get("/assets/news-chat/{asset}", include_in_schema=False)
 async def asset(asset: str):
-    types = {"chat.js": "application/javascript", "chat.css": "text/css", "i18n.js": "application/javascript", "admin.js": "application/javascript", "voice.js": "application/javascript", "memory.js": "application/javascript"}
+    types = {"chat.js": "application/javascript", "settings.js": "application/javascript", "chat.css": "text/css", "i18n.js": "application/javascript", "admin.js": "application/javascript", "voice.js": "application/javascript", "memory.js": "application/javascript"}
     if asset not in types:
         raise HTTPException(404)
     return FileResponse(ROOT / asset, media_type=types[asset], headers={"Cache-Control": "no-cache"})

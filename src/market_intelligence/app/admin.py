@@ -52,6 +52,7 @@ from app.fetchers import FetchFailure, SourceFetcher, SourceSpec, validate_conne
 from app.google_auth import GoogleAuthError, GoogleIdentity, is_gmail, normalize_email
 from app.media_discovery import discover_media, normalized_name, publisher_host, publisher_identity
 from app.retention import MIN_RETENTION_DAYS, effective_retention_days
+from app.reader_preferences import ReaderChatDefaults, chat_defaults
 from app.security_controls import CSRF_COOKIE, new_csrf_token
 from app.telegram_delivery import render_analysis_message
 
@@ -714,6 +715,7 @@ class ReaderPreferencesUpdate(BaseModel):
     text_direction: Literal["auto", "ltr", "rtl"] | None = None
     notifications: bool | None = None
     theme: Literal["honey", "default", "dark", "red"] | None = None
+    chat: ReaderChatDefaults | None = None
 
 
 class ReaderAnnotationUpdate(BaseModel):
@@ -1534,6 +1536,7 @@ def _reader_preferences_from_user(user: AdminUser) -> dict[str, object]:
         "text_direction": direction,
         "notifications": bool(raw.get("notifications", False)),
         "theme": theme,
+        "chat": chat_defaults(raw.get("chat")),
     }
 
 

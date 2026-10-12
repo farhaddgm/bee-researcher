@@ -17,10 +17,10 @@ async function login(){await page.goto(base+'/user/login-up');await page.locator
 async function bytes(id){return page.evaluate(async id=>{const r=await fetch('/user/api/voice-audio/'+id+'/download');const a=new Uint8Array(await r.arrayBuffer());return {status:r.status,size:a.length,header:String.fromCharCode(...a.slice(0,4)),hash:Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',a))).map(v=>v.toString(16).padStart(2,'0')).join('')}},id)}
 try{
   for(let i=0;i<60;i++){try{if((await page.request.get(base+'/health')).ok())break}catch(_){}assert(i<59,'Synthetic voice app did not become ready');await page.waitForTimeout(250)}
-  await login();const cap=await api('/user/api/voice/capabilities?assistant_id='+aid);assert.equal(cap.status,200,JSON.stringify(cap.data));assert(cap.data.enabled);
+  await login();assert.equal((await api('/user/api/preferences','PATCH',{chat:{voice_consent:true,retain_voice:true}})).status,200);const cap=await api('/user/api/voice/capabilities?assistant_id='+aid);assert.equal(cap.status,200,JSON.stringify(cap.data));assert(cap.data.enabled);
   await page.locator('.news-card[data-news-id="'+pid+'"] [data-action=open]').click();await page.locator('#newsChat [type=submit]:not([disabled])').waitFor();
-  await page.locator('#newsChat .voice-settings summary').click();await page.locator('#news-chat-voice-consent').check();await page.locator('#news-chat-retain-voice').check();
-  await page.locator('#news-chat-response-mode').selectOption('both');
+  assert.equal(await page.locator('#newsChat .voice-settings').count(),0);
+  await page.locator('#news-chat-response-mode [data-mode=both]').click();
   const startResponse=page.waitForResponse(r=>r.url().endsWith('/voice-sessions')&&r.request().method()==='POST');
   await page.locator('#news-chat-microphone').click();const started=await startResponse;assert.equal(started.status(),201,await started.text());
   await page.waitForFunction(()=>document.querySelector('#news-chat-microphone').getAttribute('aria-pressed')==='true');await page.waitForTimeout(900);await page.locator('#news-chat-microphone').click();
