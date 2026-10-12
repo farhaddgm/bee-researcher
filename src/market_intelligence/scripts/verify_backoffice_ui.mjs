@@ -95,9 +95,9 @@ try{
  }
  await page.locator('#settingsPanel .info-button').last().focus();await page.locator('#beeUiTooltip:not([hidden])').waitFor();
  const readerHelp=await page.locator('#beeUiTooltip').boundingBox();assert(readerHelp.x>=0&&readerHelp.x+readerHelp.width<=320&&readerHelp.y>=0&&readerHelp.y+readerHelp.height<=1000);await page.keyboard.press('Escape');
- assert.equal(await page.locator('#settingsPanel .setting').count(),9);
+ assert.equal(await page.locator('#settingsPanel > .settings-grid > .setting').count(),9);
  await page.locator('#mobileMenuButton').click();await page.locator('#sidebar.open').waitFor();await page.locator('#sidebarOverlay').click({position:{x:310,y:700}});assert.equal(await page.locator('#sidebar.open').count(),0);
  await page.goto(user,{waitUntil:'domcontentloaded'});await page.locator('#app:not(.hidden)').waitFor();await page.waitForTimeout(250);assert(await overflow()<=2);
  assert.equal(errors.length,0,errors.join('\n'));
- console.log('Backoffice UI E2E passed: 8 locales × 4 widths × 12 admin views; buttons, cards, skeleton cleanup, collapse, support, dark fields, empty table, Add dialogs, keyboard/tap tooltips, persistent errors, 9 reader settings, mobile navigation; zero uncaught errors.');
+ console.log('Backoffice UI E2E passed: 8 locales × 4 widths × 12 admin views; buttons, cards, skeleton cleanup, collapse, support, dark fields, empty table, Add dialogs, keyboard/tap tooltips, persistent errors, reader settings with AI/voice defaults, mobile navigation; zero uncaught errors.');
 }finally{await browser.close();}
