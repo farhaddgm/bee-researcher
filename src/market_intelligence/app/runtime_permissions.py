@@ -37,20 +37,21 @@ async def check_runtime_permissions():
                 raise RuntimeError("run the separate migration job before starting this release")
             for table in ("news_chat_policy", "news_chat_conversations", "news_chat_generations", "reader_research_profiles", "reader_research_records",
                           "reader_voice_policy","reader_voice_usage","reader_voice_sessions","reader_voice_audio",
-                          "reader_voice_segments","reader_voice_save_jobs","reader_voice_deletion_outbox"):
+                          "reader_voice_segments","reader_voice_save_jobs","reader_voice_deletion_outbox",
+                          "reader_news_monitors","reader_news_watches","reader_expert_requests"):
                 for permission in ("SELECT", "INSERT", "UPDATE", "DELETE"):
                     if not await connection.scalar(text("SELECT has_table_privilege(current_user, :table, :permission)"),
                             {"table": "market_intelligence." + table, "permission": permission}):
                         raise RuntimeError("web runtime is missing required chat table privileges")
             private_tables = ("report_businesses", "report_project_bindings", "report_business_grants",
                               "internal_reports", "internal_report_versions", "internal_report_jobs")
-            for table in private_tables + ("report_audit_events", "report_deletions"):
-                required = ("SELECT", "INSERT") if table in {"report_audit_events", "report_deletions"} else ("SELECT", "INSERT", "UPDATE", "DELETE")
+            for table in private_tables + ("report_audit_events", "report_deletions", "reader_news_revisions", "reader_expert_replies"):
+                required = ("SELECT", "INSERT") if table in {"report_audit_events", "report_deletions", "reader_news_revisions", "reader_expert_replies"} else ("SELECT", "INSERT", "UPDATE", "DELETE")
                 for permission in required:
                     if not await connection.scalar(text("SELECT has_table_privilege(current_user, :table, :permission)"),
                             {"table": "market_intelligence." + table, "permission": permission}):
                         raise RuntimeError("web runtime is missing required private Report privileges")
-                if table in {"report_audit_events", "report_deletions"}:
+                if table in {"report_audit_events", "report_deletions", "reader_news_revisions", "reader_expert_replies"}:
                     for permission in ("UPDATE", "DELETE", "TRUNCATE"):
                         if await connection.scalar(text("SELECT has_table_privilege(current_user, :table, :permission)"),
                                 {"table": "market_intelligence." + table, "permission": permission}):

@@ -85,7 +85,7 @@ async def conversation(s, cid, user):
 
 
 def public_context(context: dict) -> dict:
-    return {key: context[key] for key in ("version", "scope", "complete", "published_at", "segments", "source_ids", "memory_ids", "include_business") if key in context}
+    return {key: context[key] for key in ("version", "scope", "complete", "published_at", "segments", "source_ids", "memory_ids", "include_business", "revision_ids") if key in context}
 
 
 def window_expired(context: dict) -> bool:
@@ -104,6 +104,7 @@ async def erase_conversation(s, c):
     c.deleted_at, c.context, c.saved_at = now(), {}, None
     for g in (await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == c.id).order_by(ChatGeneration.id).with_for_update())).all():
         g.cancel_requested, g.question, g.answer, g.citations, g.session_hash = True, "", "", [], ""
+        g.usage = {key: value for key, value in g.usage.items() if key not in {'analysis_hash', 'target_generation_id'}}
         if g.status == "queued":
             g.status, g.finished_at, g.actual_usd = "stopped", now(), Decimal(0)
         # Running requests retain their conservative reservation until the
@@ -141,7 +142,7 @@ def view(g):
             "answer": g.answer, "status": g.status, "error_code": g.error_code,
             "provider": g.model["provider"], "model": g.model["label"], "model_key": g.model["provider"] + ":" + g.model["model_id"],
             "citations": g.citations, "feedback": g.feedback, "language": g.language, "created_at": g.created_at.isoformat(),
-            "voice_session_ids":g.usage.get('voice_session_ids',[])}
+            "voice_session_ids":g.usage.get('voice_session_ids',[]), "intent": g.usage.get("intent", "question")}
 
 
 async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict:
@@ -165,13 +166,32 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
             raise HTTPException(409, "new_provider_requires_new_conversation")
         if q.selected_segment and q.selected_segment not in {seg["id"] for seg in c.context["segments"]}:
             raise HTTPException(422, "invalid_selection")
+        prepared_question = q.question
+        analysis_hash = hashlib.sha256(q.analysis_text.encode()).hexdigest() if q.analysis_text else None
+        if q.intent == 'correction_review' and not c.context.get('revision_ids'):
+            raise HTTPException(422, 'revision_required')
+        if q.intent == 'critique':
+            if q.target_generation_id:
+                target = await s.scalar(select(ChatGeneration).where(ChatGeneration.id == q.target_generation_id,
+                    ChatGeneration.conversation_id == cid, ChatGeneration.user_id == user.id,
+                    ChatGeneration.status == 'completed'))
+                if target is None or not target.answer.strip():
+                    raise HTTPException(404, 'news_unavailable')
+                analysis = target.answer
+                if len(analysis) > 6000:
+                    raise HTTPException(422, 'context_too_large')
+            else:
+                analysis = q.analysis_text.strip()
+            prepared_question += '\n\nUser-selected analysis to critique (unverified):\n' + analysis
         # Across all processes: reservation, idempotency and capacity are atomic.
         prior = await s.scalar(select(ChatGeneration).where(ChatGeneration.user_id == user.id, ChatGeneration.idempotency_key == q.idempotency_key))
         if prior:
-            if (prior.conversation_id != cid or prior.question != q.question or prior.model["model_id"] != m.model_id
+            if (prior.conversation_id != cid or prior.question != prepared_question or prior.model["model_id"] != m.model_id
                 or prior.language != q.language or prior.usage.get("selected_segment") != q.selected_segment
                 or prior.usage.get("intent", "question") != q.intent
-                or prior.usage.get('voice_session_ids',[]) != [str(sid) for sid in q.voice_session_ids]):
+                or prior.usage.get('voice_session_ids',[]) != [str(sid) for sid in q.voice_session_ids]
+                or prior.usage.get('target_generation_id') != (str(q.target_generation_id) if q.target_generation_id else None)
+                or prior.usage.get('analysis_hash') != analysis_hash):
                 raise HTTPException(409, "idempotency_conflict")
             return view(prior)
         active = await s.scalar(select(func.count()).select_from(ChatGeneration).where(ChatGeneration.status.in_(ACTIVE))) or 0
@@ -180,7 +200,7 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
             raise HTTPException(429, "chat_busy")
         history = list((await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == cid, ChatGeneration.status == "completed").order_by(ChatGeneration.created_at.desc(), ChatGeneration.id.desc()).limit(20))).all())
         try:
-            messages = prompt(c.context, q.question, q.language, [view(g) for g in reversed(history)], q.selected_segment, m.max_input_chars, q.intent)
+            messages = prompt(c.context, prepared_question, q.language, [view(g) for g in reversed(history)], q.selected_segment, m.max_input_chars, q.intent)
         except ValueError:
             raise HTTPException(422, "context_too_large") from None
         # Conservative upper bound: <= one Unicode scalar per token is not
@@ -209,9 +229,10 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
             raise HTTPException(401, "session_expired")
         deadline = min(session.expires_at, admin._reader_nightly_expiry(session.created_at), session.created_at + timedelta(hours=get_settings().session_absolute_hours), now() + timedelta(seconds=get_settings().news_chat_timeout_seconds))
         g = ChatGeneration(id=uuid.uuid4(), conversation_id=cid, user_id=user.id, assistant_id=c.assistant_id, idempotency_key=q.idempotency_key,
-                           session_hash=session.token_hash, question=q.question, answer="", language=q.language, model=m.model_dump(mode="json"),
+                           session_hash=session.token_hash, question=prepared_question, answer="", language=q.language, model=m.model_dump(mode="json"),
                            citations=[], status="queued", cancel_requested=False, reserved_usd=reserve, usage={"input_bound": input_bound, "selected_segment": q.selected_segment, "intent": q.intent,
-                           "voice_session_ids":[str(sid) for sid in q.voice_session_ids]}, deadline=deadline, created_at=now())
+                           "voice_session_ids":[str(sid) for sid in q.voice_session_ids],
+                           'target_generation_id': str(q.target_generation_id) if q.target_generation_id else None, 'analysis_hash': analysis_hash}, deadline=deadline, created_at=now())
         s.add(g)
         if q.voice_session_ids:
             from app.news_voice.models import VoiceSession

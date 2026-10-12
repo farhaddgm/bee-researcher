@@ -455,6 +455,8 @@ async def lifespan(_: FastAPI):
     from app.contenter import connection_status, sync_loop
     if connection_status(settings)["configured"]:
         tasks.append(asyncio.create_task(sync_loop(settings, stop)))
+    from app.reader_tools.corrections import worker as correction_worker
+    tasks.append(asyncio.create_task(correction_worker(stop)))
     if settings.scheduler_enabled:
         tasks.append(asyncio.create_task(scheduler_loop(settings, stop)))
     if settings.telegram_ready and settings.telegram_polling_enabled:
@@ -1054,6 +1056,8 @@ from app.news_voice.api import router as news_voice_router
 app.include_router(news_voice_router)
 from app.reader_research.api import router as reader_research_router
 app.include_router(reader_research_router)
+from app.reader_tools.api import router as reader_tools_router
+app.include_router(reader_tools_router)
 from app.report_portal.api import router as report_router
 app.include_router(report_router)
 

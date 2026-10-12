@@ -86,7 +86,7 @@
       const actions=node('div',undefined,'chat-actions');
       for(const cite of row.citations||[]){const b=node('button',cite.segment_id,'chat-citation');b.type='button';b.title=cite.quote;b.addEventListener('click',()=>jump(cite));actions.append(b)}
       if(row.answer&&!['queued','running'].includes(row.status)){
-        if(row.status==='completed'){const play=btn('playAnswer',()=>readAnswer(row));play.disabled=!voice?.canSpeak(row.language||language.value);actions.append(play);actions.append(btn('actions',()=>window.dispatchEvent(new CustomEvent('bee:action-draft',{detail:{title:$('dialogTitle')?.textContent||'',text:row.answer,publication_id:pid,assistant_id:reader.current().assistantId,conversation_id:savedAt?cid:null}}))))}
+        if(row.status==='completed'){const play=btn('playAnswer',()=>readAnswer(row));play.disabled=!voice?.canSpeak(row.language||language.value);actions.append(play);actions.append(btn('critiqueAnswer',()=>{if(sendButton.disabled)return;composer.value=t('critiquePrompt');send(null,'critique',row.id)}));actions.append(btn('expertInbox',()=>window.dispatchEvent(new CustomEvent('bee:reader-tools',{detail:{feature:'expertInbox',title:$('dialogTitle')?.textContent||'',text:row.answer,question:row.question,publication_id:pid,assistant_id:reader.current().assistantId}}))));actions.append(btn('actions',()=>window.dispatchEvent(new CustomEvent('bee:action-draft',{detail:{title:$('dialogTitle')?.textContent||'',text:row.answer,publication_id:pid,assistant_id:reader.current().assistantId,conversation_id:savedAt?cid:null}}))))}
         actions.append(btn('copy',async()=>{try{await navigator.clipboard.writeText(row.answer);setStatus('saved')}catch(e){fail(e)}}),btn('note',async()=>{const generation=seq,origin=[t('model')+': '+providerNames[row.provider]+' · '+row.model,t('news')+': '+location.origin+'/user/news/'+pid];if(row.citations?.length)origin.push(t('references')+': '+row.citations.map(c=>c.segment_id+' — '+c.quote).join('\n'));if(await reader.appendNote(row.answer+'\n\n'+origin.join('\n'))){if(generation===seq)setStatus('saved')}else if(generation===seq)fail({})}));
         for(const [key,value] of [['useful',1],['unhelpful',-1]]){const b=btn(key,async()=>{const generation=seq;try{await api('/user/api/chat-messages/'+row.id+'/feedback',{method:'POST',body:JSON.stringify({value})});if(generation!==seq)return;row.feedback=value;render()}catch(e){if(generation===seq)fail(e)}});b.setAttribute('aria-pressed',String(row.feedback===value));actions.append(b)}
       }
@@ -106,10 +106,10 @@
     stream.addEventListener('access_denied',()=>{stream.close();if(generation===seq)fail({status:401})});
     stream.onerror=()=>{if(generation===seq)fail({});/* Reconnect may GET, but never repeat a paid POST. */};
   }
-  async function send(event,intent='question'){
+  async function send(event,intent='question',targetGeneration=null){
     event?.preventDefault();if(pending||active||!ready||!composer.value.trim()||!context||!currentModel())return;
     const generation=seq,news=pid,question=composer.value.trim(),key=model.value;pending=true;stopVoice();clearError();controls();
-    const signature=[pid,context.version,key,language.value,intent,question].join('\u0000');
+    const signature=[pid,context.version,key,language.value,intent,question,targetGeneration].join('\u0000');
     if(composer.dataset.signature!==signature){composer.dataset.signature=signature;composer.dataset.key=requestKey()}
     const idempotencyKey=composer.dataset.key;
     try{
@@ -119,7 +119,7 @@
       const c=await api('/user/api/publications/'+news+'/conversations',{method:'POST',body:JSON.stringify({model_key:key,conversation_id:id})});
       if(generation!==seq){api('/user/api/publications/'+news+'/conversations/'+id+'/close',{method:'POST',body:'{}',keepalive:true}).catch(()=>{});return}
       if(c.context.version!==context.version)throw {message:'context_changed'};
-      const row=await api('/user/api/conversations/'+id+'/messages',{method:'POST',body:JSON.stringify({question,model_key:key,language:language.value,context_version:context.version,intent,idempotency_key:idempotencyKey,voice_session_ids:recordedInputs})});
+      const row=await api('/user/api/conversations/'+id+'/messages',{method:'POST',body:JSON.stringify({question,model_key:key,language:language.value,context_version:context.version,intent,idempotency_key:idempotencyKey,voice_session_ids:recordedInputs,...(intent==='critique'?{target_generation_id:targetGeneration}:{})})});
       if(generation!==seq)return;
       recordedInputs=[];if(!rows.some(r=>r.id===row.id))rows.push(row);active=['queued','running'].includes(row.status)?row.id:null;composer.value='';delete composer.dataset.signature;setStatus(row.status);render();if(active)watch(active,generation);else autoRead(row);
     }catch(e){if(generation===seq)fail(e)}finally{if(generation===seq){pending=false;controls()}}
@@ -144,6 +144,8 @@
     const modeLabel=node('span',t('responseMode'),'chat-mode-label');modeLabel.dataset.chatKey='responseMode';root.append(modeLabel,responseMode);setResponseMode('text');
     summaryBox=node('div',undefined,'chat-summary chat-suggestions news-insight-actions');summaryBox.id='newsChatSummary';insights=summaryBox;
     for(const key of ['summary','opportunities','risks','terms','implications','missing']){const b=btn(key,()=>{if(sendButton.disabled)return;layout.dataset.mobileTab='chat';syncTabs();composer.value=t(['opportunities','risks'].includes(key)?key+'Prompt':key);if(['opportunities','risks'].includes(key))send(null,key);composer.focus()});if(['opportunities','risks'].includes(key))b.dataset.insight=key;summaryBox.append(b)}root.append(summaryBox);
+    const newTools=node('div',undefined,'reader-tools-news-actions');for(const feature of ['meetings','expertInbox','corrections']){const b=btn(feature,()=>window.dispatchEvent(new CustomEvent('bee:reader-tools',{detail:{feature,title:$('dialogTitle')?.textContent||'',publication_id:pid,assistant_id:reader.current().assistantId}})));b.dataset.readerTool=feature;newTools.append(b)}root.append(newTools);
+
     status=node('p',t('loading'),'chat-status');status.setAttribute('role','status');root.append(status);
     messages=node('div',undefined,'chat-messages');messages.setAttribute('role','log');messages.setAttribute('aria-label',t('chat'));messages.setAttribute('aria-live','off');root.append(messages);
     const form=node('form',undefined,'chat-composer');composer=node('textarea');composer.id='news-chat-question';composer.maxLength=4000;composer.rows=3;composer.dir='auto';form.append(field('ask',composer));

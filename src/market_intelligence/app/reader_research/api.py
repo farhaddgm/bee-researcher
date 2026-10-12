@@ -134,7 +134,13 @@ async def records(aid: uuid.UUID, kind: Kind, before: uuid.UUID | None = None, t
         # ensures revoked rows cannot trap navigation on the same page.
         rows = list((await s.scalars(query.order_by(ResearchRecord.created_at.desc(), ResearchRecord.id.desc()).limit(51))).all())
         page = rows[:50]
-        visible = [record_view(r, user) for r in page if await sources_visible(s, aid, r.publication_ids)]
+        from app.reader_tools.corrections import stale_sources
+        visible = []
+        for r in page:
+            if await sources_visible(s, aid, r.publication_ids):
+                view = record_view(r, user)
+                view['changed_sources'] = await stale_sources(s, aid, r.publication_ids, r.source_versions, r.created_at)
+                visible.append(view)
         return {'records': visible, 'older_before': str(page[-1].id) if len(rows) > 50 else None}
 
 
@@ -159,6 +165,22 @@ async def write_record(aid, payload, token, rid):
             c = await chat.conversation(s, payload.conversation_id, user)
             if c.assistant_id != aid or not c.saved_at:
                 raise HTTPException(404, 'news_unavailable')
+        evidence = None
+        generated_context = None
+        if payload.generation_id:
+            g = await s.scalar(select(ChatGeneration).where(ChatGeneration.id == payload.generation_id,
+                ChatGeneration.user_id == user.id, ChatGeneration.assistant_id == aid, ChatGeneration.status == 'completed'))
+            if g is None or not g.conversation_id:
+                raise HTTPException(404, 'news_unavailable')
+            generated = await s.get(ChatConversation, g.conversation_id)
+            if generated is None:
+                raise HTTPException(404, 'news_unavailable')
+            generated_ids = generated.context.get('source_ids') or [str(generated.publication_id)]
+            if generated.deleted_at or set(generated_ids) != set(ids):
+                raise HTTPException(404, 'news_unavailable')
+            from app.reader_tools.corrections import context_evidence_versions
+            evidence = await context_evidence_versions(s, generated.context, ids)
+            generated_context = generated.context
         row = await s.get(ResearchRecord, rid or payload.id or uuid.uuid4(), with_for_update=True)
         if row:
             if row.user_id != user.id or row.assistant_id != aid:
@@ -166,7 +188,7 @@ async def write_record(aid, payload, token, rid):
             if rid is None:
                 equal = (row.kind == payload.kind and row.title == payload.title and row.body == payload.body
                          and row.attributes == payload.attributes.model_dump(mode='json') and row.publication_ids == ids
-                         and row.conversation_id == payload.conversation_id)
+                         and row.conversation_id == payload.conversation_id and row.source_generation_id == payload.generation_id)
                 if not equal:
                     raise HTTPException(409, 'idempotency_conflict')
                 return record_view(row, user)
@@ -179,11 +201,21 @@ async def write_record(aid, payload, token, rid):
             if count >= 400:
                 raise HTTPException(429, 'quota_exceeded')
             row = ResearchRecord(id=payload.id or uuid.uuid4(), user_id=user.id, assistant_id=aid, kind=payload.kind, version=0)
-            s.add(row)
+        from app.reader_tools.corrections import dependency_versions
+        await dependency_versions(s, user, aid, ids)
+        if generated_context:
+            from app.reader_tools.corrections import retain_report_history
+            await retain_report_history(s, generated_context, ids)
+        prior_ids = row.publication_ids or []
+        prior_versions = row.source_versions or {}
+        row.source_versions = evidence if evidence is not None else {pid: prior_versions.get(pid, 0) if pid in prior_ids else 0 for pid in ids}
+        if payload.generation_id:
+            row.source_generation_id = payload.generation_id
         row.title, row.body = payload.title, payload.body
         row.attributes, row.publication_ids, row.conversation_id = payload.attributes.model_dump(mode='json'), ids, payload.conversation_id
         row.version += 1
         row.updated_at = chat.now()
+        s.add(row)
         await s.commit()
         return record_view(row, user)
 
