@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from sqlalchemy import delete, func, select, text
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.answer_length import AnswerLength
 from app.config import get_settings
 from app.database import SessionLocal, engine
 from app.models import AdminSession, AdminUser, AssistantMember, Publication
@@ -124,7 +125,7 @@ async def main():
         async with SessionLocal() as s:
             c=await s.get(ChatConversation,cid)
             spec=(await chat.policy(s)).models[0]
-            messages=prompt(c.context,q.question,q.language,[],None,spec.max_input_chars,q.intent)
+            messages=prompt(c.context,q.question,q.language,[],None,spec.max_input_chars,q.intent,AnswerLength())
             bound=sum(len(m['content'].encode())+100 for m in messages)
             counts=(await service.counters(s,aid,uid,chat.now()))['total']
         await save(aid,uid,Limits(total=counts['actual_tokens']+counts['reserved_tokens']+bound+250))
