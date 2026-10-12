@@ -334,8 +334,7 @@ class NewsChatHttpContracts(unittest.TestCase):
     def test_guidance_is_in_heading_tooltip_and_insights_are_explicit_requests(self):
         source=self.client.get('/assets/news-chat/chat.js').text
         self.assertIn("tip.append(node('span',t('daily')+': '+daily))",source)
-        self.assertIn("for(const intent of ['opportunities','risks'])",source)
-        self.assertIn('send(null,intent)',source)
+        self.assertIn("if(['opportunities','risks'].includes(key))send(null,key)",source)
         catalog=self.client.get('/assets/news-chat/i18n.js').text
         self.assertNotIn('Ask about this news. History is private to you.',catalog)
 

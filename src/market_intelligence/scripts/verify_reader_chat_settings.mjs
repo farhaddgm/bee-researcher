@@ -1,0 +1,46 @@
+/* Real saved account defaults and responsive reading; no generation calls. */
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright';
+import AxeBuilder from '@axe-core/playwright';
+const base=process.env.BEE_CHAT_TEST_URL;
+if(process.env.MARKET_INTELLIGENCE_ENVIRONMENT!=='test'||!base||new URL(base).hostname!=='127.0.0.1')throw Error('Isolated synthetic app required');
+const aid='10000000-0000-4000-8000-000000000001';
+const browser=await chromium.launch({headless:true}),context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage(),errors=[];
+page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());let generations=0;
+page.on('request',r=>{if(r.method()==='POST'&&/\/(messages|voice-sessions)$/.test(new URL(r.url()).pathname))generations++});
+async function api(path,method='GET',body){return page.evaluate(async({path,method,body})=>{const csrf=document.cookie.split('; ').find(c=>c.startsWith('research_bee_user_csrf='))?.split('=').slice(1).join('=');const r=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(csrf||'')},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()}},{path,method,body})}
+async function login(target,username){await target.goto(base+'/user/login-up');await target.locator('#username').fill(username);await target.locator('#password').fill('synthetic violet herons cross mountain lakes');await target.locator('#loginButton').click();await target.locator('#app:not(.hidden)').waitFor()}
+async function open(){await page.locator('.news-card [data-action=open]').first().click();await page.locator('#newsChat [type=submit]:not([disabled])').waitFor()}
+async function save(){const response=page.waitForResponse(r=>r.url().endsWith('/user/api/preferences')&&r.request().method()==='PATCH');await page.locator('#saveSettingsButton').click();assert.equal((await response).status(),200);await page.locator('#saveSettingsButton:not([disabled])').waitFor()}
+try{
+  for(let n=0;n<60;n++){try{if((await page.request.get(base+'/health')).ok())break}catch(_){}assert(n<59,'Synthetic app did not become ready');await page.waitForTimeout(250)}
+  await login(page,'chat-reader');const original=(await api('/user/api/preferences')).data;
+  const available=(await api('/user/api/chat/models?assistant_id='+aid)).data.models,preferred=available.find(m=>m.provider==='anthropic');assert(preferred);
+  await page.goto(base+'/user/settings');await page.locator('#readerChatSettings').waitFor();await page.waitForFunction(()=>[...document.querySelector('#news-chat-model-key').options].length>1);
+  await page.locator('#news-chat-provider').selectOption('anthropic');await page.locator('#news-chat-model-key').selectOption(preferred.key);await page.locator('#news-chat-language').selectOption('en');await page.locator('#news-chat-voice-consent').check();await page.locator('#news-chat-retain-voice').check();await page.locator('#news-chat-voice-terms').fill('Battery, بازار');await save();
+  const stored=(await api('/user/api/preferences')).data;assert.equal(stored.chat.provider,'anthropic');assert.equal(stored.chat.model_key,preferred.key);assert.equal(stored.chat.language,'en');assert.equal(stored.chat.retain_voice,true);assert.equal(stored.chat.voice_terms,'Battery, بازار');assert.equal(stored.columns,original.columns);
+  await page.reload();await page.waitForFunction(()=>document.querySelector('#news-chat-provider').value==='anthropic');assert.equal(await page.locator('#news-chat-voice-terms').inputValue(),'Battery, بازار');assert(await page.locator('#news-chat-retain-voice').isChecked());
+  const otherContext=await browser.newContext(),other=await otherContext.newPage();await login(other,'chat-other');const otherPreferences=await other.evaluate(async()=>{const r=await fetch('/user/api/preferences');return r.json()});assert.equal(otherPreferences.chat.provider,'openai');assert.equal(otherPreferences.chat.voice_consent,false);assert.equal(otherPreferences.chat.voice_terms,'');await otherContext.close();
+  const settingsA11y=await new AxeBuilder({page}).include('#readerChatSettings').withTags(['wcag2a','wcag2aa','wcag21aa']).analyze();assert.deepEqual(settingsA11y.violations.filter(v=>['critical','serious'].includes(v.impact)).map(v=>v.id),[]);
+  if(process.env.BEE_CHAT_ARTIFACT_DIR)await page.screenshot({path:process.env.BEE_CHAT_ARTIFACT_DIR+'/reader-chat-settings-en.png',fullPage:true});
+  await page.goto(base+'/user');await page.locator('#assistantSelect').selectOption(aid);await open();
+  assert.equal(await page.locator('.chat-answer-options').evaluate(n=>n.open),false);assert.equal(await page.locator('#newsChat .chat-controls select').nth(0).inputValue(),'anthropic');assert.equal(await page.locator('#newsChat .chat-controls select').nth(1).inputValue(),preferred.key);assert.equal(await page.locator('#newsChat .chat-controls select').nth(2).inputValue(),'en');
+  assert.equal(await page.locator('.chat-empty').count(),0);assert.equal(await page.locator('#newsChat .voice-settings').count(),0);assert.equal(await page.locator('#news-chat-response-mode select').count(),0);assert.equal(await page.locator('#newsChatSummary button').count(),6);
+  assert(await page.locator('.deep-reading-layout').evaluate(n=>n.querySelector('.reading-tools')!==null));assert(await page.locator('#dialogBody').evaluate(n=>Boolean(n.compareDocumentPosition(document.querySelector('.reading-tools'))&Node.DOCUMENT_POSITION_FOLLOWING)));
+  for(const locale of ['fa','en','tr','ar','es','it','de','fr'])for(const width of [1440,900,390,320]){
+    await page.setViewportSize({width,height:1000});await page.evaluate(locale=>{document.documentElement.lang=locale;document.documentElement.dir=['fa','ar'].includes(locale)?'rtl':'ltr'},locale);
+    if(width<=900)await page.locator('.chat-tabs [data-tab=chat]').click();
+    assert(await page.locator('#newsDialog').evaluate(n=>n.scrollWidth<=n.clientWidth+2),'News overflow '+locale+'/'+width);
+    assert(await page.locator('#news-chat-response-mode').isVisible());assert.equal(await page.locator('.chat-answer-options').evaluate(n=>n.open),false);
+    if(width>900){const article=await page.locator('.deep-reading-layout').boundingBox(),chat=await page.locator('#newsChat').boundingBox();assert(Math.abs(article.y-chat.y)<10,'Chat is below news instead of beside it');assert(locale==='fa'||locale==='ar'?chat.x+chat.width<=article.x+2:article.x+article.width<=chat.x+2,'Desktop columns overlap')}
+    if(process.env.BEE_CHAT_ARTIFACT_DIR&&['en','fa'].includes(locale)&&[1440,390].includes(width)){await page.locator('#newsChat').evaluate(n=>n.scrollTop=0);await page.screenshot({path:process.env.BEE_CHAT_ARTIFACT_DIR+'/reader-sidebar-'+locale+'-'+width+'.png'});}
+    if(width<=900){await page.locator('.chat-tabs [data-tab=news]').click();assert(await page.locator('.reading-tools').isVisible())}
+  }
+  await page.setViewportSize({width:1440,height:1000});await page.evaluate(()=>{document.documentElement.lang='en';document.documentElement.dir='ltr'});
+  await page.locator('.reading-tools-head .chat-info').focus();await page.locator('#readingPrivacy').waitFor({state:'visible'});assert((await page.locator('#readingPrivacy').innerText()).includes('private'));
+  const chatA11y=await new AxeBuilder({page}).include('#newsDialog').withTags(['wcag2a','wcag2aa','wcag21aa']).analyze();assert.deepEqual(chatA11y.violations.filter(v=>['critical','serious'].includes(v.impact)).map(v=>v.id),[],JSON.stringify(chatA11y.violations.filter(v=>['critical','serious'].includes(v.impact)).map(v=>({id:v.id,nodes:v.nodes.map(n=>({target:n.target,summary:n.failureSummary}))}))));
+  await page.locator('#news-chat-response-mode [data-mode=text]').focus();await page.keyboard.press('End');assert.equal(await page.locator('#news-chat-response-mode [data-mode=both]').getAttribute('aria-checked'),'true');await page.keyboard.press('Home');assert.equal(await page.locator('#news-chat-response-mode [data-mode=text]').getAttribute('aria-checked'),'true');
+  await page.locator('.chat-answer-options summary').click();await page.locator('#newsChat .chat-controls select').nth(0).selectOption('google');await page.locator('#newsChat .chat-controls select').nth(2).selectOption('fa');await page.locator('#closeDialog').click();await open();assert.equal(await page.locator('.chat-answer-options').evaluate(n=>n.open),false);assert.equal(await page.locator('#newsChat .chat-controls select').nth(0).inputValue(),'anthropic');assert.equal(await page.locator('#newsChat .chat-controls select').nth(2).inputValue(),'en');assert.deepEqual((await api('/user/api/preferences')).data.chat,stored.chat);
+  await page.locator('#closeDialog').click();assert.equal((await api('/user/api/preferences','PATCH',original)).status,200);assert.equal(generations,0,'Settings or opening news initiated provider work');assert.deepEqual(errors,[]);
+  console.log('Saved account defaults, isolation, temporary overrides, notes tooltip, response radios and eight-language desktop/mobile layout passed.');
+}finally{await context.close();await browser.close()}
