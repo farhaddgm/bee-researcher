@@ -151,6 +151,16 @@ def main():
             run('stop','--time','30',names['startup'],capture=True)
             print('Actual production startup CMD passed with restricted PostgreSQL/Redis identities, OAuth prerequisites and the packaged schema.')
             run('run','-d','--name',names['app'],'--entrypoint','python',*common,args.image,'scripts/news_chat_fixture.py',capture=True);containers.append(names['app'])
+            # Wait for the seeded HTTP fixture itself, not incidental delay
+            # from the first browser script. This also makes focused diagnosis
+            # deterministic without relaxing any required acceptance gate.
+            for attempt in range(120):
+                ready=subprocess.run(['docker','exec',names['app'],'python','-c',
+                    "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/health',timeout=2)"],
+                    capture_output=True,timeout=5)
+                if ready.returncode==0:break
+                if attempt==119:raise RuntimeError('Synthetic chat HTTP fixture did not become ready')
+                time.sleep(.5)
             artifacts=[]
             if args.artifacts:
                 output=args.artifacts.resolve();output.mkdir(parents=True,exist_ok=True)
