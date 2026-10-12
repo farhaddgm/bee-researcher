@@ -235,13 +235,13 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         return Settings(postgres_db="test", postgres_user="test", postgres_password="test", redis_password="test",
                         openai_api_key=SecretStr("synthetic-secret"),news_chat_anthropic_key=SecretStr("synthetic-secret"),news_chat_google_key=SecretStr("synthetic-secret"),_env_file=None)
 
-    async def run_fixture(self, provider, events, status=200):
+    async def run_fixture(self, provider, events, status=200, response_schema=None):
         requests=[]
         def respond(request):
             requests.append(request)
             data="\n\n".join("data: "+json.dumps(e) for e in events)+"\n\n"
             return httpx.Response(status, text=data, headers={"content-type":"text/event-stream"})
-        result=[x async for x in providers.stream(self.settings(),spec(provider),[{"role":"system","content":"Rules"},{"role":"user","content":"Question"}],transport=httpx.MockTransport(respond))]
+        result=[x async for x in providers.stream(self.settings(),spec(provider),[{"role":"system","content":"Rules"},{"role":"user","content":"Question"}],transport=httpx.MockTransport(respond),response_schema=response_schema)]
         return result,requests
 
     async def test_openai_native_stream_usage_store_false(self):
@@ -251,6 +251,19 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(body["store"]);self.assertTrue(body["stream"]);self.assertNotIn("tools",body)
         self.assertEqual("api.openai.com",requests[0].url.host)
         self.assertEqual(10,result[-1]["usage"]["input_tokens"])
+
+    async def test_openai_lens_schema_is_explicit_and_no_tools_or_storage(self):
+        schema = {'type':'object','properties':{},'additionalProperties':False,'required':[]}
+        _, requests = await self.run_fixture('openai', [{'type':'response.completed','response':{'usage':{'input_tokens':10,'output_tokens':5}}}], response_schema=schema)
+        body = json.loads(requests[0].content)
+        self.assertEqual({'type':'json_schema','name':'news_analysis','schema':schema,'strict':True},body['text']['format'])
+        self.assertFalse(body['store'])
+        self.assertNotIn('tools',body)
+
+    async def test_openai_output_limit_is_distinct_from_generic_failure(self):
+        with self.assertRaises(providers.ProviderError) as failure:
+            await self.run_fixture('openai',[{'type':'response.incomplete','response':{'incomplete_details':{'reason':'max_output_tokens'}}}])
+        self.assertEqual('provider_output_limit',failure.exception.code)
 
     async def test_claude_native_stream_and_cache_surcharge(self):
         result,requests=await self.run_fixture("anthropic",[{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_creation_input_tokens":2}}},{"type":"content_block_delta","delta":{"type":"text_delta","text":"Answer"}},{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}},{"type":"message_stop"}])

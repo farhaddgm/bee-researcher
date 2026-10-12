@@ -54,6 +54,10 @@ async def seed():
         for n,name,grant in [(12,'quota-reader',True),(13,'quota-no-grant',False),(14,'length-reader',True)]:
             u=AdminUser(id=uuid.UUID(f'30000000-0000-4000-8000-{n:012d}'),username=name,email=name+'@gmail.com',display_name=name,role='viewer',active=True,password_hash=password_hash,login_method='both',preferences={'user_portal_access':{'enabled':True},'news_chat_enabled':grant})
             s.add(u);await s.flush();s.add(AssistantMember(assistant_id=PROJECT,user_id=u.id,role='viewer'))
+        lens_project=uuid.UUID('10000000-0000-4000-8000-000000000004')
+        s.add(AssistantWorkspace(id=lens_project,name='Synthetic lens workspace',slug='synthetic-lenses',business_name='',status='active',config={}))
+        lens_user=AdminUser(id=uuid.UUID('30000000-0000-4000-8000-000000000015'),username='lens-reader',email='lens-reader@gmail.com',display_name='lens-reader',role='viewer',active=True,password_hash=password_hash,login_method='both',preferences={'user_portal_access':{'enabled':True},'news_chat_enabled':True})
+        s.add(lens_user);await s.flush();s.add(AssistantMember(assistant_id=lens_project,user_id=lens_user.id,role='viewer'))
         for n,aid,pid,pubstatus in [(1,PROJECT,NEWS,'published'),(2,PRIVATE_PROJECT,PRIVATE_NEWS,'published'),(3,PROJECT,PREVIEW,'preview')]:
             source=Source(assistant_id=aid,source_key=f'T{n:03}',name='Synthetic source',homepage_url='https://synthetic.invalid',fetch_url='https://synthetic.invalid/rss',adapter='rss')
             s.add(source);await s.flush()
@@ -73,6 +77,14 @@ async def seed():
             analysis=ArticleAnalysis(assistant_id=research_project,article_id=article.id,status='succeeded',headline=item.title,news_summary='Internal hidden summary',business_connection='INTERNAL BUSINESS SECRET',opportunity='',risk='',suggested_action='',time_horizon='short',confidence=1,model='fixture');s.add(analysis);await s.flush()
             text='Battery research '+str(1 if n==8 else n)+'\nPublished battery report evidence '+str(1 if n==8 else n)+'.'
             s.add(Publication(id=pid,assistant_id=research_project,analysis_id=analysis.id,idempotency_key=str(pid),status='published',message_text=text,published_at=datetime.now(timezone.utc)-timedelta(hours=n if n<7 else n*24)))
+        for n in range(1,7):
+            pid=uuid.UUID(f'60000000-0000-4000-8000-{n:012d}')
+            source=Source(assistant_id=lens_project,source_key=f'L{n:03}',name='Synthetic lens source '+str(n),homepage_url='https://synthetic.invalid',fetch_url='https://synthetic.invalid/lens/'+str(n),adapter='rss');s.add(source);await s.flush()
+            item=SourceItem(assistant_id=lens_project,source_id=source.id,fingerprint=str(pid),title='OpenAI speech recognition '+str(n),url='https://synthetic.invalid/lens/'+str(n));s.add(item);await s.flush()
+            article=NormalizedArticle(assistant_id=lens_project,source_item_id=item.id,canonical_url=item.url,title=item.title,normalized_text='INTERNAL FULL ORIGINAL NEVER SENT',extraction_status='complete',extraction_method='fixture');s.add(article);await s.flush()
+            analysis=ArticleAnalysis(assistant_id=lens_project,article_id=article.id,status='succeeded',headline=item.title,news_summary='Hidden internal fixture',business_connection='',opportunity='',risk='',suggested_action='',time_horizon='short',confidence=1,model='fixture');s.add(analysis);await s.flush()
+            message=('اوپن‌ای‌آی تشخیص گفتار چندزبانه را معرفی کرد.\nگزارش آزمایشی منتشرشده.' if n==2 else f'OpenAI speech recognition report {n}\nPublished evidence about a multilingual speech product.')
+            s.add(Publication(id=pid,assistant_id=lens_project,analysis_id=analysis.id,idempotency_key=str(pid),status='published',message_text=message,published_at=datetime.now(timezone.utc)-timedelta(minutes=n)))
         models=[ModelSpec(provider=p,model_id='fixture-v1',label=p+' fixture model',input_usd='1',output_usd='3',enabled=True,verified=True,price_reference='Synthetic test price, 2026-10-09') for p in ('openai','anthropic','google')]
         policy=Policy(enabled=True,models=models)
         row=await s.get(ChatPolicy,1);row.config=policy.model_dump(mode='json')
@@ -84,7 +96,7 @@ async def seed():
         await s.commit()
 
 
-async def fake_stream(settings, model, messages):
+async def fake_stream(settings, model, messages, *, response_schema=None):
     # Deliberately check the real server's prompt boundary, not a mock HTTP UI.
     data='\n'.join(m['content'] for m in messages)
     if 'INTERNAL BUSINESS SECRET' in data or 'INTERNAL FULL ORIGINAL' in data:
@@ -107,6 +119,28 @@ async def fake_stream(settings, model, messages):
         raise providers.ProviderError('provider_failed')
     if messages[-1]['content']=='HANG':
         await asyncio.sleep(60)
+    if 'Return ONLY a valid JSON object' in messages[0]['content']:
+        import re
+        lens=json.JSONDecoder().raw_decode(messages[0]['content'].split('LENS DATA: ',1)[1])[0]
+        language=re.search(r'Reply in ([a-z]{2})',messages[0]['content']).group(1)
+        phrases={'fa':['جمع‌بندی آزمایشی','گزارش انتخاب‌شده','تحلیل آزمایشی این بُعد','شواهد برای نتیجه‌گیری قطعی کافی نیست.'],
+            'en':['Synthetic summary','Selected report','Synthetic dimension','Evidence is insufficient for a definitive conclusion.'],
+            'tr':['Sentetik özet','Seçilen haber','Sentetik boyut','Kesin bir sonuç için kanıt yetersiz.'],
+            'ar':['ملخص تجريبي','الخبر المختار','بُعد تجريبي','الأدلة لا تكفي لاستنتاج قطعي.'],
+            'es':['Resumen sintético','Noticia seleccionada','Dimensión sintética','Las pruebas no permiten una conclusión definitiva.'],
+            'it':['Sintesi di prova','Notizia selezionata','Dimensione di prova','Le prove non bastano per una conclusione definitiva.'],
+            'de':['Testzusammenfassung','Ausgewählte Nachricht','Testdimension','Die Belege reichen nicht für eine endgültige Schlussfolgerung.'],
+            'fr':['Synthèse de test','Actualité sélectionnée','Dimension de test','Les preuves ne permettent pas de conclusion définitive.']}[language]
+        segment=re.search(r'^\[report-0\]\s+(?:\([^)]*\)\s+)?(.+)$',messages[1]['content'],re.M)
+        if not segment:raise RuntimeError('Synthetic lens evidence missing')
+        answer=json.dumps({'schema_version':1,'summary':phrases[0],'reported_claims':[{'text':phrases[1],'quote':segment.group(1)[:200],'citations':['report-0']}],
+            'dimensions':[{'dimension':d['key'],'heading':phrases[2],'status':'limited','finding':phrases[3],'citations':['report-0'],'assumptions':[],'gaps':[]} for d in lens['dimensions']],
+            'limitations':[phrases[3]]},ensure_ascii=False)
+        for offset in range(0,len(answer),128):
+            await asyncio.sleep(.01)
+            yield {'text':answer[offset:offset+128]}
+        yield {'usage':{'input_tokens':120,'output_tokens':250},'done':True}
+        return
     if messages[-1]['content'].startswith('EXPECT_LENGTH_'):
         mode=messages[-1]['content'].removeprefix('EXPECT_LENGTH_')
         interval={'short':'230-510','medium':'710-1510','long':'1710-4310'}.get(mode)

@@ -1,0 +1,13 @@
+# Bee Researcher 3.51.0
+
+- تحلیل نقطه‌ای و هاله‌ای در پنجرهٔ خبر و میز پژوهش؛ حداکثر پنج خبرِ انتخاب‌شده از همان پروژه.
+- چهار لنز عمومی، مارکتینگ، امنیت و محصول با تعریف/ابعاد قابل ویرایش فقط مالک در Settings.
+- چرخهٔ draft، preview خصوصی، مقایسه، تأیید، publish، restore، archive و revoke؛ تعریف منتشرشده immutable است.
+- خروجی ساختاریافته، نقل‌قول دقیق، استنادهای محدود به منابع واقعی و renderer بدون HTML/JSON خام.
+- reuse کنترل مصرف، صف/worker، انقضای نشست، close/save، پاک‌سازی متن و دفتر مصرف موجود.
+- فرم/راهنمای i/حالت‌های خطا در هشت زبان؛ RTL، mobile و تم‌های Reader حفظ شده‌اند.
+- migration additive `0052_analysis_lenses`، seed frozen، audit append-only و backup محدود Researcher.
+
+قابلیت با migration خاموش شروع می‌شود؛ هیچ پروژه یا account خودکار مجوز تازه نمی‌گیرد و scoring/انتشار خبر تغییر نمی‌کند. این فایل release note نامزد است، نه رسید انتشار سرور.
+
+راهنما و وضعیت واقعی گیت‌ها: [پیاده‌سازی و پذیرش](analysis-lenses/IMPLEMENTATION-STATUS-fa.md).

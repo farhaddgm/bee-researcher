@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, ROUND_CEILING
-from contextlib import aclosing
+from contextlib import aclosing, asynccontextmanager
 from zoneinfo import ZoneInfo
 
 from fastapi import HTTPException
@@ -71,11 +72,20 @@ def model_for(p: Policy, aid: uuid.UUID, key: str) -> ModelSpec:
     raise HTTPException(403, "model_unavailable")
 
 
-async def conversation(s, cid, user):
-    require(user)
+def require_audience(user, audience='reader'):
+    if audience == 'reader':
+        require(user)
+    elif audience != 'owner_preview' or not user or not user.active or not admin.is_owner(user):
+        raise HTTPException(403, 'owner_required')
+
+
+async def conversation(s, cid, user, *, audience='reader'):
+    require_audience(user, audience)
     row = await s.scalar(select(ChatConversation).where(ChatConversation.id == cid, ChatConversation.user_id == user.id, ChatConversation.deleted_at.is_(None)))
     if row is None:
         raise HTTPException(404, "news_unavailable")
+    if row.context.get('_audience', 'reader') != audience:
+        raise HTTPException(404, 'news_unavailable')
     if window_expired(row.context):
         raise HTTPException(410, "conversation_closed")
     pub = await publication(s, row.publication_id, user)
@@ -87,7 +97,11 @@ async def conversation(s, cid, user):
 
 
 def public_context(context: dict) -> dict:
-    return {key: context[key] for key in ("version", "scope", "complete", "published_at", "segments", "source_ids", "memory_ids", "include_business", "revision_ids") if key in context}
+    value = {key: context[key] for key in ("version", "scope", "complete", "published_at", "segments", "source_ids", "source_versions", "memory_ids", "include_business", "revision_ids") if key in context}
+    if context.get('_analysis'):
+        profile = context['_analysis']
+        value['analysis'] = {key: profile[key] for key in ('lens_id', 'revision', 'definition_hash', 'scope', 'analysis_version')}
+    return value
 
 
 def window_expired(context: dict) -> bool:
@@ -106,6 +120,7 @@ async def erase_conversation(s, c):
     c.deleted_at, c.context, c.saved_at = now(), {}, None
     for g in (await s.scalars(select(ChatGeneration).where(ChatGeneration.conversation_id == c.id).order_by(ChatGeneration.id).with_for_update())).all():
         g.cancel_requested, g.question, g.answer, g.citations, g.session_hash = True, "", "", [], ""
+        g.analysis_result = None
         g.usage = {key: value for key, value in g.usage.items() if key not in {'analysis_hash', 'target_generation_id'}}
         if g.status == "queued":
             g.status, g.finished_at, g.actual_usd = "stopped", now(), Decimal(0)
@@ -121,7 +136,7 @@ async def close_window(s, cid, pid, user, *, preserve_saved=True):
     await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK})
     c = await s.get(ChatConversation, cid)
     if c is not None:
-        if c.user_id != user.id or c.publication_id != pid:
+        if c.user_id != user.id or c.publication_id != pid or c.context.get('_audience', 'reader') != 'reader':
             raise HTTPException(404, "news_unavailable")
         from app.news_voice.service import save_lease, close_ephemeral
         if preserve_saved and save_lease(c):
@@ -149,23 +164,51 @@ def view(g):
             "response_length": g.usage.get("answer_length", {}).get("mode", "auto")}
 
 
-async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict:
-    require(user)
+@asynccontextmanager
+async def admission_session(existing=None):
+    if existing is not None:
+        yield existing
+    else:
+        async with SessionLocal() as session:
+            yield session
+
+
+async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str, *, audience='reader', _session=None) -> dict:
+    require_audience(user, audience)
     if not q.question.strip():
         raise HTTPException(422, "question_required")
-    async with SessionLocal() as s:
+    async with admission_session(_session) as s:
         await s.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": LOCK})
-        c = await conversation(s, cid, user)
+        c = await conversation(s, cid, user, audience=audience)
         pub = await publication(s, c.publication_id, user)
         if c.context.get('scope') == 'selected_research':
             from app.reader_research.service import validate_context
             await validate_context(s, c, pub, user)
         if c.context["version"] != q.context_version or (c.context.get('scope') != 'selected_research' and context_for(pub.message_text, None)["version"] != q.context_version):
             raise HTTPException(409, "context_changed")
+        profile = c.context.get('_analysis')
+        if profile:
+            from app.analysis_lenses.service import validate_context as validate_lens
+            await validate_lens(s, c.context, preview=audience == 'owner_preview')
+            if q.analysis_version != profile['analysis_version']:
+                raise HTTPException(409, 'lens_revision_changed')
+            if q.intent not in {'lens_analysis', 'question', 'opportunities', 'risks', 'critique', 'action_draft'}:
+                raise HTTPException(422, 'analysis_intent_invalid')
+        elif q.intent == 'lens_analysis' or q.analysis_version:
+            raise HTTPException(422, 'analysis_selection_invalid')
         if q.intent == 'compare' and len(c.context.get('source_ids', [c.publication_id])) < 2:
             raise HTTPException(422, 'comparison_requires_two_sources')
         p = await policy(s)
         m = model_for(p, c.assistant_id, q.model_key)
+        if profile:
+            # A separately disclosed Owner limit for structured analysis;
+            # ordinary chat/follow-ups retain the existing model's limit.
+            from app.analysis_lenses.service import policy as lens_policy
+            lens_limits = await lens_policy(s)
+            changes = {'max_input_chars': lens_limits.input_characters}
+            if q.intent == 'lens_analysis':
+                changes['max_output_tokens'] = lens_limits.output_tokens
+            m = m.model_copy(update=changes)
         if c.provider != m.provider:
             raise HTTPException(409, "new_provider_requires_new_conversation")
         if q.selected_segment and q.selected_segment not in {seg["id"] for seg in c.context["segments"]}:
@@ -220,8 +263,19 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         # Conservative upper bound: <= one Unicode scalar per token is not
         # guaranteed; use UTF-8 bytes for input reservation rather than chars/4.
         input_bound = sum(len(x["content"].encode()) + 100 for x in messages)
+        if profile and q.intent == 'lens_analysis' and m.provider == 'openai':
+            from app.analysis_lenses.compiler import provider_schema
+            native = json.dumps(provider_schema(c.context), ensure_ascii=False)
+            if sum(len(x['content']) for x in messages) + len(native) > m.max_input_chars:
+                raise HTTPException(422, 'context_too_large')
+            input_bound += len(native.encode()) + 100
         from app.token_quotas.service import admission
         output_limit = await admission(s, c.assistant_id, user.id, input_bound, m.max_output_tokens, now())
+        # Do not silently shrink the accepted structured-answer capacity when
+        # a reader's remaining quota is low. A smaller ordinary answer can be
+        # useful; a truncated mandatory JSON analysis cannot be accepted.
+        if q.intent == 'lens_analysis' and output_limit < m.max_output_tokens:
+            raise HTTPException(422, 'analysis_capacity_insufficient')
         m = m.model_copy(update={"max_output_tokens": output_limit})
         reserve = ((Decimal(input_bound) * m.input_usd + Decimal(m.max_output_tokens) * m.output_usd) / Decimal(1_000_000)).quantize(Decimal("0.00000001"), rounding=ROUND_CEILING)
         day = now().astimezone(ZoneInfo(get_settings().timezone)).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
@@ -241,13 +295,17 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
         total,user_total=await totals(s,user.id)
         if total + reserve > p.daily_budget_usd or user_total + reserve > p.user_daily_budget_usd:
             raise HTTPException(429, "budget_exhausted")
-        session = await s.scalar(select(AdminSession).where(AdminSession.token_hash == hashlib.sha256(token.encode()).hexdigest(), AdminSession.user_id == user.id, AdminSession.portal == "user"))
+        portal = 'admin' if audience == 'owner_preview' else 'user'
+        session = await s.scalar(select(AdminSession).where(AdminSession.token_hash == hashlib.sha256(token.encode()).hexdigest(), AdminSession.user_id == user.id, AdminSession.portal == portal))
         if session is None:
             raise HTTPException(401, "session_expired")
-        deadline = min(session.expires_at, admin._reader_nightly_expiry(session.created_at), session.created_at + timedelta(hours=get_settings().session_absolute_hours), now() + timedelta(seconds=get_settings().news_chat_timeout_seconds))
+        limits = [session.expires_at, session.created_at + timedelta(hours=get_settings().session_absolute_hours), now() + timedelta(seconds=get_settings().news_chat_timeout_seconds)]
+        if audience == 'reader':
+            limits.append(admin._reader_nightly_expiry(session.created_at))
+        deadline = min(limits)
         g = ChatGeneration(id=uuid.uuid4(), conversation_id=cid, user_id=user.id, assistant_id=c.assistant_id, idempotency_key=q.idempotency_key,
                            session_hash=session.token_hash, question=prepared_question, answer="", language=q.language, model=m.model_dump(mode="json"),
-                           citations=[], status="queued", cancel_requested=False, reserved_usd=reserve, reserved_tokens=input_bound + m.max_output_tokens, usage={"input_bound": input_bound, "selected_segment": q.selected_segment, "intent": q.intent,
+                           citations=[], status="queued", cancel_requested=False, audience=audience, reserved_usd=reserve, reserved_tokens=input_bound + m.max_output_tokens, usage={"input_bound": input_bound, "selected_segment": q.selected_segment, "intent": q.intent,
                            "voice_session_ids":[str(sid) for sid in q.voice_session_ids], "answer_length": answer_length.model_dump(),
                            'target_generation_id': str(q.target_generation_id) if q.target_generation_id else None, 'analysis_hash': analysis_hash}, deadline=deadline, created_at=now())
         s.add(g)
@@ -260,15 +318,21 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str) -> dict
                 if not voice_session or voice_session.user_id!=user.id or voice_session.conversation_id!=cid or voice_session.status!='completed':raise HTTPException(404,'news_unavailable')
                 if voice_session.generation_id is not None:raise HTTPException(409,'voice_input_already_linked')
                 voice_session.generation_id=g.id
-        await s.commit()
+        if _session is None:
+            await s.commit()
         return view(g)
 
 
-async def authorized_generation(s, gid, user):
+async def authorized_generation(s, gid, user, *, audience='reader'):
     g = await s.scalar(select(ChatGeneration).where(ChatGeneration.id == gid, ChatGeneration.user_id == user.id))
     if g is None or not g.conversation_id:
         raise HTTPException(404, "news_unavailable")
-    c = await conversation(s, g.conversation_id, user)
+    if (getattr(g, 'audience', None) or 'reader') != audience:
+        raise HTTPException(404, 'news_unavailable')
+    c = await conversation(s, g.conversation_id, user, audience=audience)
+    if g.status in ACTIVE and c.context.get('_analysis'):
+        from app.analysis_lenses.service import validate_context as validate_lens
+        await validate_lens(s, c.context, preview=audience == 'owner_preview')
     if g.status in ACTIVE and c.context.get('scope') == 'selected_research':
         from app.reader_research.service import validate_context
         pub = await publication(s, c.publication_id, user)
@@ -285,11 +349,12 @@ async def live(gid):
             raise HTTPException(403, "chat_cancelled")
         if not g or g.deadline <= now():
             raise HTTPException(401, "session_expired")
-        sess = await s.scalar(select(AdminSession).where(AdminSession.token_hash == g.session_hash, AdminSession.portal == "user", AdminSession.expires_at > now()))
+        audience = (getattr(g, 'audience', None) or 'reader')
+        sess = await s.scalar(select(AdminSession).where(AdminSession.token_hash == g.session_hash, AdminSession.portal == ('admin' if audience == 'owner_preview' else 'user'), AdminSession.expires_at > now()))
         if not sess:
             raise HTTPException(401, "session_expired")
         user = await s.get(AdminUser, sess.user_id)
-        await authorized_generation(s, gid, user)
+        await authorized_generation(s, gid, user, audience=audience)
 
 
 async def monitored_events(gid, stream):
@@ -321,6 +386,8 @@ async def monitored_events(gid, stream):
 
 async def generate(gid):
     answer, usage, status, error = "", {}, "unknown", None
+    analysis_result = None
+    structured = False
     contacted = False
     try:
         await live(gid)
@@ -333,9 +400,14 @@ async def generate(gid):
             length = AnswerLength.model_validate(g.usage.get("answer_length", {}))
             messages = prompt(context, g.question, g.language, [view(x) for x in reversed(history)], g.usage.get("selected_segment"), model.max_input_chars, g.usage.get("intent", "question"), length)
             deadline = g.deadline
+            structured = g.usage.get('intent') == 'lens_analysis'
         last_write = time.monotonic()
         contacted = True
-        async with asyncio.timeout(max(0.1, (deadline - now()).total_seconds())), aclosing(monitored_events(gid, providers.stream(get_settings(), model, messages))) as events:
+        native_options = {}
+        if context.get('_analysis') and g.usage.get('intent') == 'lens_analysis':
+            from app.analysis_lenses.compiler import provider_schema
+            native_options['response_schema'] = provider_schema(context)
+        async with asyncio.timeout(max(0.1, (deadline - now()).total_seconds())), aclosing(monitored_events(gid, providers.stream(get_settings(), model, messages, **native_options))) as events:
             async for event in events:
                 if event.get("text"):
                     answer += event["text"]
@@ -343,7 +415,7 @@ async def generate(gid):
                         raise providers.ProviderError("provider_incomplete")
                 if event.get("usage"):
                     usage = event["usage"]
-                if time.monotonic() - last_write > 0.25:
+                if not structured and time.monotonic() - last_write > 0.25:
                     async with SessionLocal() as s:
                         row = await s.get(ChatGeneration, gid, with_for_update=True)
                         if row.cancel_requested:
@@ -352,6 +424,13 @@ async def generate(gid):
                         await s.commit()
                     last_write = time.monotonic()
         await live(gid)
+        if structured:
+            from app.analysis_lenses.results import validate
+            try:
+                analysis_result, answer = validate(answer, context, g.language)
+            except (ValueError, TypeError, KeyError):
+                answer = ''
+                raise providers.ProviderError('analysis_output_invalid') from None
         status = "completed" if answer.strip() else "failed"
         error = None if answer.strip() else "provider_empty"
     except HTTPException as exc:
@@ -363,6 +442,8 @@ async def generate(gid):
     except Exception:
         # Never log prompt, upstream exception text, answer or credentials.
         status, error = "unknown", "provider_failed"
+    if structured and status != 'completed':
+        answer = ''
     async with SessionLocal() as s:
         row = await s.get(ChatGeneration, gid, with_for_update=True)
         if not row:
@@ -374,8 +455,10 @@ async def generate(gid):
             if invalid or (status == "completed" and not citations):
                 error = "citation_unverified"
             row.answer = answer
+            row.analysis_result = analysis_result if status == 'completed' else None
         else:
             row.answer, row.question = "", ""
+            row.analysis_result = None
         row.citations, row.status, row.error_code = citations, status, error
         row.actual_usd = providers.cost(ModelSpec.model_validate(row.model), usage) if contacted else Decimal(0)
         row.usage = {**row.usage, **usage}
@@ -435,13 +518,15 @@ async def maintenance_once():
         retained = select(ChatConversation.id).where(or_(ChatConversation.saved_at.is_not(None),held), ChatConversation.deleted_at.is_(None))
         # Covers orphaned billing rows too. Skip already-cleared rows rather
         # than repeatedly rewriting the lifetime financial ledger every tick.
-        await s.execute(update(ChatGeneration).where(ChatGeneration.created_at < cutoff, or_(ChatGeneration.conversation_id.is_(None), ChatGeneration.conversation_id.not_in(retained)), or_(ChatGeneration.question != "", ChatGeneration.answer != "", ChatGeneration.session_hash != "")).values(question="", answer="", citations=[], session_hash="", cancel_requested=True))
+        await s.execute(update(ChatGeneration).where(ChatGeneration.created_at < cutoff, or_(ChatGeneration.conversation_id.is_(None), ChatGeneration.conversation_id.not_in(retained)), or_(ChatGeneration.question != "", ChatGeneration.answer != "", ChatGeneration.session_hash != "", ChatGeneration.analysis_result.is_not(None))).values(question="", answer="", analysis_result=None, citations=[], session_hash="", cancel_requested=True))
         # The frozen database trigger clears text even for cascade deletion;
         # the nullable FK preserves the corresponding consumption records.
         if expired:
             await s.execute(delete(ChatConversation).where(ChatConversation.id.in_(expired)))
         await s.execute(delete(ChatConversation).where(ChatConversation.deleted_at < now() - timedelta(days=1)))
         await s.commit()
+        from app.analysis_lenses.service import cleanup
+        await cleanup(s)
 
 
 async def maintenance(stop):

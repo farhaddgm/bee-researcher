@@ -12,6 +12,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image',required=True)
     parser.add_argument('--assistant',type=uuid.UUID,required=True)
+    parser.add_argument('--lenses',action='store_true',help='Synthetic focused/contextual lens quality pilot')
+    parser.add_argument('--lens-matrix',action='store_true',help='All 64 lens/scope/locale combinations, one-dollar cap')
+    parser.add_argument('--lens-matrix-key',choices=['lens-v1-matrix','lens-v1-matrix-v2'],default='lens-v1-matrix')
+    parser.add_argument('--lens-run-key',choices=['lens-v1-pilot','lens-v1-pilot-v2','lens-v1-pilot-v3'],default='lens-v1-pilot')
     args = parser.parse_args()
     live = json.loads(subprocess.check_output(['docker','inspect','ai-market-intelligence'],text=True))[0]
     allowed = {'OPENAI_API_KEY','ANALYSIS_MODEL','EXTERNAL_ANALYSIS_APPROVED','DEPLOYMENT_DRAIN_ENABLED',
@@ -36,11 +40,13 @@ def main():
         # The backend is intentionally internal: a backend-only test cannot
         # reach OpenAI. Reuse the existing service's approved network namespace
         # (no host port, listener, service restart or new egress entitlement).
+        script='scripts/verify_live_lens_quality.py' if args.lenses or args.lens_matrix else 'scripts/verify_live_chat_quality.py'
+        evaluation_args=['--matrix','--run-key',args.lens_matrix_key] if args.lens_matrix else ['--run-key',args.lens_run_key] if args.lenses else []
         result = subprocess.run(['docker','run','--rm','--network','container:ai-market-intelligence',
             '--env-file',str(env),'--read-only','--tmpfs','/tmp:size=32m,mode=1777','--cap-drop','ALL',
             '--security-opt','no-new-privileges:true','--entrypoint','python',args.image,
-            'scripts/verify_live_chat_quality.py','--live','--assistant',str(args.assistant)],
-            capture_output=True,text=True,timeout=800)
+            script,'--live','--assistant',str(args.assistant),*evaluation_args],
+            capture_output=True,text=True,timeout=6600 if args.lens_matrix else 800)
         if result.stdout:
             print(result.stdout.strip())  # Synthetic report answers only.
         if result.returncode:

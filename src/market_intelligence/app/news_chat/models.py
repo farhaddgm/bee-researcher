@@ -46,6 +46,7 @@ class ChatGeneration(Base):
         Index("ix_news_chat_created", "created_at"),
         Index("ix_reader_token_usage", "user_id", "assistant_id", "created_at", "id"),
         CheckConstraint("reserved_tokens >= 0 AND (input_tokens IS NULL OR input_tokens >= 0) AND (output_tokens IS NULL OR output_tokens >= 0)", name="reader_token_counts"),
+        CheckConstraint("audience IN ('reader','owner_preview')", name='news_chat_audience'),
         Index("ix_news_chat_history_page", "conversation_id", "created_at", "id"),
     )
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -56,6 +57,8 @@ class ChatGeneration(Base):
     session_hash: Mapped[str] = mapped_column(String(128), nullable=False)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    analysis_result: Mapped[dict | None] = mapped_column(JSONB)
+    audience: Mapped[str] = mapped_column(String(20), nullable=False, default='reader', server_default='reader')
     language: Mapped[str] = mapped_column(String(8), nullable=False)
     model: Mapped[dict] = mapped_column(JSONB, nullable=False)
     citations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)

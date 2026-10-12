@@ -1,0 +1,499 @@
+{
+  "namespace": "e542daab-8bbf-4e16-82f5-377017190001",
+  "definitions": [
+    {
+      "key": "general",
+      "definition": {
+        "source_language": "en",
+        "name": "General",
+        "summary": "Understand the reported change, stakeholders, direct consequences and uncertainty without forcing a positive or negative conclusion.",
+        "definition": "Understand the reported change, stakeholders, direct consequences and uncertainty without forcing a positive or negative conclusion.",
+        "objective": "Help the reader identify evidence, uncertainties and a useful next question or test.",
+        "in_scope": [],
+        "out_of_scope": [
+          "Inventing facts, numbers, sources or private company details.",
+          "Changing publication, access, model or administrative settings."
+        ],
+        "dimensions": [
+          {
+            "key": "event_change",
+            "name": "Reported change",
+            "description": "What actually changed? Distinguish announcement, event date and publication date.",
+            "questions": [
+              "What actually changed? Distinguish announcement, event date and publication date."
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          },
+          {
+            "key": "stakeholders",
+            "name": "Stakeholders",
+            "description": "Who is explicitly affected? Separate named groups from hypotheses.",
+            "questions": [
+              "Who is explicitly affected? Separate named groups from hypotheses."
+            ],
+            "required_information": [],
+            "priority": "normal",
+            "enabled": true
+          },
+          {
+            "key": "consequences",
+            "name": "Direct consequences",
+            "description": "What mechanism could create an effect, and under what conditions?",
+            "questions": [
+              "What mechanism could create an effect, and under what conditions?"
+            ],
+            "required_information": [],
+            "priority": "normal",
+            "enabled": true
+          },
+          {
+            "key": "uncertainty",
+            "name": "Uncertainty",
+            "description": "What is unverified or missing? What evidence would change the conclusion?",
+            "questions": [
+              "What is unverified or missing? What evidence would change the conclusion?"
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          }
+        ],
+        "output_sections": [
+          "opportunities",
+          "risks",
+          "counterpoints",
+          "next_questions"
+        ],
+        "quality_criteria": [
+          "Link conclusions to supplied evidence.",
+          "Separate report claims, hypotheses and missing information.",
+          "Do not force opportunities, risks or findings for irrelevant dimensions."
+        ],
+        "examples": [],
+        "localized_labels": {
+          "fa": {
+            "name": "عمومی",
+            "summary": "فهم خبر، تغییر اصلی، پیامدهای مستقیم و ابهام‌ها."
+          },
+          "en": {
+            "name": "General",
+            "summary": "Understand the news, reported change, direct consequences and uncertainty."
+          },
+          "tr": {
+            "name": "Genel",
+            "summary": "Haberi, değişimi, doğrudan sonuçları ve belirsizlikleri anlayın."
+          },
+          "ar": {
+            "name": "عام",
+            "summary": "فهم الخبر والتغيير والنتائج المباشرة وأوجه الغموض."
+          },
+          "es": {
+            "name": "General",
+            "summary": "Comprende la noticia, el cambio, las consecuencias directas y la incertidumbre."
+          },
+          "it": {
+            "name": "Generale",
+            "summary": "Comprendi notizia, cambiamento, conseguenze dirette e incertezze."
+          },
+          "de": {
+            "name": "Allgemein",
+            "summary": "Nachricht, Veränderung, direkte Folgen und Unsicherheiten verstehen."
+          },
+          "fr": {
+            "name": "Général",
+            "summary": "Comprendre l’actualité, le changement, les conséquences directes et les incertitudes."
+          }
+        }
+      }
+    },
+    {
+      "key": "marketing",
+      "definition": {
+        "source_language": "en",
+        "name": "Marketing",
+        "summary": "Analyze evidence-backed changes in customer needs, market behavior, positioning and value; suggest testable marketing hypotheses, not guaranteed sales growth.",
+        "definition": "Analyze evidence-backed changes in customer needs, market behavior, positioning and value; suggest testable marketing hypotheses, not guaranteed sales growth.",
+        "objective": "Help the reader identify evidence, uncertainties and a useful next question or test.",
+        "in_scope": [],
+        "out_of_scope": [
+          "Inventing facts, numbers, sources or private company details.",
+          "Changing publication, access, model or administrative settings."
+        ],
+        "dimensions": [
+          {
+            "key": "customer_need",
+            "name": "Customer need",
+            "description": "What customer need or expectation may change? Distinguish observed behavior from supplier claims.",
+            "questions": [
+              "What customer need or expectation may change? Distinguish observed behavior from supplier claims."
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          },
+          {
+            "key": "segments",
+            "name": "Market segments",
+            "description": "Which segment might be affected, and why? Do not invent market size or company personas.",
+            "questions": [
+              "Which segment might be affected, and why? Do not invent market size or company personas."
+            ],
+            "required_information": [],
+            "priority": "normal",
+            "enabled": true
+          },
+          {
+            "key": "positioning",
+            "name": "Positioning and competition",
+            "description": "What differentiation is supported by selected reports? Do not invent competitors or leadership.",
+            "questions": [
+              "What differentiation is supported by selected reports? Do not invent competitors or leadership."
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          },
+          {
+            "key": "value_pricing",
+            "name": "Value and pricing",
+            "description": "What could change perceived value or adoption cost? Unknown prices and margins remain unknown.",
+            "questions": [
+              "What could change perceived value or adoption cost? Unknown prices and margins remain unknown."
+            ],
+            "required_information": [],
+            "priority": "normal",
+            "enabled": true
+          },
+          {
+            "key": "messaging_channels",
+            "name": "Messaging and channels",
+            "description": "What messaging or channel hypothesis follows from the evidence? Do not invent campaign budgets.",
+            "questions": [
+              "What messaging or channel hypothesis follows from the evidence? Do not invent campaign budgets."
+            ],
+            "required_information": [],
+            "priority": "normal",
+            "enabled": true
+          },
+          {
+            "key": "experiments",
+            "name": "Experiments",
+            "description": "What small experiment and observable metric could test a hypothesis? Never predict its result.",
+            "questions": [
+              "What small experiment and observable metric could test a hypothesis? Never predict its result."
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          }
+        ],
+        "output_sections": [
+          "opportunities",
+          "risks",
+          "counterpoints",
+          "next_questions"
+        ],
+        "quality_criteria": [
+          "Link conclusions to supplied evidence.",
+          "Separate report claims, hypotheses and missing information.",
+          "Do not force opportunities, risks or findings for irrelevant dimensions."
+        ],
+        "examples": [],
+        "localized_labels": {
+          "fa": {
+            "name": "مارکتینگ",
+            "summary": "بررسی نیاز مشتری، بازار، جایگاه برند و فرضیه‌های قابل آزمایش."
+          },
+          "en": {
+            "name": "Marketing",
+            "summary": "Assess customer needs, markets, positioning and testable hypotheses."
+          },
+          "tr": {
+            "name": "Pazarlama",
+            "summary": "Müşteri ihtiyaçlarını, pazarı, konumlandırmayı ve test edilebilir varsayımları inceleyin."
+          },
+          "ar": {
+            "name": "التسويق",
+            "summary": "دراسة احتياجات العملاء والسوق والتموضع والفرضيات القابلة للاختبار."
+          },
+          "es": {
+            "name": "Marketing",
+            "summary": "Examina clientes, mercado, posicionamiento e hipótesis comprobables."
+          },
+          "it": {
+            "name": "Marketing",
+            "summary": "Esamina clienti, mercato, posizionamento e ipotesi verificabili."
+          },
+          "de": {
+            "name": "Marketing",
+            "summary": "Kundenbedarf, Markt, Positionierung und prüfbare Hypothesen untersuchen."
+          },
+          "fr": {
+            "name": "Marketing",
+            "summary": "Examiner les clients, le marché, le positionnement et les hypothèses testables."
+          }
+        }
+      }
+    },
+    {
+      "key": "security",
+      "definition": {
+        "source_language": "en",
+        "name": "Security",
+        "summary": "Defensively assess cybersecurity, data protection, access, dependencies and service continuity. Do not assume that a vulnerability, breach or threat exists.",
+        "definition": "Defensively assess cybersecurity, data protection, access, dependencies and service continuity. Do not assume that a vulnerability, breach or threat exists.",
+        "objective": "Help the reader identify evidence, uncertainties and a useful next question or test.",
+        "in_scope": [],
+        "out_of_scope": [
+          "Inventing facts, numbers, sources or private company details.",
+          "Changing publication, access, model or administrative settings."
+        ],
+        "dimensions": [
+          {
+            "key": "assets_data",
+            "name": "Data and assets",
+            "description": "Which data or assets are explicitly involved? Do not assume the user company uses this system.",
+            "questions": [
+              "Which data or assets are explicitly involved? Do not assume the user company uses this system."
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          },
+          {
+            "key": "exposure",
+            "name": "Exposure and access",
+            "description": "Is a change in exposure supported? A technology name alone is not a vulnerability.",
+            "questions": [
+              "Is a change in exposure supported? A technology name alone is not a vulnerability."
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          },
+          {
+            "key": "dependencies",
+            "name": "Dependencies",
+            "description": "Which supplier or infrastructure dependency is supported, and under what conditions?",
+            "questions": [
+              "Which supplier or infrastructure dependency is supported, and under what conditions?"
+            ],
+            "required_information": [],
+            "priority": "normal",
+            "enabled": true
+          },
+          {
+            "key": "privacy",
+            "name": "Privacy",
+            "description": "What data transfer or retention is stated? Separate promised policy from verified implementation.",
+            "questions": [
+              "What data transfer or retention is stated? Separate promised policy from verified implementation."
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          },
+          {
+            "key": "continuity",
+            "name": "Continuity",
+            "description": "Is an outage or operational change documented? Company impact depends on supplied architecture.",
+            "questions": [
+              "Is an outage or operational change documented? Company impact depends on supplied architecture."
+            ],
+            "required_information": [],
+            "priority": "normal",
+            "enabled": true
+          },
+          {
+            "key": "defensive_checks",
+            "name": "Defensive checks",
+            "description": "What safe, proportionate defensive check is justified? Never invent CVEs, attackers or breach severity.",
+            "questions": [
+              "What safe, proportionate defensive check is justified? Never invent CVEs, attackers or breach severity."
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          }
+        ],
+        "output_sections": [
+          "opportunities",
+          "risks",
+          "counterpoints",
+          "next_questions"
+        ],
+        "quality_criteria": [
+          "Link conclusions to supplied evidence.",
+          "Separate report claims, hypotheses and missing information.",
+          "Do not force opportunities, risks or findings for irrelevant dimensions."
+        ],
+        "examples": [],
+        "localized_labels": {
+          "fa": {
+            "name": "امنیت",
+            "summary": "بررسی دفاعی داده، دسترسی، وابستگی و تداوم خدمت؛ بدون فرض وجود تهدید."
+          },
+          "en": {
+            "name": "Security",
+            "summary": "Defensively assess data, access, dependencies and continuity without assuming a threat."
+          },
+          "tr": {
+            "name": "Güvenlik",
+            "summary": "Tehdit varsaymadan veri, erişim, bağımlılıklar ve sürekliliği savunma açısından inceleyin."
+          },
+          "ar": {
+            "name": "الأمن",
+            "summary": "فحص دفاعي للبيانات والوصول والاعتماديات واستمرارية الخدمة دون افتراض وجود تهديد."
+          },
+          "es": {
+            "name": "Seguridad",
+            "summary": "Examina datos, acceso, dependencias y continuidad sin presuponer amenazas."
+          },
+          "it": {
+            "name": "Sicurezza",
+            "summary": "Esamina dati, accesso, dipendenze e continuità senza presumere minacce."
+          },
+          "de": {
+            "name": "Sicherheit",
+            "summary": "Daten, Zugriff, Abhängigkeiten und Kontinuität defensiv prüfen, ohne Bedrohungen vorauszusetzen."
+          },
+          "fr": {
+            "name": "Sécurité",
+            "summary": "Examiner données, accès, dépendances et continuité sans présumer une menace."
+          }
+        }
+      }
+    },
+    {
+      "key": "product",
+      "definition": {
+        "source_language": "en",
+        "name": "Product",
+        "summary": "Assess user problems, product value, dependencies and testable development hypotheses; never turn every news item into a mandatory feature or automatically change a roadmap.",
+        "definition": "Assess user problems, product value, dependencies and testable development hypotheses; never turn every news item into a mandatory feature or automatically change a roadmap.",
+        "objective": "Help the reader identify evidence, uncertainties and a useful next question or test.",
+        "in_scope": [],
+        "out_of_scope": [
+          "Inventing facts, numbers, sources or private company details.",
+          "Changing publication, access, model or administrative settings."
+        ],
+        "dimensions": [
+          {
+            "key": "user_problem",
+            "name": "User problem",
+            "description": "Which user job or problem is addressed? Claimed demand is not verified user research.",
+            "questions": [
+              "Which user job or problem is addressed? Claimed demand is not verified user research."
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          },
+          {
+            "key": "product_value",
+            "name": "Product value",
+            "description": "What value or differentiation is supported by the selected reports, not an imagined whole market?",
+            "questions": [
+              "What value or differentiation is supported by the selected reports, not an imagined whole market?"
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          },
+          {
+            "key": "feasibility",
+            "name": "Feasibility",
+            "description": "What data, infrastructure or permissions are needed? Do not invent engineering time or team capacity.",
+            "questions": [
+              "What data, infrastructure or permissions are needed? Do not invent engineering time or team capacity."
+            ],
+            "required_information": [],
+            "priority": "normal",
+            "enabled": true
+          },
+          {
+            "key": "experience_tradeoffs",
+            "name": "Experience and trade-offs",
+            "description": "What user benefit and experience cost may follow? Separate facts from assumptions.",
+            "questions": [
+              "What user benefit and experience cost may follow? Separate facts from assumptions."
+            ],
+            "required_information": [],
+            "priority": "normal",
+            "enabled": true
+          },
+          {
+            "key": "validation",
+            "name": "Validation",
+            "description": "What smallest useful test could falsify the hypothesis? Do not invent numeric success targets.",
+            "questions": [
+              "What smallest useful test could falsify the hypothesis? Do not invent numeric success targets."
+            ],
+            "required_information": [],
+            "priority": "high",
+            "enabled": true
+          },
+          {
+            "key": "prioritization",
+            "name": "Conditional priority",
+            "description": "What information is needed for build versus do-not-build? No automatic assignment or roadmap change.",
+            "questions": [
+              "What information is needed for build versus do-not-build? No automatic assignment or roadmap change."
+            ],
+            "required_information": [],
+            "priority": "normal",
+            "enabled": true
+          }
+        ],
+        "output_sections": [
+          "opportunities",
+          "risks",
+          "counterpoints",
+          "next_questions"
+        ],
+        "quality_criteria": [
+          "Link conclusions to supplied evidence.",
+          "Separate report claims, hypotheses and missing information.",
+          "Do not force opportunities, risks or findings for irrelevant dimensions."
+        ],
+        "examples": [],
+        "localized_labels": {
+          "fa": {
+            "name": "محصول",
+            "summary": "بررسی مسئلهٔ کاربر، ارزش محصول، وابستگی‌ها و آزمایش‌های توسعه."
+          },
+          "en": {
+            "name": "Product",
+            "summary": "Assess user problems, product value, dependencies and development experiments."
+          },
+          "tr": {
+            "name": "Ürün",
+            "summary": "Kullanıcı sorunlarını, ürün değerini, bağımlılıkları ve geliştirme deneylerini inceleyin."
+          },
+          "ar": {
+            "name": "المنتج",
+            "summary": "دراسة مشكلة المستخدم وقيمة المنتج والاعتماديات وتجارب التطوير."
+          },
+          "es": {
+            "name": "Producto",
+            "summary": "Examina problemas del usuario, valor del producto, dependencias y experimentos."
+          },
+          "it": {
+            "name": "Prodotto",
+            "summary": "Esamina problemi degli utenti, valore del prodotto, dipendenze ed esperimenti."
+          },
+          "de": {
+            "name": "Produkt",
+            "summary": "Nutzerprobleme, Produktwert, Abhängigkeiten und Entwicklungsversuche untersuchen."
+          },
+          "fr": {
+            "name": "Produit",
+            "summary": "Examiner les problèmes utilisateurs, la valeur produit, les dépendances et les expérimentations."
+          }
+        }
+      }
+    }
+  ]
+}
