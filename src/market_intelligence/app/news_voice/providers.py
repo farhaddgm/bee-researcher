@@ -18,6 +18,14 @@ class VoiceError(Exception):
 
 def key():
     s=get_settings()
+    from app.news_voice.credentials import managed, CredentialError
+    try:
+        value=managed(s)
+    except CredentialError:
+        raise VoiceError('voice_unconfigured') from None
+    if value is not None:
+        if not value['key']:raise VoiceError('voice_unconfigured')
+        return value['key']
     if s.elevenlabs_api_key_file:
         try:
             path=Path(s.elevenlabs_api_key_file)
@@ -28,6 +36,47 @@ def key():
         except (OSError,ValueError):raise VoiceError('voice_unconfigured') from None
     if not s.elevenlabs_api_key:raise VoiceError('voice_unconfigured')
     return s.elevenlabs_api_key.get_secret_value()
+
+
+async def catalog(candidate=None, search='', page_token=None):
+    """Read-only authentication/catalog check; never synthesize or send audio."""
+    secret=candidate or key()
+    async def get(client,path,params=None):
+        async with client.stream('GET','https://api.elevenlabs.io'+path,params=params,
+                headers={'xi-api-key':secret}) as response:
+            if response.status_code!=200:
+                code={401:'voice_key_invalid',403:'voice_permissions_missing',429:'voice_rate_limited'}.get(
+                    response.status_code,'voice_provider_failed')
+                raise VoiceError(code)
+            data=bytearray()
+            async for part in response.aiter_bytes():
+                data.extend(part)
+                if len(data)>1_000_000:raise VoiceError('voice_provider_invalid')
+            try:return json.loads(data)
+            except (ValueError,TypeError):raise VoiceError('voice_provider_invalid') from None
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10,connect=5),follow_redirects=False,trust_env=False) as client:
+            models=await get(client,'/v1/models')
+            params={'page_size':50,'include_total_count':'false'}
+            if search:params['search']=search
+            if page_token:params['next_page_token']=page_token
+            voices=await get(client,'/v2/voices',params)
+        if not isinstance(models,list) or not isinstance(voices,dict) or not isinstance(voices.get('voices'),list):
+            raise VoiceError('voice_provider_invalid')
+        supported={'eleven_v3','eleven_v3_conversational','eleven_v4','eleven_v4_turbo'}
+        def safe_id(value):return isinstance(value,str) and bool(re.fullmatch(r'[A-Za-z0-9_-]{1,64}',value))
+        result={'models':[{'id':m['model_id'],'label':str(m.get('name') or m['model_id'])[:100]}
+                          for m in models[:200] if isinstance(m,dict) and safe_id(m.get('model_id'))
+                          and m['model_id'] in supported and m.get('can_do_text_to_speech') is True],
+                'voices':[{'id':v['voice_id'],'label':str(v.get('name') or v['voice_id'])[:100]}
+                          for v in voices['voices'][:50] if isinstance(v,dict) and safe_id(v.get('voice_id'))],
+                'has_more':voices.get('has_more') is True,
+                'next_page_token':voices.get('next_page_token') if isinstance(voices.get('next_page_token'),str)
+                    and len(voices['next_page_token'])<=1000 else None,
+                'scope':'authentication_and_catalog_only','audio_tested':False}
+        return result
+    except VoiceError:raise
+    except Exception:raise VoiceError('voice_provider_failed') from None
 
 
 def spoken_text(text):

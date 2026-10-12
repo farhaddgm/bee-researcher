@@ -158,6 +158,8 @@ def main():
             run('run','--rm','--entrypoint','node','--network',net,*browser_mounts(modules),PW,'scripts/verify_voice_pcm.mjs')
             run('run','--rm','--entrypoint','node','--network','container:'+names['app'],*browser_mounts(modules),*artifacts,
                 '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test','-e','BEE_CHAT_TEST_URL=http://127.0.0.1:8010',PW,'scripts/verify_news_voice.mjs')
+            run('run','--rm','--entrypoint','node','--network','container:'+names['app'],*browser_mounts(modules),*artifacts,
+                '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test','-e','BEE_CHAT_TEST_URL=http://127.0.0.1:8010',PW,'scripts/verify_voice_owner_settings.mjs')
             # Loopback provides a trustworthy browser context for native
             # clipboard APIs. It still has no host ports or Internet route.
             run('run','--rm','--entrypoint','node','--network','container:'+names['app'],*browser_mounts(modules),*artifacts,

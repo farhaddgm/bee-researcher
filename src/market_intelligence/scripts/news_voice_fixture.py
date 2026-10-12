@@ -34,6 +34,15 @@ def configure():
     providers.http_tts=fake_tts
     providers.ttd_tts=fake_tts
     providers.scribe=fake_scribe
+    providers.catalog=fake_catalog
+
+
+async def fake_catalog(candidate=None,search='',page_token=None):
+    # Never contacts ElevenLabs, including when testing the owner credential UI.
+    return {'models':[{'id':'eleven_v3','label':'Synthetic speech model'}],
+            'voices':[{'id':'syntheticvoice001','label':'Synthetic PCM test voice'}],
+            'has_more':page_token is None,'next_page_token':'synthetic-next' if page_token is None else None,
+            'scope':'authentication_and_catalog_only','audio_tested':False}
 
 
 async def seed():

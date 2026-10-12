@@ -2,11 +2,39 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
-from pydantic import Field, model_validator
+from pydantic import Field, PrivateAttr, SecretStr, model_validator
 from app.news_chat.schemas import Strict
 
 Language = Literal['fa', 'en', 'tr', 'ar', 'es', 'it', 'de', 'fr']
 Key = Field(min_length=16, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')
+
+
+class CredentialUpdate(Strict):
+    action: Literal['set', 'delete']
+    expected_revision: str = Field(min_length=1, max_length=64, pattern=r'^[A-Za-z0-9_-]+$')
+    api_key: SecretStr | None = None
+
+    @model_validator(mode='after')
+    def key_valid(self):
+        from app.news_voice.credentials import valid_key
+        if self.action == 'set' and (not self.api_key or not valid_key(self.api_key.get_secret_value())):
+            raise ValueError('voice_key_invalid')
+        if self.action == 'delete' and self.api_key is not None:
+            raise ValueError('unexpected_key')
+        return self
+
+
+class ConnectionCheck(Strict):
+    api_key: SecretStr | None = None
+    search: str = Field(default='', max_length=100)
+    page_token: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode='after')
+    def key_valid(self):
+        from app.news_voice.credentials import valid_key
+        if self.api_key is not None and not valid_key(self.api_key.get_secret_value()):
+            raise ValueError('voice_key_invalid')
+        return self
 
 
 class Voice(Strict):
@@ -38,6 +66,7 @@ class Voice(Strict):
 
 
 class Policy(Strict):
+    _credential_revision: str | None = PrivateAttr(default=None)
     enabled: bool = False
     continuous_enabled: bool = False
     stt_verified: bool = False
