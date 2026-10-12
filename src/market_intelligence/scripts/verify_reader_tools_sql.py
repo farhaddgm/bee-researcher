@@ -70,7 +70,7 @@ async def main():
     assert sum(isinstance(v,HTTPException) and v.status_code==409 for v in raced)==1
     assert sum(isinstance(v,dict) for v in raced)==1
 
-    started=await chat_api.create_conversation(pid,ResearchStart(model_key='openai:fixture-v1',source_ids=[pid]),tokens[0])
+    started=await chat_api.start(pid,ResearchStart(model_key='openai:fixture-v1',source_ids=[pid]),tokens[0])
     cid=uuid.UUID(started['id']);gid=uuid.uuid4()
     async with SessionLocal() as s:
         model=(await chat.policy(s)).models[0]
@@ -117,6 +117,17 @@ async def main():
         for table in ['reader_news_revisions','reader_expert_replies']:
             assert await s.scalar(text("SELECT has_table_privilege('startup_fixture',:table,'SELECT')"),{'table':'market_intelligence.'+table})
             assert not await s.scalar(text("SELECT has_table_privilege('startup_fixture',:table,'UPDATE')"),{'table':'market_intelligence.'+table})
+    # Attaching legacy work is idempotent and preserves a deliberate opt-out.
+    from app.reader_tools.backfill import backfill
+    await api.watch(aid,pid,Watch(enabled=False),tokens[0])
+    await backfill()
+    async with SessionLocal() as s:
+        before=await s.scalar(select(func.count()).select_from(NewsWatch))
+        assert (await s.get(NewsWatch,(uid,pid))).enabled is False
+    await backfill()
+    async with SessionLocal() as s:
+        assert await s.scalar(select(func.count()).select_from(NewsWatch))==before
+        assert (await s.get(NewsWatch,(uid,pid))).enabled is False
     # Revoking project membership prevents receiving or posting further replies.
     async with SessionLocal() as s:
         await s.execute(delete(AssistantMember).where(AssistantMember.user_id==peerid,AssistantMember.assistant_id==aid));await s.commit()
