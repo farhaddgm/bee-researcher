@@ -42,7 +42,7 @@
     const dictionaries=node('textarea');dictionaries.rows=2;dictionaries.maxLength=1000;dictionaries.dir='ltr';dictionaries.value=v.pronunciation_dictionaries.map(d=>d.pronunciation_dictionary_id+','+d.version_id).join('\n');field(box,'voiceDictionaries',dictionaries,'voiceDictionaryHelp');
     const row={box,id,label,model,transport,langs,rate,chars,verified,timing,dictionaries};rows.push(row);const refresh=()=>{names.replaceChildren(...catalog.voices.map(v=>{const o=node('option');o.value=v.id;o.label=v.label;return o}))};localizers.push(refresh);refresh();
     id.addEventListener('change',()=>{const found=catalog.voices.find(v=>v.id===id.value);if(found&&!label.value)label.value=found.label});
-    box.append(button('removeModel',()=>{rows=rows.filter(x=>x!==row);localizers=localizers.filter(f=>f!==refresh);box.remove()}));controls.profiles.append(box);
+    box.append(button('voiceRemoveProfile',()=>{rows=rows.filter(x=>x!==row);localizers=localizers.filter(f=>f!==refresh);box.remove()}));controls.profiles.append(box);
   }
   function build(data){
     credential=data.credential;rows=[];localizers=[];controls={};catalog={voices:[],models:[]};

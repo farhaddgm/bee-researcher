@@ -9,7 +9,7 @@ const browser=await chromium.launch({headless:true}),context=await browser.newCo
 page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));page.on('dialog',d=>d.accept());
 const secret='synthetic-elevenlabs-owner-key-never-real';
 async function api(path,method='GET',body,csrf=true){return page.evaluate(async({path,method,body,csrf})=>{const token=document.cookie.split('; ').find(v=>v.startsWith('research_bee_admin_csrf='))?.split('=').slice(1).join('=');const revision=method==='PUT'&&path.endsWith('/news-voice/policy')?(await (await fetch(path)).json()).credential.revision:null;const response=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json',...(csrf?{'X-CSRF-Token':decodeURIComponent(token||'')}:{}),...(revision?{'X-Voice-Credential-Revision':revision}:{})},...(body?{body:JSON.stringify(body)}:{})});return {status:response.status,data:await response.json().catch(()=>({}))}},{path,method,body,csrf})}
-async function language(locale){await page.evaluate(locale=>{document.documentElement.lang=locale;document.documentElement.dir=['fa','ar'].includes(locale)?'rtl':'ltr'},locale);await page.waitForTimeout(80)}
+async function language(locale){await page.evaluate(locale=>window.setLanguage(locale),locale);await page.waitForFunction(locale=>document.documentElement.lang===locale&&!document.documentElement.classList.contains('locale-switching'),locale);assert.equal(await page.evaluate(()=>window.BeeNewsChatI18n.lang()),locale);await page.waitForTimeout(80)}
 try{
   await page.goto(base+'/admin/login-up');await page.locator('#loginUser').fill('chat-owner');await page.locator('#loginPass').fill('synthetic violet herons cross mountain lakes');await page.locator('#loginSubmit').click();await page.locator('#app:not(.hidden)').waitFor();
   await page.evaluate(()=>window.setView('settings'));await page.locator('#newsVoiceAdmin').waitFor();await language('en');
@@ -27,7 +27,7 @@ try{
   for(const locale of ['fa','en','tr','ar','es','it','de','fr'])for(const width of [390,768,1440,1920]){
     await page.setViewportSize({width,height:1100});await language(locale);
     assert(await panel.evaluate(n=>n.isConnected),'Locale replaced form');assert.equal(await input.inputValue(),'99');assert.equal(await key.inputValue(),secret);
-    assert.equal(await page.locator('#newsVoiceAdmin h3').textContent(),await page.evaluate(()=>window.BeeNewsChatI18n.t('voiceAdmin')));
+    assert.equal(await page.locator('#newsVoiceAdmin h3').textContent(),await page.evaluate(locale=>window.BeeNewsChatI18n.words.voiceAdmin[window.BeeNewsChatI18n.languages.indexOf(locale)],locale));
     const layout=await panel.evaluate(n=>({width:n.clientWidth,scroll:n.scrollWidth,overflow:[...n.querySelectorAll('*')].filter(e=>e.scrollWidth>e.clientWidth+3&&e.clientWidth>0).slice(0,8).map(e=>({tag:e.tagName,cls:e.className,key:e.dataset.voiceLabel,width:e.clientWidth,scroll:e.scrollWidth}))}));
     assert(layout.scroll<=layout.width+2,'Owner voice panel overflow '+locale+'/'+width+' '+JSON.stringify(layout));
     assert.equal(await page.locator('#newsVoiceAdmin').getAttribute('data-owner-only'),'true');
@@ -43,7 +43,7 @@ try{
   await page.locator('select[data-voice-label=voiceAccountVoice]').selectOption('syntheticvoice001');await page.locator('#newsVoiceAdmin [data-voice-key=voiceUseVoice]').click();
   assert.equal(await page.locator('input[data-voice-label=voiceId]').last().inputValue(),'syntheticvoice001');
   assert.equal(await page.locator('input[data-voice-label=voiceTested]').last().isChecked(),false);
-  await page.locator('#newsVoiceAdmin .voice-owner-profile').last().getByRole('button',{name:'Remove model',exact:true}).click();
+  await page.locator('#newsVoiceAdmin .voice-owner-profile [data-voice-key=voiceRemoveProfile]').last().click();
   await page.locator('#newsVoiceAdmin [data-voice-key=voiceMoreVoices]').click();await page.waitForFunction(()=>document.querySelector('[data-voice-key=voiceMoreVoices]').disabled);
   const policySaved=page.waitForResponse(r=>r.url().endsWith('/admin/api/news-voice/policy')&&r.request().method()==='PUT');await page.locator('#elevenlabs-policy-form [type=submit]').click();assert.equal((await policySaved).status(),200);
   const policy=(await api('/admin/api/news-voice/policy')).data.policy;assert.equal(policy.max_input_seconds,99);assert.deepEqual(policy.voices,original.voices);assert(!JSON.stringify(policy).includes(secret));

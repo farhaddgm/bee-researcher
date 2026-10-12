@@ -2,6 +2,7 @@
 (() => {
   'use strict';const copy=window.BeeNewsChatI18n;if(!copy)return;
   Object.assign(copy.words,{
+    voiceRemoveProfile:['حذف صدا','Remove voice','Sesi kaldır','إزالة الصوت','Quitar voz','Rimuovi voce','Stimme entfernen','Retirer la voix'],
     voiceAccountVoice:['صدای موجود در حساب','Available account voice','Hesaptaki kullanılabilir ses','صوت متاح في الحساب','Voz disponible en la cuenta','Voce disponibile nell’account','Verfügbare Kontostimme','Voix disponible dans le compte'],
     voiceChooseVoice:['یک صدا انتخاب کنید','Choose a voice','Bir ses seçin','اختر صوتًا','Elige una voz','Scegli una voce','Stimme auswählen','Choisissez une voix'],
     voiceUseVoice:['افزودن صدای انتخاب‌شده','Add selected voice','Seçilen sesi ekle','إضافة الصوت المحدد','Añadir voz seleccionada','Aggiungi voce selezionata','Ausgewählte Stimme hinzufügen','Ajouter la voix sélectionnée'],
