@@ -46,10 +46,11 @@
     form.append(fields,node('p','valueHelp','token-help'));const submit=node('button','save','btn primary');submit.type='submit';const msg=node('p',null,'token-status');msg.role='status';form.append(submit,msg);box.append(form);parent.append(box);
     const e={box,check,inputs,submit,msg,row:null,pending:false};
     e.dirty=()=>Boolean(e.row)&&(check.checked!==Boolean(e.row.inherit)||(!check.checked&&windows.some(w=>inputs[w].value!==(e.row.limits[w]===null?'':String(e.row.limits[w])))));
-    const reload=button('reload',async()=>{if(!e.row||e.pending||e.dirty()&&!window.confirm(t('discard')))return;const identity={...e.row},stamp=epoch;e.pending=true;check.disabled=true;sync();syncOwnerControls();status(msg,'loading');try{const data=await api(ownerURL+(identity.assistant_id?'?assistant_id='+encodeURIComponent(identity.assistant_id):''));if(stamp!==epoch)return;const row=identity.user_id?data.users.find(u=>u.id===identity.user_id)?.policy:identity.assistant_id?data.project:data.default;if(row)e.apply(row)}catch(err){if(stamp===epoch)status(msg,err.message,true)}finally{e.pending=false;check.disabled=false;sync();syncOwnerControls()}});form.append(reload);editors.push(e);
+    const reload=button('reload',async()=>{if(!e.row||e.pending||e.dirty()&&!window.confirm(t('discard')))return;const identity={...e.row},stamp=epoch;e.pending=true;check.disabled=true;sync();syncOwnerControls();status(msg,'loading');try{const data=await api(ownerURL+(identity.assistant_id?'?assistant_id='+encodeURIComponent(identity.assistant_id):''));if(stamp!==epoch)return;const row=identity.user_id?data.users.find(u=>u.id===identity.user_id)?.policy:identity.assistant_id?data.project:data.default;if(catalog){catalog.default=data.default;if(data.project)catalog.project=data.project}if(row)e.apply(row);editors.forEach(item=>item.refresh())}catch(err){if(stamp===epoch)status(msg,err.message,true)}finally{e.pending=false;check.disabled=false;sync();syncOwnerControls()}});form.append(reload);editors.push(e);
     function sync(){for(const n of Object.values(inputs))n.disabled=check.checked||e.pending;submit.disabled=e.pending}
     const inherited=()=>title==='user'&&catalog?.project&&!catalog.project.inherit?catalog.project.limits:catalog?.default?.limits||{};
     const display=values=>{for(const w of windows)inputs[w].value=values[w]??''};
+    e.refresh=()=>{if(check.checked)display(inherited())};
     check.addEventListener('change',()=>{if(check.checked)display(inherited());sync()});
     e.apply=row=>{e.row=row;check.checked=Boolean(row.inherit);display(row.inherit?inherited():row.limits);status(msg,'');sync()};
     form.addEventListener('submit',async event=>{
@@ -57,7 +58,7 @@
       const limits={};for(const w of windows){limits[w]=inputs[w].value.trim()===''?null:Number(inputs[w].value);if(limits[w]!==null&&(!Number.isSafeInteger(limits[w])||limits[w]<0||limits[w]>1e12)){status(msg,'invalid',true);return}}
       const body={assistant_id:e.row.assistant_id,user_id:e.row.user_id,inherit:check.checked,limits,version:e.row.version};
       e.pending=true;check.disabled=true;sync();syncOwnerControls();status(msg,'saving');const stamp=epoch;
-      try{const saved=await api(ownerURL,{method:'PUT',body:JSON.stringify(body)});if(stamp!==epoch)return;e.apply(saved);status(msg,'saved');if(catalog){if(title==='default')catalog.default=saved;else if(title==='project')catalog.project=saved;else{const user=catalog.users.find(u=>u.id===saved.user_id);if(user)user.policy=saved}}if(reportProject&&(reportProject.value===saved.assistant_id||saved.assistant_id===null))loadReport()}
+      try{const saved=await api(ownerURL,{method:'PUT',body:JSON.stringify(body)});if(stamp!==epoch)return;e.apply(saved);status(msg,'saved');if(catalog){if(title==='default')catalog.default=saved;else if(title==='project')catalog.project=saved;else{const user=catalog.users.find(u=>u.id===saved.user_id);if(user)user.policy=saved}}editors.forEach(item=>item.refresh());if(reportProject&&(reportProject.value===saved.assistant_id||saved.assistant_id===null))loadReport()}
       catch(err){if(stamp===epoch)status(msg,err.message,true)}finally{e.pending=false;check.disabled=false;sync();syncOwnerControls()}
     });return e;
   }

@@ -18,7 +18,7 @@ const empty={six_hours:null,daily:null,monthly:null,total:null};
 let cleanup=[];
 try{
   await login(page,'chat-owner');await page.goto(base+'/user/settings?section=limits');await page.locator('#tokenLimits').waitFor();await editor('default').locator('input[data-token-field=daily]').waitFor();
-  for(const w of Object.keys(empty))await editor('default').locator('[data-token-field='+w+']').fill('100000');await saveForm(editor('default'));
+  for(const w of Object.keys(empty))await editor('default').locator('[data-token-field='+w+']').fill('100000');await saveForm(editor('default'));assert.equal(await editor('project').locator('[data-token-field=daily]').inputValue(),'100000');
   await page.locator('#tokenOwnerProject').selectOption(aid);await editor('project').waitFor({state:'visible'});await editor('project').locator('input[type=checkbox]').uncheck();await editor('project').locator('[data-token-field=daily]').fill('200000');await saveForm(editor('project'));cleanup.push({assistant_id:aid,user_id:null});
   await page.locator('#tokenOwnerUser').selectOption(uid);await editor('user').locator('input[type=checkbox]').uncheck();await editor('user').locator('[data-token-field=six_hours]').fill('50000');await saveForm(editor('user'));cleanup.push({assistant_id:aid,user_id:uid});
   const catalog=await api(page,'/user/api/token-quotas/owner?assistant_id='+aid);assert.equal(catalog.data.users.find(u=>u.id===uid).policy.limits.six_hours,50000);
