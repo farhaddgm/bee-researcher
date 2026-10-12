@@ -259,6 +259,19 @@ class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(14,result[-1]["usage"]["input_tokens"])
         self.assertEqual(12,result[-1]["usage"]["quota_input_tokens"])
 
+    async def test_claude_missing_input_retains_unknown_usage(self):
+        result,_=await self.run_fixture("anthropic",[{"type":"message_start","message":{"usage":{}}},{"type":"content_block_delta","delta":{"type":"text_delta","text":"Answer"}},{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}},{"type":"message_stop"}])
+        usage=result[-1]["usage"]
+        self.assertIsNone(usage["input_tokens"])
+        self.assertIsNone(usage["quota_input_tokens"])
+        self.assertIsNone(providers.cost(spec(),usage))
+
+    async def test_claude_invalid_cache_or_base_count_stays_unknown(self):
+        for data in ({"input_tokens":True},{"input_tokens":-1},{"input_tokens":10,"cache_creation_input_tokens":None},{"input_tokens":10,"cache_read_input_tokens":False}):
+            result,_=await self.run_fixture("anthropic",[{"type":"message_start","message":{"usage":data}},{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}},{"type":"message_stop"}])
+            self.assertIsNone(result[-1]["usage"]["quota_input_tokens"])
+            self.assertIsNone(providers.cost(spec(),result[-1]["usage"]))
+
     async def test_gemini_native_stream_keeps_thoughts_private(self):
         result,requests=await self.run_fixture("google",[{"candidates":[{"content":{"parts":[{"thought":True,"text":"Private thought"},{"text":"Answer"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":10,"candidatesTokenCount":5,"thoughtsTokenCount":3}}])
         self.assertEqual("Answer",result[0]["text"])

@@ -88,9 +88,12 @@ async def stream(settings: Settings, model: ModelSpec, messages: list, *, transp
                         kind = event.get("type")
                         if kind == "message_start":
                             data = event.get("message", {}).get("usage") or {}
-                            raw_input = int(data.get("input_tokens", 0)) + int(data.get("cache_read_input_tokens", 0)) + int(data.get("cache_creation_input_tokens", 0))
-                            usage["quota_input_tokens"] = raw_input
-                            usage["input_tokens"] = raw_input + int(data.get("cache_creation_input_tokens", 0))
+                            counts = (data.get("input_tokens"), data.get("cache_read_input_tokens", 0), data.get("cache_creation_input_tokens", 0))
+                            # Only absent optional cache fields mean zero. A
+                            # missing/invalid base count must retain reservation.
+                            valid = all(type(n) is int and n >= 0 for n in counts)
+                            usage["quota_input_tokens"] = sum(counts) if valid else None
+                            usage["input_tokens"] = sum(counts) + counts[2] if valid else None
                         elif kind == "content_block_delta" and event.get("delta", {}).get("type") == "text_delta":
                             yield {"text": str(event["delta"].get("text", ""))}
                         elif kind == "message_delta":
