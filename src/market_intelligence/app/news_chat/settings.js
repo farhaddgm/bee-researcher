@@ -69,6 +69,6 @@
   new MutationObserver(()=>{
     if($('app').classList.contains('hidden')){catalogSeq++;catalogStarted=false;models=[];voices=[];sync()}else loadCatalog();
   }).observe($('app'),{attributes:true,attributeFilter:['class']});
-  new MutationObserver(()=>{section.querySelectorAll('[data-chat-key]').forEach(n=>n.textContent=t(n.dataset.chatKey));section.querySelectorAll('[data-chat-label]').forEach(n=>n.setAttribute('aria-label',t(n.dataset.chatLabel)));sync()}).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
+  new MutationObserver(()=>{section.querySelectorAll('[data-chat-key]').forEach(n=>n.textContent=t(n.dataset.chatKey));section.querySelectorAll('[data-chat-label]').forEach(n=>n.setAttribute('aria-label',t(n.dataset.chatLabel)));if(location.pathname.replace(/\/+$/,'').endsWith('/user/settings'))sync()}).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
   sync();loadCatalog();
 })();
