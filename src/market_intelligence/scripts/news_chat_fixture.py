@@ -145,7 +145,9 @@ async def fake_stream(settings, model, messages):
     if progressive:VOICE_CONTINUE.clear()
     if progressive:answer='First synthetic sentence grounded in the report [report-1]. Final synthetic sentence.'
     for piece in answer.split(' '):
-        await asyncio.sleep(0.15 if messages[-1]['content']=='SLOW' else 0.035)
+        # Fast progressive tokens deliberately leave the end of the sentence
+        # inside the persistence throttle before the provider goes silent.
+        await asyncio.sleep(0 if progressive else 0.15 if messages[-1]['content']=='SLOW' else 0.035)
         if progressive and piece=='Final':await asyncio.wait_for(VOICE_CONTINUE.wait(),30)
         yield {'text':piece+' '}
     yield {'usage':{'input_tokens':120,'output_tokens':25},'done':True}
