@@ -148,6 +148,71 @@ async def run():
             assert await s.scalar(select(VoiceDeletion.id).where(VoiceDeletion.object_key==object_key))
             assert await s.scalar(select(VoiceUsage.id).where(VoiceUsage.user_id==uid,VoiceUsage.conversation_id.is_(None)))
         await voice.maintenance_once();assert not storage.Store().path(object_key).exists()
+        # Run the real LLM and voice producers concurrently. The first PCM
+        # must exist while the canonical LLM row is still running.
+        from app.news_voice import preview
+        for remove_parent in (False,True):
+            c=await chat_api.start(pid,ResearchStart(model_key='openai:fixture-v1'),token=token)
+            progressive_cid=uuid.UUID(c['id'])
+            generation=await chat.send(progressive_cid,Question(model_key='openai:fixture-v1',
+                question='Progressive synthetic speech',context_version=c['context']['version'],
+                idempotency_key=uuid.uuid4().hex),user,token)
+            progressive_gid=uuid.UUID(generation['id'])
+            asset=await voice.request_tts(progressive_gid,TTS(idempotency_key=uuid.uuid4().hex,
+                voice_key='eleven_v3:syntheticvoice001',transfer_consent=True,streaming=True),user,token)
+            progressive_aid=uuid.UUID(asset['id'])
+            async with SessionLocal() as s:
+                g=await s.get(ChatGeneration,progressive_gid);g.status='running'
+                a=await s.get(VoiceAudio,progressive_aid);a.status='running';usage_id=a.usage_id
+                u=await s.get(VoiceUsage,usage_id);u.status='running';await s.commit()
+            first_pcm=asyncio.Event();finish_llm=asyncio.Event();cancelled=asyncio.Event();calls=[]
+            async def llm_parts(*args):
+                yield {'text':'First sentence. '}
+                await finish_llm.wait()
+                yield {'text':'Final sentence. [report-1]'}
+                yield {'usage':{'input_tokens':120,'output_tokens':25},'done':True}
+            async def progressive_tts(text,profile,language,zero_retention=False,on_chunk=None):
+                calls.append(text)
+                try:
+                    async def output(pcm):
+                        await on_chunk(pcm);first_pcm.set()
+                        if remove_parent:await asyncio.Event().wait()
+                    return await fixture.fake_tts(text,profile,language,zero_retention,on_chunk=output)
+                finally:cancelled.set()
+            with patch.object(llm,'stream',llm_parts),patch.object(fixture.providers,'http_tts',progressive_tts):
+                llm_job=asyncio.create_task(chat.generate(progressive_gid))
+                voice_job=asyncio.create_task(voice.generate(progressive_aid))
+                try:
+                    await asyncio.wait_for(first_pcm.wait(),5)
+                    async with SessionLocal() as s:
+                        assert (await s.get(ChatGeneration,progressive_gid)).status=='running'
+                    assert preview.buffers[progressive_aid].size>0
+                    if remove_parent:
+                        async with SessionLocal() as s:
+                            await s.execute(delete(ChatConversation).where(ChatConversation.id==progressive_cid));await s.commit()
+                        await asyncio.wait_for(voice_job,2)
+                        assert progressive_aid not in preview.buffers
+                        assert cancelled.is_set()
+                        async with SessionLocal() as s:
+                            u=await s.get(VoiceUsage,usage_id);assert u.status=='unknown' and u.actual_usd is None
+                    else:
+                        finish_llm.set();await asyncio.wait_for(asyncio.gather(llm_job,voice_job),8)
+                        async with SessionLocal() as s:
+                            a=await s.get(VoiceAudio,progressive_aid)
+                            assert a.status=='ready' and a.metadata_json['complete'],a.metadata_json
+                            assert a.metadata_json['spoken_text']=='First sentence. Final sentence.'
+                            assert storage.pcm(storage.Store().read(a))==fixture.PCM*2
+                        assert len(calls)==2
+                        replay=await voice.request_tts(progressive_gid,TTS(idempotency_key=uuid.uuid4().hex,
+                            voice_key='eleven_v3:syntheticvoice001',transfer_consent=True),user,token)
+                        assert replay['id']==asset['id'] and len(calls)==2
+                finally:
+                    finish_llm.set()
+                    for task in (llm_job,voice_job):
+                        if not task.done():task.cancel()
+                    await asyncio.gather(llm_job,voice_job,return_exceptions=True)
+                    async with SessionLocal() as s:
+                        await s.execute(delete(ChatConversation).where(ChatConversation.id==progressive_cid));await s.commit()
         # Failed/ambiguous upstream work keeps its reservation after midnight.
         async with SessionLocal() as s:
             unknown=VoiceUsage(id=uuid.uuid4(),user_id=uid,assistant_id=aid,idempotency_key=uuid.uuid4().hex,kind='tts',status='unknown',
@@ -160,14 +225,14 @@ async def run():
         async with SessionLocal() as s:await s.execute(delete(VoiceUsage).where(VoiceUsage.id==unknown.id));await s.commit()
         # Shared advisory lock admits only one when LLM + STT exceed the cap.
         async with SessionLocal() as s:
-            p=await s.get(ChatPolicy,1);p.config={**original,'user_daily_budget_usd':'0.024'}
+            p=await s.get(ChatPolicy,1);p.config={**original,'user_daily_budget_usd':'0.016'}
             await s.execute(delete(VoiceUsage).where(VoiceUsage.user_id==uid));await s.commit()
         race=await asyncio.gather(chat.send(cid,q,user,token),voice.create_session(cid,
             Start(idempotency_key=uuid.uuid4().hex,transfer_consent=True),user,token),return_exceptions=True)
         assert sum(isinstance(r,HTTPException) and r.status_code==429 for r in race)==1,race
         async with SessionLocal() as s:
             from app.news_chat.budget import totals
-            total,own=await totals(s,uid);assert own<=Decimal('.024')
+            total,own=await totals(s,uid);assert own<=Decimal('.016')
         print('Reader voice SQL passed: real migration, private PCM/WAV, same-owner ACL including Owner, cost-free replay/download, exact clip/dialogue bytes, idempotency, save-close lease, manifest, range, bookmarks, unsave guard, deletion outbox/cascade and shared LLM/STT budget race.')
     finally:
         async with SessionLocal() as s:
