@@ -9,7 +9,11 @@ const aid='10000000-0000-4000-8000-000000000004',pid='60000000-0000-4000-8000-00
 async function page(){const context=await browser.newContext({viewport:{width:1440,height:1100},reducedMotion:'reduce'});contexts.push(context);const page=await context.newPage();page.setDefaultTimeout(20000);page.on('pageerror',e=>errors.push(e.message));page.on('response',r=>{if(r.request().method()!=='GET')requests.push({path:new URL(r.url()).pathname,status:r.status()})});page.on('dialog',d=>d.accept());return page}
 async function api(page,path,method='GET',body){return page.evaluate(async({path,method,body})=>{const prefix=path.startsWith('/admin')?'research_bee_admin_csrf=':'research_bee_user_csrf=';const csrf=document.cookie.split('; ').find(v=>v.startsWith(prefix))?.split('=').slice(1).join('=')||'';const r=await fetch(path,{method,credentials:'same-origin',headers:{'Content-Type':'application/json','X-CSRF-Token':decodeURIComponent(csrf)},...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json().catch(()=>({}))}},{path,method,body})}
 async function login(page,name,admin=false){await page.goto(base+(admin?'/admin/login-up':'/user/login-up'));await page.locator(admin?'#loginUser':'#username').fill(name);await page.locator(admin?'#loginPass':'#password').fill('synthetic violet herons cross mountain lakes');await page.locator(admin?'#loginSubmit':'#loginButton').click();await page.locator('#app:not(.hidden)').waitFor();await locale(page,'en')}
-async function locale(page,value){await page.evaluate(value=>{document.documentElement.lang=value;document.documentElement.dir=['fa','ar'].includes(value)?'rtl':'ltr'},value)}
+async function locale(page,value){
+  await page.evaluate(value=>{if(typeof window.setLanguage==='function')window.setLanguage(value);else{document.documentElement.lang=value;document.documentElement.dir=['fa','ar'].includes(value)?'rtl':'ltr'}},value);
+  await page.waitForFunction(value=>document.documentElement.lang===value&&!document.documentElement.classList.contains('locale-switching'),value);
+  await page.waitForTimeout(80);
+}
 try{
   for(let attempt=0;attempt<60;attempt++){try{const response=await fetch(base+'/health');if(response.ok)break}catch{}if(attempt===59)throw Error('Synthetic fixture did not start');await new Promise(r=>setTimeout(r,500))}
   const owner=await page(),reader=await page(),other=await page();await login(owner,'chat-owner',true);await login(reader,'lens-reader');await login(other,'chat-admin',true);
