@@ -27,7 +27,11 @@ try{
   await page.locator('#news-chat-response-mode [data-mode=both]').click();
   const startResponse=page.waitForResponse(r=>r.url().endsWith('/voice-sessions')&&r.request().method()==='POST');
   await page.locator('#news-chat-microphone').click();const started=await startResponse;assert.equal(started.status(),201,await started.text());
-  await page.waitForFunction(()=>document.querySelector('#news-chat-microphone').getAttribute('aria-pressed')==='true');await page.waitForTimeout(900);await page.locator('#news-chat-microphone').click();
+  await page.waitForFunction(()=>document.querySelector('#news-chat-microphone').getAttribute('aria-pressed')==='true');
+  // CI audio devices can start late. Stop after genuine PCM has reached the
+  // synthetic upstream, not after an arbitrary wall-clock delay.
+  await page.waitForFunction(()=>document.querySelector('#newsChat .voice-partial')?.textContent.includes('Synthetic speech'));
+  await page.locator('#news-chat-microphone').click();
   await page.waitForFunction(()=>document.getElementById('news-chat-question').value==='Synthetic speech about published batteries.');
   assert(await page.evaluate(()=>window.workletCreated>0),'Microphone used fallback instead of native AudioWorklet');
   const recognized=(await started.json()).id;await page.locator('#news-chat-question').fill('Edited question from genuine microphone capture');
