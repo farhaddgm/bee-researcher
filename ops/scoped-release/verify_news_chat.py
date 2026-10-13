@@ -20,6 +20,7 @@ import deploy as release
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / "src/market_intelligence"
 PW = "mcr.microsoft.com/playwright:v1.55.1-noble"
+VOICE_PW = "bee-researcher-voice-browser:20261013"
 
 
 def browser_mounts(modules):
@@ -54,6 +55,7 @@ def main():
     parser.add_argument('--node-modules',type=Path,help='Optional pinned Playwright installation')
     parser.add_argument('--artifacts',type=Path,help='Optional directory for synthetic UI screenshots')
     args=parser.parse_args()
+    run('build','--file',ROOT/'ops/scoped-release/voice-browser-tools.Dockerfile','--tag',VOICE_PW,ROOT/'ops/scoped-release',timeout=300)
     suffix=uuid.uuid4().hex[:12];net='bee-news-chat-test-'+suffix
     names={k:'bee-news-chat-'+k+'-'+suffix for k in ('pg','redis','app','startup','drain')}
     containers=[];network=False;controller=None
@@ -63,7 +65,7 @@ def main():
             if not args.node_modules:
                 run('run','--rm','--entrypoint','npm',*installer_options(tools),PW,'install','--prefix','/tools','--ignore-scripts','--no-audit','--no-fund','playwright@1.55.1','@axe-core/playwright@4.11.0')
             run('network','create','--internal',net,capture=True);network=True
-            run('run','-d','--name',names['pg'],'--network',net,'-e','POSTGRES_DB=news_chat_test','-e','POSTGRES_USER=news_chat_test','-e','POSTGRES_PASSWORD=synthetic-chat-database-fixture','postgres:17.10-alpine',capture=True);containers.append(names['pg'])
+            run('run','-d','--name',names['pg'],'--network',net,'--tmpfs','/var/lib/postgresql/data:rw,size=512m,mode=0700','-e','POSTGRES_DB=news_chat_test','-e','POSTGRES_USER=news_chat_test','-e','POSTGRES_PASSWORD=synthetic-chat-database-fixture','postgres:17.10-alpine','-c','max_wal_size=128MB','-c','min_wal_size=32MB',capture=True);containers.append(names['pg'])
             run('run','-d','--name',names['redis'],'--network',net,'redis:7.4.9-alpine','redis-server','--requirepass','synthetic-chat-redis-fixture',capture=True);containers.append(names['redis'])
             for attempt in range(60):
                 ready=subprocess.run(['docker','exec',names['pg'],'pg_isready','-U','news_chat_test','-d','news_chat_test'],capture_output=True)
@@ -156,8 +158,9 @@ def main():
                 output=args.artifacts.resolve();output.mkdir(parents=True,exist_ok=True)
                 artifacts=['-v',f'{output}:/artifacts','-e','BEE_CHAT_ARTIFACT_DIR=/artifacts']
             run('run','--rm','--entrypoint','node','--network',net,*browser_mounts(modules),PW,'scripts/verify_voice_pcm.mjs')
+            run('run','--rm','--entrypoint','node','--network','none',*browser_mounts(modules),VOICE_PW,'scripts/verify_voice_worklet.mjs')
             run('run','--rm','--entrypoint','node','--network','container:'+names['app'],*browser_mounts(modules),*artifacts,
-                '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test','-e','BEE_CHAT_TEST_URL=http://127.0.0.1:8010',PW,'scripts/verify_news_voice.mjs')
+                '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test','-e','BEE_CHAT_TEST_URL=http://127.0.0.1:8010',VOICE_PW,'scripts/verify_news_voice.mjs')
             run('run','--rm','--entrypoint','node','--network','container:'+names['app'],*browser_mounts(modules),*artifacts,
                 '-e','MARKET_INTELLIGENCE_ENVIRONMENT=test','-e','BEE_CHAT_TEST_URL=http://127.0.0.1:8010',PW,'scripts/verify_voice_owner_settings.mjs')
             # Loopback provides a trustworthy browser context for native

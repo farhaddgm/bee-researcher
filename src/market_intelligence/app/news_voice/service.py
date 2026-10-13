@@ -56,6 +56,8 @@ def enabled(p):
     if current is not None and p._credential_revision!=current['revision']:
         raise HTTPException(503,'voice_unverified')
     if not p.price_expires_at or p.price_expires_at<=now():raise HTTPException(503,'voice_price_expired')
+    if p.require_zero_retention and (not p.zero_retention_verified or len(p.retention_reference)<10):
+        raise HTTPException(503,'voice_retention_unavailable')
 
 
 def voice_for(p,key,language):
@@ -80,6 +82,10 @@ async def reserve(s,user,c,kind,key,amount,units,price,deadline):
     if not p.enabled or not get_settings().news_chat_enabled:raise HTTPException(403,'chat_disabled')
     total,own=await totals(s,user.id)
     if total+amount>p.daily_budget_usd or own+amount>p.user_daily_budget_usd:raise HTTPException(429,'budget_exhausted')
+    from app.news_chat.budget import day_start
+    vp=await policy(s);voice_total,voice_own=await charges(s,user.id,day_start())
+    if voice_total+amount>vp.daily_budget_usd or voice_own+amount>vp.user_daily_budget_usd:
+        raise HTTPException(429,'budget_exhausted')
     old=await s.scalar(select(VoiceUsage).where(VoiceUsage.user_id==user.id,VoiceUsage.idempotency_key==key))
     if old:raise HTTPException(409,'idempotency_conflict')
     u=VoiceUsage(id=uuid.uuid4(),user_id=user.id,assistant_id=c.assistant_id,conversation_id=c.id,
@@ -173,7 +179,7 @@ async def finish_session(sid,pcm,transcript,elapsed,success,contacted):
         usage.status='estimated' if success else ('unknown' if contacted else 'settled')
         usage.units=Decimal(str(round(elapsed,3))) if contacted else Decimal(0)
         # No refund for ambiguous requests; the reservation remains chargeable.
-        if not contacted:usage.actual_usd=Decimal(0)
+        if not contacted:usage.actual_usd=Decimal(0);usage.units=Decimal(0)
         else:usage.price={**usage.price,'estimated_usd':str(money(Decimal(usage.price['rate'])*Decimal(str(elapsed))/60))}
         c=await s.get(chat.ChatConversation,row.conversation_id)
         user=await s.get(AdminUser,row.user_id)
@@ -222,18 +228,21 @@ async def authorized_audio(s,aid,user):
 async def request_tts(gid,payload,user,token):
     async with work_lease(),SessionLocal() as s:
         await lock(s);g=await chat.authorized_generation(s,gid,user)
-        if g.status!='completed' or not g.answer:raise HTTPException(409,'completed_answer_required')
+        streaming=payload.streaming and g.status in ('queued','running')
+        if not streaming and (g.status!='completed' or not g.answer):raise HTTPException(409,'completed_answer_required')
         c=await chat.conversation(s,g.conversation_id,user);p=await policy(s)
         voice=voice_for(p,payload.voice_key,g.language);spoken=providers.spoken_text(g.answer)
-        if not spoken or len(spoken)>voice.max_chars:raise HTTPException(422,'voice_text_too_large')
+        if len(spoken)>voice.max_chars or (not streaming and not spoken):raise HTTPException(422,'voice_text_too_large')
         request_hash=digest({'gid':str(gid),'request':payload.model_dump(mode='json')})
         prior_usage=await s.scalar(select(VoiceUsage).where(VoiceUsage.user_id==user.id,VoiceUsage.idempotency_key==payload.idempotency_key))
         if prior_usage:
             prior=await s.scalar(select(VoiceAudio).where(VoiceAudio.usage_id==prior_usage.id))
             if not prior or prior.metadata_json.get('_request_hash')!=request_hash:raise HTTPException(409,'idempotency_conflict')
             return view(await authorized_audio(s,prior.id,user))
-        identity=digest({'generation':str(gid),'text':spoken,'voice':voice_identity(voice),'language':g.language,'preprocessing':1})
-        prior=await s.scalar(select(VoiceAudio).where(VoiceAudio.user_id==user.id,VoiceAudio.assistant_id==c.assistant_id,VoiceAudio.identity==identity))
+        identity=digest({'generation':str(gid),'voice':voice_identity(voice),'language':g.language,'preprocessing':2})
+        legacy=digest({'generation':str(gid),'text':spoken,'voice':voice_identity(voice),'language':g.language,'preprocessing':1})
+        prior=await s.scalar(select(VoiceAudio).where(VoiceAudio.user_id==user.id,VoiceAudio.assistant_id==c.assistant_id,
+            VoiceAudio.identity.in_([identity,legacy])).order_by(VoiceAudio.created_at.desc()).limit(1))
         if prior:
             if prior.deleted_at or prior.status=='failed' or (not prior.saved_at and prior.expires_at<=now()):
                 if not payload.regenerate:raise HTTPException(409,'voice_retry_confirmation_required')
@@ -257,13 +266,15 @@ async def request_tts(gid,payload,user,token):
             inputs.append({'session_id':str(session.id),'audio_id':str(session.audio_id) if session.audio_id else None,
                 'recognized_text':session.transcript,'submitted_question':g.question})
         end=await deadline(s,user,token,get_settings().news_chat_timeout_seconds)
-        reserve_cost=money(voice.usd_per_1000_chars*len(spoken)/1000)
-        u=await reserve(s,user,c,'tts',payload.idempotency_key,reserve_cost,len(spoken),
+        units=voice.max_chars if streaming else len(spoken)
+        reserve_cost=money(voice.usd_per_1000_chars*units/1000)
+        u=await reserve(s,user,c,'tts',payload.idempotency_key,reserve_cost,units,
             {'rate':str(voice.usd_per_1000_chars),'unit':'1000_characters','reference':p.price_reference},end)
         a=VoiceAudio(id=uuid.uuid4(),user_id=user.id,assistant_id=c.assistant_id,conversation_id=c.id,generation_id=gid,
             usage_id=u.id,identity=identity,scope='ai',status='preparing',title='',byte_count=0,duration_ms=0,version=0,
             expires_at=now()+timedelta(seconds=p.staging_seconds),metadata_json={'language':g.language,'model':voice.model_id,
-                'voice':voice.label,'spoken_text':spoken,'original_text_hash':hash_text(g.answer),'inputs':inputs,'complete':True,
+                'voice':voice.label,'spoken_text':'' if streaming else spoken,'original_text_hash':hash_text(g.answer),
+                'inputs':inputs,'complete':not streaming,'_streaming':streaming,
                 '_voice':voice.model_dump(mode='json'),'_session_hash':hash_text(token),'_deadline':end.isoformat(),
                 '_zero_retention':p.require_zero_retention,'_request_hash':request_hash})
         s.add(a);await s.commit();return view(a)
@@ -331,6 +342,9 @@ async def producer_live(aid):
     async with SessionLocal() as s:
         a=await s.get(VoiceAudio,aid)
         if not a or a.deleted_at or a.status!='running':raise HTTPException(410,'voice_audio_cancelled')
+        if a.metadata_json.get('_streaming'):
+            g=await s.get(ChatGeneration,a.generation_id)
+            if not g or g.cancel_requested:raise HTTPException(410,'voice_audio_cancelled')
         sess=await s.scalar(select(AdminSession).where(AdminSession.token_hash==a.metadata_json['_session_hash'],
             AdminSession.portal=='user',AdminSession.expires_at>now()))
         if not sess:raise HTTPException(401,'session_expired')
@@ -341,17 +355,39 @@ async def producer_live(aid):
 
 
 async def generate(aid):
-    contacted=False;result=None;error=None
+    ready=False
     try:
-        a=await producer_live(aid);voice=Voice.model_validate(a.metadata_json['_voice'])
+        ready=await _generate(aid)
+    finally:
+        # Missing cascade rows, database errors and task cancellation all leave
+        # this path. No private preview can survive an unsuccessful producer.
+        if ready:preview.finish(aid)
+        else:preview.remove(aid)
+
+
+async def _generate(aid):
+    contacted=False;result=None;error=None;stream_state=None;usage_id=None
+    try:
+        a=await producer_live(aid);usage_id=getattr(a,'usage_id',None);voice=Voice.model_validate(a.metadata_json['_voice'])
         from datetime import datetime
         end=datetime.fromisoformat(a.metadata_json['_deadline'])
         async with asyncio.timeout(max(.01,(end-now()).total_seconds())):
-            contacted=True
             preview.start(aid)
-            op=asyncio.create_task((providers.http_tts if voice.transport=='http' else providers.ttd_tts)(
-                a.metadata_json['spoken_text'],voice,a.metadata_json['language'],a.metadata_json['_zero_retention'],
-                on_chunk=lambda pcm:preview.append(aid,pcm)))
+            if a.metadata_json.get('_streaming'):
+                from app.news_voice import incremental
+                stream_state={'spoken_text':'','complete':False}
+                def contact():
+                    nonlocal contacted
+                    contacted=True
+                operation=incremental.synthesize(incremental.answer_parts(a.generation_id,voice.max_chars,stream_state),
+                    voice,a.metadata_json['language'],a.metadata_json['_zero_retention'],
+                    on_chunk=lambda pcm:preview.append(aid,pcm),on_contact=contact)
+            else:
+                contacted=True
+                operation=(providers.http_tts if voice.transport=='http' else providers.ttd_tts)(
+                    a.metadata_json['spoken_text'],voice,a.metadata_json['language'],a.metadata_json['_zero_retention'],
+                    on_chunk=lambda pcm:preview.append(aid,pcm))
+            op=asyncio.create_task(operation)
             try:
                 while not op.done():
                     await asyncio.wait({op},timeout=.5);await producer_live(aid)
@@ -365,13 +401,21 @@ async def generate(aid):
     except BaseException:error='voice_generation_unknown'
     async with SessionLocal() as s:
         await lock(s);a=await s.get(VoiceAudio,aid,with_for_update=True)
-        if not a:return
+        if not a:
+            if usage_id:
+                usage=await s.get(VoiceUsage,usage_id,with_for_update=True)
+                if usage and usage.status in ('reserved','running'):
+                    usage.status='unknown' if contacted else 'settled'
+                    if not contacted:usage.actual_usd=Decimal(0);usage.units=Decimal(0)
+                    await s.commit()
+            return
         u=await s.get(VoiceUsage,a.usage_id,with_for_update=True)
         u.status='unknown' if contacted else 'settled'
-        if not contacted:u.actual_usd=Decimal(0)
+        if not contacted:u.actual_usd=Decimal(0);u.units=Decimal(0)
         if result and not a.deleted_at and a.status=='running':
             try:
                 raw,timing=result;data=storage.wav(raw)
+                if stream_state:a.metadata_json={**a.metadata_json,**stream_state}
                 if len(data)>(await policy(s)).max_audio_bytes:raise ValueError('audio_too_large')
                 a.byte_count=len(data);a.duration_ms=len(raw)*1000//32000
                 a.object_key,a.sha256=await asyncio.to_thread(storage.Store().write,a,data)
@@ -392,13 +436,14 @@ async def generate(aid):
                         if cues:chapters.append({'publication_id':source['publication_id'],
                             'start_seconds':cues[0]['start'],'end_seconds':cues[-1]['end']})
                     a.metadata_json={**a.metadata_json,'chapters':chapters}
-                u.status='estimated';u.price={**u.price,'estimated_usd':str(u.reserved_usd)}
+                u.units=Decimal(len(a.metadata_json['spoken_text']))
+                estimate=money(Decimal(u.price['rate'])*u.units/1000)
+                u.status='estimated';u.price={**u.price,'estimated_usd':str(estimate)}
             except Exception:error='voice_storage_failed';a.status='failed'
         elif not a.deleted_at:a.status='failed'
         if error:a.metadata_json={**a.metadata_json,'error_code':error,'_session_hash':''}
         await s.commit()
-    preview.finish(aid)
-    if error:preview.remove(aid)
+    return a.status=='ready' and not error
 
 
 async def request_save(cid,payload,user):

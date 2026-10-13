@@ -181,3 +181,35 @@ class CatalogTests(unittest.IsolatedAsyncioTestCase):
             def factory(**kwargs):return client(**kwargs,transport=httpx.MockTransport(lambda r:httpx.Response(200,content=content)))
             with patch.object(providers.httpx,'AsyncClient',side_effect=factory):
                 with self.assertRaises(providers.VoiceError):await providers.catalog(KEY)
+
+
+class SubscriptionTests(unittest.IsolatedAsyncioTestCase):
+    async def test_account_metadata_cannot_claim_zero_retention_or_expose_invoices(self):
+        client=httpx.AsyncClient;seen=[]
+        def respond(request):
+            seen.append(request)
+            return httpx.Response(200,json={'tier':'enterprise','status':'active',
+                'open_invoices':[{'private':'PRIVATE_INVOICE_CANARY'}],'workspace_id':'PRIVATE_WORKSPACE_CANARY'})
+        def factory(**kwargs):
+            self.assertFalse(kwargs['follow_redirects']);self.assertFalse(kwargs['trust_env'])
+            return client(**kwargs,transport=httpx.MockTransport(respond))
+        with patch.object(providers,'key',return_value=KEY),patch.object(providers.httpx,'AsyncClient',side_effect=factory):
+            result=await providers.subscription()
+        self.assertEqual('enterprise',result['tier']);self.assertTrue(result['zero_retention_candidate'])
+        self.assertFalse(result['zero_retention_verified']);self.assertFalse(result['audio_tested'])
+        self.assertNotIn('PRIVATE_',json.dumps(result));self.assertNotIn(KEY,json.dumps(result))
+        self.assertEqual('https://api.elevenlabs.io/v1/user/subscription',str(seen[0].url))
+        self.assertEqual('GET',seen[0].method)
+
+    async def test_missing_permission_and_unknown_metadata_stay_private(self):
+        client=httpx.AsyncClient
+        for response in [httpx.Response(403,text='PRIVATE_REMOTE_CANARY'),
+            httpx.Response(200,json={'tier':'PRIVATE_SECRET_CANARY','status':'PRIVATE_SECRET_CANARY'})]:
+            def factory(**kwargs):return client(**kwargs,transport=httpx.MockTransport(lambda _:response))
+            with patch.object(providers,'key',return_value=KEY),patch.object(providers.httpx,'AsyncClient',side_effect=factory):
+                if response.status_code==403:
+                    with self.assertRaises(providers.VoiceError) as caught:await providers.subscription()
+                    self.assertEqual('voice_permissions_missing',caught.exception.code)
+                else:
+                    result=await providers.subscription();self.assertEqual('custom',result['tier'])
+                    self.assertEqual('unknown',result['subscription_status']);self.assertNotIn('PRIVATE_',json.dumps(result))

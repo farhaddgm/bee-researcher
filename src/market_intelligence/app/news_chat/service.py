@@ -334,6 +334,7 @@ async def generate(gid):
             messages = prompt(context, g.question, g.language, [view(x) for x in reversed(history)], g.usage.get("selected_segment"), model.max_input_chars, g.usage.get("intent", "question"), length)
             deadline = g.deadline
         last_write = time.monotonic()
+        wrote_answer = False
         contacted = True
         async with asyncio.timeout(max(0.1, (deadline - now()).total_seconds())), aclosing(monitored_events(gid, providers.stream(get_settings(), model, messages))) as events:
             async for event in events:
@@ -343,7 +344,7 @@ async def generate(gid):
                         raise providers.ProviderError("provider_incomplete")
                 if event.get("usage"):
                     usage = event["usage"]
-                if time.monotonic() - last_write > 0.25:
+                if (answer and not wrote_answer) or time.monotonic() - last_write > 0.25:
                     async with SessionLocal() as s:
                         row = await s.get(ChatGeneration, gid, with_for_update=True)
                         if row.cancel_requested:
@@ -351,6 +352,7 @@ async def generate(gid):
                         row.answer = answer
                         await s.commit()
                     last_write = time.monotonic()
+                    wrote_answer = bool(answer)
         await live(gid)
         status = "completed" if answer.strip() else "failed"
         error = None if answer.strip() else "provider_empty"

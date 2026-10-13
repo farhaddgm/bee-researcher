@@ -133,8 +133,11 @@ async def fake_stream(settings, model, messages):
         answer=json.dumps({'title':'Review battery evidence','description':'Review the selected published evidence [report-1].','assignee':'','due_on':None})
     elif 'Produce a Markdown comparison table' in messages[0]['content']:
         answer='| Claim | Agreement | Differences | Evidence | Unknown |\n| --- | --- | --- | --- | --- |\n| Batteries | Reports concern batteries | Different report dates | [report-0] [report-2] | Independent verification unavailable |'
+    progressive=messages[-1]['content']=='Edited question from genuine microphone capture'
+    if progressive:answer='First synthetic sentence grounded in the report [report-1]. Final synthetic sentence.'
     for piece in answer.split(' '):
         await asyncio.sleep(0.15 if messages[-1]['content']=='SLOW' else 0.035)
+        if progressive and piece=='Final':await asyncio.sleep(2)
         yield {'text':piece+' '}
     yield {'usage':{'input_tokens':120,'output_tokens':25},'done':True}
 
