@@ -130,6 +130,12 @@ class LensDefinitionTests(unittest.TestCase):
         context['_analysis']['scope'] = 'contextual'
         self.assertNotIn('maxItems', provider_schema(context)['properties']['connections'])
 
+    def test_all_legacy_locale_passes_respect_component_copy_ownership(self):
+        modules = api.ROOT.parent / 'admin_ui_modules'
+        for name in ('04-Independent.js', '08-MI-UX-004.js', '44-MI-206.js', '49-MI-LOCALE-RECONCILE.js'):
+            with self.subTest(name=name):
+                self.assertIn('[data-dynamic-copy]', (modules / name).read_text())
+
     def test_reference_retrieval_pairs_have_no_cross_concept_matches(self):
         # 64 explicit multilingual relationships + 16 independently specified
         # unrelated pairs. Synthetic labels test rules, not real-world recall.
