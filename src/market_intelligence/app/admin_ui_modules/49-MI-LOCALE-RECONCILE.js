@@ -7,7 +7,7 @@
     // values out of the copy pass.
     (function(){
       const selectors=['#login','#sidebar','.topbar','.content','#modalRoot'];
-      const ignored='[data-latin="true"],.article-body,.news-title-cell,.assistant-card h3,.assistant-card p,.assistant-card .assistant-meta b,#sourceRows td:first-child b,#topicRows td:first-child b,#feedbackActorRows .feedback-user b,#channelGrid b[data-latin="true"],#channelGrid code.channel-id,[data-user-content="true"]';
+      const ignored='[data-dynamic-copy],[data-latin="true"],.article-body,.news-title-cell,.assistant-card h3,.assistant-card p,.assistant-card .assistant-meta b,#sourceRows td:first-child b,#topicRows td:first-child b,#feedbackActorRows .feedback-user b,#channelGrid b[data-latin="true"],#channelGrid code.channel-id,[data-user-content="true"]';
       const pluralLabels={
         users:{fa:'کاربر',en:'users',tr:'kullanıcı',ar:'مستخدمون',it:'utenti',es:'usuarios',de:'Benutzer',fr:'utilisateurs'},
         media:{fa:'رسانه',en:'media',tr:'medya',ar:'مصدر',it:'media',es:'medios',de:'Medien',fr:'médias'},

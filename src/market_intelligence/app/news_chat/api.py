@@ -74,7 +74,7 @@ async def conversations(pid: uuid.UUID, token: str | None = Cookie(None, alias=C
         await svc.publication(s, pid, user)
         # The enforced account cap is 500. Do not make its older conversations
         # unreachable behind a silently shorter fifty-option selector.
-        rows = (await s.scalars(select(ChatConversation).where(ChatConversation.user_id == user.id, ChatConversation.publication_id == pid, ChatConversation.deleted_at.is_(None)).order_by(ChatConversation.created_at.desc(), ChatConversation.id.desc()).limit(500))).all()
+        rows = (await s.scalars(select(ChatConversation).where(ChatConversation.user_id == user.id, ChatConversation.publication_id == pid, ChatConversation.deleted_at.is_(None), func.coalesce(ChatConversation.context['_audience'].as_string(), 'reader') == 'reader').order_by(ChatConversation.created_at.desc(), ChatConversation.id.desc()).limit(500))).all()
         return {"conversations": [{"id": str(c.id), "provider": c.provider, "created_at": c.created_at.isoformat(), "context_version": c.context["version"], "saved_at": c.saved_at.isoformat() if c.saved_at else None} for c in rows]}
 
 
@@ -89,10 +89,17 @@ async def start(pid: uuid.UUID, payload: ResearchStart, token: str | None = Cook
         if payload.conversation_id:
             existing = await s.get(ChatConversation, payload.conversation_id)
             if existing:
-                if existing.user_id != user.id or existing.publication_id != pid:
+                if existing.user_id != user.id or existing.publication_id != pid or existing.context.get('_audience', 'reader') != 'reader':
                     raise HTTPException(404, "news_unavailable")
                 if existing.deleted_at or svc.window_expired(existing.context):
                     raise HTTPException(410, "conversation_closed")
+                prior_profile = existing.context.get('_analysis')
+                if payload.analysis_profile:
+                    selection = payload.analysis_profile
+                    if not prior_profile or (prior_profile['lens_id'], prior_profile['revision'], prior_profile['definition_hash'], prior_profile['scope']) != (str(selection.lens_id), selection.lens_revision, selection.lens_hash, selection.scope):
+                        raise HTTPException(409, 'idempotency_conflict')
+                elif prior_profile:
+                    raise HTTPException(409, 'idempotency_conflict')
                 if payload.source_ids or payload.memory_ids or payload.include_business or payload.revision_ids:
                     from app.reader_research.service import selected_context
                     pub = await svc.publication(s, pid, user)
@@ -111,6 +118,9 @@ async def start(pid: uuid.UUID, payload: ResearchStart, token: str | None = Cook
         if payload.source_ids or payload.memory_ids or payload.include_business or payload.revision_ids:
             from app.reader_research.service import selected_context
             ctx = await selected_context(s, pub, user, payload.source_ids, payload.memory_ids, payload.include_business, payload.revision_ids)
+        if payload.analysis_profile:
+            from app.analysis_lenses.service import attach
+            ctx = await attach(s, ctx, payload.analysis_profile, payload.source_ids or [pub.id], pub, user)
         ctx.update(_ephemeral=True, _session_hash=hashlib.sha256((token or "").encode()).hexdigest(),
                    _expires_at=(svc.now() + timedelta(seconds=svc.WINDOW_LEASE_SECONDS)).isoformat())
         c = ChatConversation(id=payload.conversation_id or uuid.uuid4(), user_id=user.id, assistant_id=pub.assistant_id, publication_id=pid,

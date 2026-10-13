@@ -134,6 +134,9 @@ def prompt(context: dict, question: str, language: str, history: list, selected:
             "Label possible consequences as inferences, not established facts. Avoid generic filler, "
             "invented company details and guarantees; if evidence is limited, say so instead of inventing points."
         )
+    if context.get('_analysis'):
+        from app.analysis_lenses.compiler import instruction
+        system += instruction(context, intent)
     if answer_length is not None:
         system += answer_length.instruction()
     messages = [{"role": "system", "content": system}, {"role": "user", "content": "REPORT DATA:\n" + source}]

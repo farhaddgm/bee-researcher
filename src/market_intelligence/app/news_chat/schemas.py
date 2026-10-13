@@ -5,6 +5,7 @@ from typing import Literal
 from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.answer_length import CharacterRanges, LengthMode
+from app.analysis_lenses.schemas import Selection
 
 LANGUAGES = ("fa", "en", "tr", "ar", "es", "it", "de", "fr")
 
@@ -20,7 +21,7 @@ class ModelSpec(Strict):
     input_usd: Decimal = Field(gt=0, le=1000)
     output_usd: Decimal = Field(gt=0, le=1000)
     max_input_chars: int = Field(default=24000, ge=2000, le=64000)
-    max_output_tokens: int = Field(default=1200, ge=200, le=4000)
+    max_output_tokens: int = Field(default=1200, ge=200, le=8000)
     enabled: bool = False
     verified: bool = False
     price_reference: str = Field(min_length=10, max_length=200)
@@ -65,6 +66,7 @@ class ResearchStart(Start):
     memory_ids: list[UUID] = Field(default_factory=list, max_length=5)
     include_business: bool = False
     revision_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    analysis_profile: Selection | None = None
 
     @model_validator(mode='after')
     def unique_selection(self):
@@ -79,7 +81,8 @@ class Question(Start):
     language: Literal["fa", "en", "tr", "ar", "es", "it", "de", "fr"] = "fa"
     context_version: str = Field(min_length=64, max_length=64)
     selected_segment: str | None = Field(default=None, max_length=20, pattern=r"^report-[0-9]+$")
-    intent: Literal["question", "opportunities", "risks", "compare", "verify", "impact", "action_draft", "timeline", "critique", "meeting", "correction_review"] = "question"
+    intent: Literal["question", "opportunities", "risks", "compare", "verify", "impact", "action_draft", "timeline", "critique", "meeting", "correction_review", "lens_analysis"] = "question"
+    analysis_version: str | None = Field(default=None, pattern=r'^[0-9a-f]{64}$')
     voice_session_ids: list[UUID] = Field(default_factory=list, max_length=10)
     target_generation_id: UUID | None = None
     analysis_text: str = Field(default='', max_length=6000)

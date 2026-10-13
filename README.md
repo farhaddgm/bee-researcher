@@ -35,6 +35,17 @@ personal attention controls, action drafts, decisions, searchable/selectable
 memory, explicit result sharing and personal cost/quality views. See the
 [reader guide](docs/READER-RESEARCH-WORKSPACE-fa.md) for behavior and limits.
 
+### Analysis lenses
+
+The [analysis-lenses documentation](docs/analysis-lenses/README-fa.md) specifies
+focused/contextual news analysis and Owner-editable, versioned lens definitions.
+The implementation adds structured Owner editing/preview/version management,
+explicit same-project supplementary report selection, immutable conversation
+profiles and validated, cited outputs. The global flag starts disabled; it does
+not change publication relevance or grant access to other projects. See the
+[implementation and acceptance record](docs/analysis-lenses/IMPLEMENTATION-STATUS-fa.md)
+for the exact test/release status, quality scope and operating instructions.
+
 ## Release safety
 
 Use a branch and Pull Request. The Market Intelligence workflow requires unit,

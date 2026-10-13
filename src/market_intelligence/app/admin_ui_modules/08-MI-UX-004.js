@@ -65,7 +65,7 @@
           // Article titles, source names, project names and error details are
           // user/source data, not UX Writing.  Leave those values in their
           // original language even when the shell locale changes.
-          if(node.children.length||node.closest('[data-language-select]')||node.closest(reportProseSelector)||node.closest('#recentRows,#publicationRows,#healthRows,#sourceRows,#topicRows,#assistantGrid,#businessSummary,#telegramDetails,#userRows,#sessionRows'))return;
+          if(node.children.length||node.closest('[data-language-select]')||node.closest('[data-dynamic-copy]')||node.closest(reportProseSelector)||node.closest('#recentRows,#publicationRows,#healthRows,#sourceRows,#topicRows,#assistantGrid,#businessSummary,#telegramDetails,#userRows,#sessionRows'))return;
           const raw=node.dataset.miFaText||node.textContent.trim();if(!raw||!persian.test(raw))return;const translated=label(raw);if(valid(translated)){node.dataset.miFaText=raw;setText(node,translated)}
         });
         dashboard();

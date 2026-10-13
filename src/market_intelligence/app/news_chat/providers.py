@@ -30,7 +30,7 @@ def cost(model: ModelSpec, usage: dict) -> Decimal | None:
              Decimal(usage["output_tokens"]) * model.output_usd) / Decimal(1_000_000)).quantize(Decimal("0.00000001"), rounding=ROUND_CEILING)
 
 
-async def stream(settings: Settings, model: ModelSpec, messages: list, *, transport=None):
+async def stream(settings: Settings, model: ModelSpec, messages: list, *, transport=None, response_schema=None):
     key = {"openai": settings.openai_api_key, "anthropic": settings.news_chat_anthropic_key,
            "google": settings.news_chat_google_key}[model.provider]
     if key is None:
@@ -42,6 +42,8 @@ async def stream(settings: Settings, model: ModelSpec, messages: list, *, transp
         headers = {"Authorization": "Bearer " + secret}
         body = {"model": model.model_id, "instructions": system, "input": turns,
                 "max_output_tokens": model.max_output_tokens, "store": False, "stream": True}
+        if response_schema is not None:
+            body['text'] = {'format': {'type': 'json_schema', 'name': 'news_analysis', 'schema': response_schema, 'strict': True}}
     elif model.provider == "anthropic":
         url = "https://api.anthropic.com/v1/messages"
         headers = {"x-api-key": secret, "anthropic-version": "2023-06-01"}
@@ -82,8 +84,11 @@ async def stream(settings: Settings, model: ModelSpec, messages: list, *, transp
                             data = event.get("response", {}).get("usage") or {}
                             usage = {"input_tokens": data.get("input_tokens"), "output_tokens": data.get("output_tokens")}
                             terminal = True
-                        elif kind in {"response.failed", "response.incomplete", "error", "response.refusal.delta"}:
-                            raise ProviderError("provider_incomplete")
+                        elif kind == 'response.incomplete':
+                            reason = event.get('response', {}).get('incomplete_details', {}).get('reason')
+                            raise ProviderError('provider_output_limit' if reason == 'max_output_tokens' else 'provider_incomplete')
+                        elif kind in {"response.failed", "error", "response.refusal.delta"}:
+                            raise ProviderError('provider_refused' if kind == 'response.refusal.delta' else 'provider_failed')
                     elif model.provider == "anthropic":
                         kind = event.get("type")
                         if kind == "message_start":

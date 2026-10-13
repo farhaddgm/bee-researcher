@@ -263,8 +263,8 @@ def _login_document(body: str, portal: str, *, password: bool = False) -> str:
     attrs = f'data-login-mode="{mode}" data-auth-portal="{portal}" data-google-ready="{str(settings.google_login_ready).lower()}"'
     body = body.replace("<body>", f"<body {attrs}>", 1)
     if portal == "admin":
-        body = body.replace('</head>', '<link rel="stylesheet" href="/assets/news-chat/chat.css"><link rel="stylesheet" href="/assets/news-voice/admin.css"></head>', 1).replace(
-            '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-voice/i18n.js"></script><script src="/assets/news-voice/admin-i18n.js"></script><script src="/assets/news-chat/admin.js"></script><script src="/assets/news-voice/admin.js"></script></body>', 1,
+        body = body.replace('</head>', '<link rel="stylesheet" href="/assets/news-chat/chat.css"><link rel="stylesheet" href="/assets/news-voice/admin.css"><link rel="stylesheet" href="/assets/analysis-lenses/lenses.css"></head>', 1).replace(
+            '</body>', '<script src="/assets/news-chat/i18n.js"></script><script src="/assets/news-voice/i18n.js"></script><script src="/assets/news-voice/admin-i18n.js"></script><script src="/assets/analysis-lenses/i18n.js"></script><script src="/assets/news-chat/admin.js"></script><script src="/assets/news-voice/admin.js"></script><script src="/assets/analysis-lenses/admin.js"></script></body>', 1,
         )
     return externalize_document(body)
 
@@ -1054,6 +1054,8 @@ async def user_ui(request: Request) -> HTMLResponse:
 
 from app.news_chat.api import router as news_chat_router
 app.include_router(news_chat_router)
+from app.analysis_lenses.api import router as analysis_lenses_router
+app.include_router(analysis_lenses_router)
 from app.news_voice.api import router as news_voice_router
 app.include_router(news_voice_router)
 from app.reader_research.api import router as reader_research_router

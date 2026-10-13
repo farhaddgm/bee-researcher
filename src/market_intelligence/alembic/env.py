@@ -12,6 +12,7 @@ from app.reader_research import models as reader_research_models  # Register add
 from app.news_voice import models as news_voice_models
 from app.reader_tools import models as reader_tools_models
 from app.token_quotas import models as token_quotas_models
+from app.analysis_lenses import models as analysis_lens_models
 
 
 config = context.config

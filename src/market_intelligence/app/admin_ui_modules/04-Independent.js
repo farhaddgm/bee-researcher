@@ -238,6 +238,7 @@
         if(translated&&el.textContent!==translated)el.textContent=translated;
       });
       document.querySelectorAll('[placeholder],[title],[aria-label]').forEach(el=>{
+        if(el.closest('[data-dynamic-copy]')||el.closest(reportProseSelector))return;
         for(const attr of ['placeholder','title','aria-label']){const visible=el.getAttribute(attr);if(!visible)continue;const marker='data-mi-fa-'+attr.replace('aria-','aria-');const fa=el.getAttribute(marker)||uxCopyKey(visible)||visible,key=uxCopyKey(fa);if(!uxWritingCatalog[key]&&!copyMap[key]&&!copyPrefixes.some(([source])=>String(key).startsWith(source)))continue;el.setAttribute(marker,fa);el.setAttribute(attr,translatedCopy(fa))}
       });
     }
