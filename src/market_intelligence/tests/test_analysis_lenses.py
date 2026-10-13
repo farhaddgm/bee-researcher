@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from app.analysis_lenses import api, discovery, results, service
 from app.analysis_lenses.catalog import initial_definitions
-from app.analysis_lenses.compiler import instruction, provider_schema
+from app.analysis_lenses.compiler import instruction, provider_schema, quote_choices
 from app.analysis_lenses.schemas import Definition, Dimension, Selection, digest
 from app.news_chat.context import context_for, prompt
 from app.news_chat import service as chat
@@ -58,7 +58,13 @@ class LensDefinitionTests(unittest.TestCase):
     def test_native_schema_uses_only_current_ids_and_required_objects(self):
         _, context, _ = fixture('marketing')
         schema = provider_schema(context)
-        self.assertEqual(['report-0', 'report-1'], schema['$defs']['Claim']['properties']['citations']['items']['enum'])
+        variants = schema['$defs']['Claim']['anyOf']
+        self.assertEqual(['report-0', 'report-1'], [v['properties']['citations']['items']['enum'][0] for v in variants])
+        for variant in variants:
+            sid = variant['properties']['citations']['items']['enum'][0]
+            text = next(s['text'] for s in context['segments'] if s['id'] == sid)
+            self.assertEqual(1, variant['properties']['citations']['maxItems'])
+            self.assertTrue(all(q in text for q in variant['properties']['quote']['enum']))
         self.assertEqual([d['key'] for d in context['_analysis']['definition']['dimensions']],
                          schema['$defs']['Finding']['properties']['dimension']['enum'])
         def check(value):
@@ -74,6 +80,49 @@ class LensDefinitionTests(unittest.TestCase):
                 for child in value:
                     check(child)
         check(schema)
+
+    def test_quote_menu_is_bounded_verbatim_and_excludes_private_context(self):
+        _, context, _ = fixture()
+        context['segments'] = [{'id': f'report-{p}-{i}', 'publication_id': str(p),
+                                'scope': 'selected_published_report', 'text': 'شروع دقیق ' + 'x' * 900 + ' پایان دقیق'}
+                               for p in range(7) for i in range(6)]
+        context['segments'].insert(0, {'id': 'report-private', 'scope': 'selected_private_memory', 'text': 'PRIVATE_QUOTE_MARKER'})
+        menu = quote_choices(context)
+        self.assertEqual(20, len(menu))
+        texts = {s['id']: s['text'] for s in context['segments']}
+        for sid, quotes in menu:
+            self.assertNotEqual('report-private', sid)
+            self.assertLessEqual(len(quotes), 3)
+            self.assertTrue(all(0 < len(q) <= 260 and q in texts[sid] for q in quotes))
+        context['segments'] = [context['segments'][0]]
+        with self.assertRaisesRegex(ValueError, 'analysis_quote_evidence_missing'):
+            quote_choices(context)
+
+    def test_owner_validation_never_echoes_raw_input_or_untrusted_field_names(self):
+        app = FastAPI(); router = APIRouter(route_class=api.PrivateAnalysisRoute)
+        @router.post('/synthetic')
+        async def create(payload: api.Create):
+            return payload
+        app.include_router(router)
+        with TestClient(app) as client:
+            response = client.post('/synthetic', json={'key': 'SECRET_INPUT_MARKER',
+                                   'definition': {'SECRET_FIELD_MARKER': 'SECRET_VALUE_MARKER'}})
+        self.assertEqual(422, response.status_code)
+        self.assertNotIn('SECRET_', response.text)
+        self.assertTrue(all(set(e) == {'loc', 'type'} for e in response.json()['detail']))
+
+    def test_large_line_counts_stay_inside_native_enum_budget(self):
+        _, context, _ = fixture()
+        context['segments'] = [{'id': f'report-{i}', 'text': f'Exact fact {i}'} for i in range(1200)]
+        schema = provider_schema(context)
+        def enum_count(value):
+            if isinstance(value, dict):
+                return len(value.get('enum', [])) + sum(enum_count(v) for k, v in value.items() if k != 'enum')
+            if isinstance(value, list):
+                return sum(enum_count(v) for v in value)
+            return 0
+        self.assertLessEqual(enum_count(schema), 1000)
+        self.assertEqual(200, len(schema['$defs']['Finding']['properties']['citations']['items']['enum']))
 
     def test_reference_retrieval_pairs_have_no_cross_concept_matches(self):
         # 64 explicit multilingual relationships + 16 independently specified

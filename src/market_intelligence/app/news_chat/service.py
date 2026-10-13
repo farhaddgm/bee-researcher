@@ -265,7 +265,10 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str, *, audi
         input_bound = sum(len(x["content"].encode()) + 100 for x in messages)
         if profile and q.intent == 'lens_analysis' and m.provider == 'openai':
             from app.analysis_lenses.compiler import provider_schema
-            native = json.dumps(provider_schema(c.context), ensure_ascii=False)
+            try:
+                native = json.dumps(provider_schema(c.context), ensure_ascii=False)
+            except ValueError:
+                raise HTTPException(422, 'analysis_evidence_missing') from None
             if sum(len(x['content']) for x in messages) + len(native) > m.max_input_chars:
                 raise HTTPException(422, 'context_too_large')
             input_bound += len(native.encode()) + 100
