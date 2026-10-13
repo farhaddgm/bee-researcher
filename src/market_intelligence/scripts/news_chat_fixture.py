@@ -29,6 +29,14 @@ NEWS = uuid.UUID('20000000-0000-4000-8000-000000000001')
 PRIVATE_NEWS = uuid.UUID('20000000-0000-4000-8000-000000000002')
 PREVIEW = uuid.UUID('20000000-0000-4000-8000-000000000003')
 PASSWORD = 'synthetic violet herons cross mountain lakes'
+VOICE_CONTINUE=asyncio.Event()
+
+
+@app.post('/_voice_fixture/continue')
+async def continue_voice_fixture():
+    # This module refuses production and is never its entrypoint.
+    VOICE_CONTINUE.set()
+    return {'synthetic_fixture':True}
 
 
 async def seed():
@@ -134,10 +142,13 @@ async def fake_stream(settings, model, messages):
     elif 'Produce a Markdown comparison table' in messages[0]['content']:
         answer='| Claim | Agreement | Differences | Evidence | Unknown |\n| --- | --- | --- | --- | --- |\n| Batteries | Reports concern batteries | Different report dates | [report-0] [report-2] | Independent verification unavailable |'
     progressive=messages[-1]['content']=='Edited question from genuine microphone capture'
+    if progressive:VOICE_CONTINUE.clear()
     if progressive:answer='First synthetic sentence grounded in the report [report-1]. Final synthetic sentence.'
     for piece in answer.split(' '):
-        await asyncio.sleep(0.15 if messages[-1]['content']=='SLOW' else 0.035)
-        if progressive and piece=='Final':await asyncio.sleep(2)
+        # Fast progressive tokens deliberately leave the end of the sentence
+        # inside the persistence throttle before the provider goes silent.
+        await asyncio.sleep(0 if progressive else 0.15 if messages[-1]['content']=='SLOW' else 0.035)
+        if progressive and piece=='Final':await asyncio.wait_for(VOICE_CONTINUE.wait(),30)
         yield {'text':piece+' '}
     yield {'usage':{'input_tokens':120,'output_tokens':25},'done':True}
 
