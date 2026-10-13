@@ -34,7 +34,7 @@ try{
   }
   assert.equal(reads,0,'Locale overwrote unsaved settings');await page.setViewportSize({width:1440,height:1100});await language('en');
   await page.locator('#newsVoiceAdmin [data-voice-key=voiceCheckConnection]').click();await page.getByText('Connection and catalog retrieval succeeded.',{exact:false}).first().waitFor();assert.equal(await key.inputValue(),secret,'Connection check saved or erased draft key');
-  const saved=page.waitForResponse(r=>r.url().endsWith('/admin/api/news-voice/credential')&&r.request().method()==='PUT');await page.locator('#newsVoiceAdmin [data-voice-key=voiceSaveKey]').click();assert.equal((await saved).status(),200);assert.equal(await key.inputValue(),'');
+  const saved=page.waitForResponse(r=>r.url().endsWith('/admin/api/news-voice/credential')&&r.request().method()==='PUT');await page.locator('#newsVoiceAdmin [data-voice-key=voiceSaveKey]').click();assert.equal((await saved).status(),200);await page.waitForFunction(()=>document.getElementById('elevenlabs-api-key')?.value==='');assert.equal(await key.inputValue(),'');
   const credential=(await api('/admin/api/news-voice/policy')).data.credential;assert.equal(credential.source,'owner');assert(!JSON.stringify(credential).includes(secret));
   assert.equal(await page.locator('input[data-voice-label=voiceSttTested]').isChecked(),false,'Rotating key retained old capability approval');
   const account=await api('/admin/api/news-voice/account-check','POST',{});assert.equal(account.status,200);assert.equal(account.data.tier,'trial');assert.equal(account.data.zero_retention_verified,false);assert.equal(account.data.audio_tested,false);
