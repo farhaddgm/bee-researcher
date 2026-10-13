@@ -208,6 +208,10 @@ async def run():
                         assert replay['id']==asset['id'] and len(calls)==2
                 finally:
                     finish_llm.set()
+                    # Let authorization failure and final accounting finish;
+                    # cancelling during the final transaction leaves an
+                    # artificial active row for the subsequent budget race.
+                    await asyncio.wait({llm_job,voice_job},timeout=2)
                     for task in (llm_job,voice_job):
                         if not task.done():task.cancel()
                     await asyncio.gather(llm_job,voice_job,return_exceptions=True)
@@ -223,16 +227,30 @@ async def run():
         q=Question(model_key='openai:fixture-v1',question='Blocked by carried voice reservation',context_version=c['context']['version'],idempotency_key=uuid.uuid4().hex)
         await reject(429,chat.send(cid,q,user,token))
         async with SessionLocal() as s:await s.execute(delete(VoiceUsage).where(VoiceUsage.id==unknown.id));await s.commit()
-        # Shared advisory lock admits only one when LLM + STT exceed the cap.
+        # Measure the actual admission bound; earlier stopped generations
+        # correctly retain money and must not be deleted to manufacture a cap.
         async with SessionLocal() as s:
-            p=await s.get(ChatPolicy,1);p.config={**original,'user_daily_budget_usd':'0.016'}
+            p=await s.get(ChatPolicy,1);p.config=original
             await s.execute(delete(VoiceUsage).where(VoiceUsage.user_id==uid));await s.commit()
+        probe_q=q.model_copy(update={'idempotency_key':uuid.uuid4().hex})
+        admitted=await chat.send(cid,probe_q,user,token);probe_gid=uuid.UUID(admitted['id'])
+        async with SessionLocal() as s:
+            g=await s.get(ChatGeneration,probe_gid);llm_bound=g.reserved_usd;g.cancel_requested=True;await s.commit()
+        # Cancel before any upstream contact: a genuine zero-cost dry admission.
+        await chat.generate(probe_gid)
+        q=q.model_copy(update={'idempotency_key':uuid.uuid4().hex})
+        async with SessionLocal() as s:
+            from app.news_chat.budget import totals
+            _,baseline=await totals(s,uid)
+            vp=await voice.policy(s);stt_bound=voice.money(vp.stt_usd_per_minute*Decimal(vp.max_input_seconds+20)/60)
+            ceiling=voice.money(baseline+max(llm_bound,stt_bound)+min(llm_bound,stt_bound)/2)
+            p=await s.get(ChatPolicy,1);p.config={**original,'user_daily_budget_usd':str(ceiling)};await s.commit()
         race=await asyncio.gather(chat.send(cid,q,user,token),voice.create_session(cid,
             Start(idempotency_key=uuid.uuid4().hex,transfer_consent=True),user,token),return_exceptions=True)
         assert sum(isinstance(r,HTTPException) and r.status_code==429 for r in race)==1,race
         async with SessionLocal() as s:
             from app.news_chat.budget import totals
-            total,own=await totals(s,uid);assert own<=Decimal('.016')
+            total,own=await totals(s,uid);assert own<=ceiling
         print('Reader voice SQL passed: real migration, private PCM/WAV, same-owner ACL including Owner, cost-free replay/download, exact clip/dialogue bytes, idempotency, save-close lease, manifest, range, bookmarks, unsave guard, deletion outbox/cascade and shared LLM/STT budget race.')
     finally:
         async with SessionLocal() as s:
