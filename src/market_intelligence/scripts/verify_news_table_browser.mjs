@@ -27,6 +27,10 @@ await page.route(/\/publications\/bulk$/,route=>{
 try{
  await page.goto(new URL('/admin/login-up',base).href);
  await page.locator('#loginUser').fill(username);await page.locator('#loginPass').fill(password);await page.locator('#loginSubmit').click();
+ // The login document also loads the Admin bundle. Its ready flag can
+ // become true before the successful login redirects to the actual portal.
+ await page.waitForURL(url=>/^\/admin\/?$/.test(url.pathname));
+ await page.locator('#app:not(.hidden)').waitFor();
  await page.waitForFunction(()=>window.__researchBeeState?.projectListReady);
  assert.equal((await (await page.request.get(new URL('/meta',base).href)).json()).environment,'test');
  await page.evaluate(()=>window.loadAll());
