@@ -38,7 +38,30 @@ try{
   const generationResponse=page.waitForResponse(r=>r.url().endsWith('/messages')&&r.request().method()==='POST');await page.locator('#newsChat [type=submit]').click();
   const generated=await generationResponse;assert.equal(generated.status(),202,await generated.text());const generation=await generated.json();assert.deepEqual(generation.voice_session_ids,[recognized]);
   await page.evaluate(cid=>window.voiceTestCid=cid,generation.conversation_id);
-  const streamingProof=await page.evaluate(async gid=>{for(let i=0;i<60;i++){const c=await fetch('/user/api/conversations/'+window.voiceTestCid+'/voice-audio');const data=await c.json();const asset=data.audio?.find(a=>a.generation_id===gid);if(asset){const r=await fetch('/user/api/voice-audio/'+asset.id+'/stream');const reader=r.body.getReader();const result=await reader.read();await reader.cancel();return {first:new TextDecoder().decode(result.value),running:document.querySelector('[data-generation="'+gid+'"] .chat-status')?.textContent.includes('Generating')}}await new Promise(r=>setTimeout(r,50))}throw Error('No progressive asset')},generation.id);assert(streamingProof.first.includes('pcm'),'No PCM arrived during text generation');assert(streamingProof.running,'First PCM arrived after LLM completion');
+  const streamingProof=await page.evaluate(async gid=>{
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
+    try{
+      for(let i=0;i<100;i++){
+        const list=await fetch('/user/api/conversations/'+window.voiceTestCid+'/voice-audio',{signal:controller.signal}),data=await list.json();
+        const asset=data.audio?.find(a=>a.generation_id===gid);
+        if(asset){
+          const response=await fetch('/user/api/voice-audio/'+asset.id+'/stream',{signal:controller.signal});
+          const reader=response.body.getReader(),frame=await reader.read();await reader.cancel();
+          const events=await fetch('/user/api/chat-generations/'+gid+'/events',{signal:controller.signal});
+          const states=events.body.getReader(),decoder=new TextDecoder();let text='';
+          while(!text.includes('\n\n')){const chunk=await states.read();if(chunk.done)throw Error('Missing generation state');text+=decoder.decode(chunk.value,{stream:true})}
+          await states.cancel();const snapshot=JSON.parse(text.match(/data: ([^\n]+)/)[1]);
+          const proof={first:new TextDecoder().decode(frame.value),status:snapshot.status};
+          const released=await fetch('/_voice_fixture/continue',{method:'POST'});if(!released.ok)throw Error('Fixture barrier did not release');
+          return proof;
+        }
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      throw Error('No progressive asset');
+    }finally{clearTimeout(timer);controller.abort()}
+  },generation.id);
+  assert(streamingProof.first.includes('pcm'),'No PCM arrived during text generation');
+  assert.equal(streamingProof.status,'running','First PCM arrived after LLM completion');
   await page.locator('.voice-output audio').last().waitFor();assert(await page.locator('.chat-answer').last().isVisible());
   const audioId=await page.locator('.voice-output .voice-player').last().getAttribute('data-audio-id'),original=await bytes(audioId);assert.equal(original.status,200);assert.equal(original.header,'RIFF');assert.equal(original.size,192044); // two genuine PCM segments
   const savedAudio=(await api('/user/api/conversations/'+generation.conversation_id+'/voice-audio')).data.audio.find(a=>a.id===audioId);assert(savedAudio.metadata.complete);assert.equal(savedAudio.metadata.spoken_text,'First synthetic sentence grounded in the report . Final synthetic sentence.');
