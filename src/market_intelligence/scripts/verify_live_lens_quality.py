@@ -50,6 +50,7 @@ def case_context(key, scope):
     value = definition.model_dump(mode='json')
     source_ids = [str(uuid.UUID(int=1001))]
     context = context_for(REPORT, None)
+    context['source_ids'] = source_ids
     if scope == 'contextual':
         context['scope'] = 'selected_research'
         source_ids.append(str(uuid.UUID(int=1002)))
@@ -180,5 +181,5 @@ if __name__ == '__main__':
     parser.add_argument('--concurrency', type=int, choices=[1, 2], default=1)
     parser.add_argument('--assistant', type=uuid.UUID, required=True)
     parser.add_argument('--budget', type=float, default=1, choices=[1, 2])
-    parser.add_argument('--run-key', choices=['lens-v1-pilot', 'lens-v1-pilot-v2', 'lens-v1-pilot-v3', 'lens-v1-matrix', 'lens-v1-matrix-v2', 'lens-v1-matrix-v3'], default='lens-v1-pilot')
+    parser.add_argument('--run-key', choices=['lens-v1-pilot', 'lens-v1-pilot-v2', 'lens-v1-pilot-v3', 'lens-v1-matrix', 'lens-v1-matrix-v2', 'lens-v1-matrix-v3', 'lens-v1-matrix-v4'], default='lens-v1-pilot')
     asyncio.run(run(parser.parse_args()))

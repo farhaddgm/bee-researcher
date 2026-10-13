@@ -14,7 +14,7 @@ def main():
     parser.add_argument('--assistant',type=uuid.UUID,required=True)
     parser.add_argument('--lenses',action='store_true',help='Synthetic focused/contextual lens quality pilot')
     parser.add_argument('--lens-matrix',action='store_true',help='All 64 lens/scope/locale combinations, one-dollar cap')
-    parser.add_argument('--lens-matrix-key',choices=['lens-v1-matrix','lens-v1-matrix-v2','lens-v1-matrix-v3'],default='lens-v1-matrix')
+    parser.add_argument('--lens-matrix-key',choices=['lens-v1-matrix','lens-v1-matrix-v2','lens-v1-matrix-v3','lens-v1-matrix-v4'],default='lens-v1-matrix')
     parser.add_argument('--lens-concurrency',type=int,choices=[1,2],default=1)
     parser.add_argument('--lens-run-key',choices=['lens-v1-pilot','lens-v1-pilot-v2','lens-v1-pilot-v3'],default='lens-v1-pilot')
     args = parser.parse_args()

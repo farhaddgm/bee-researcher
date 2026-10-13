@@ -124,6 +124,12 @@ class LensDefinitionTests(unittest.TestCase):
         self.assertLessEqual(enum_count(schema), 1000)
         self.assertEqual(200, len(schema['$defs']['Finding']['properties']['citations']['items']['enum']))
 
+    def test_native_focused_scope_forbids_connections(self):
+        _, context, _ = fixture()
+        self.assertEqual(0, provider_schema(context)['properties']['connections']['maxItems'])
+        context['_analysis']['scope'] = 'contextual'
+        self.assertNotIn('maxItems', provider_schema(context)['properties']['connections'])
+
     def test_reference_retrieval_pairs_have_no_cross_concept_matches(self):
         # 64 explicit multilingual relationships + 16 independently specified
         # unrelated pairs. Synthetic labels test rules, not real-world recall.

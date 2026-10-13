@@ -76,6 +76,8 @@ def provider_schema(context: dict) -> dict:
                                              'minItems': 1, 'maxItems': 1}
         variants.append(variant)
     schema['$defs']['Claim'] = {'anyOf': variants}
+    if context['_analysis']['scope'] == 'focused':
+        schema['properties']['connections']['maxItems'] = 0
     return schema
 
 
@@ -103,6 +105,7 @@ def instruction(context: dict, intent: str) -> str:
                  'do not treat private memory/business as a published reported claim. '
                  'In JSON citations use bare identifiers without brackets (for example "report-0"), not "[report-0]". '
                  'For effects explain a mechanism and conditions; do not provide numerical confidence. '
+                 'For focused scope the connections list MUST be empty: the anchor is not an adjacent event. '
                  'Keep the whole result concise: at most 3 claims and 2 opportunities/2 risks; '
                  'each finding at most 60 words, each optional list at most 3 items. '
                  'Include every active dimension but do not fill empty sections with speculative points. '
