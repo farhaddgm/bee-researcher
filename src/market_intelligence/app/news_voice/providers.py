@@ -79,6 +79,33 @@ async def catalog(candidate=None, search='', page_token=None):
     except Exception:raise VoiceError('voice_provider_failed') from None
 
 
+async def subscription():
+    """Account metadata only. A tier does not prove Zero Retention entitlement."""
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10,connect=5),follow_redirects=False,trust_env=False) as client:
+            async with client.stream('GET','https://api.elevenlabs.io/v1/user/subscription',
+                    headers={'xi-api-key':key()}) as response:
+                if response.status_code!=200:
+                    code={401:'voice_key_invalid',403:'voice_permissions_missing',429:'voice_rate_limited'}.get(
+                        response.status_code,'voice_provider_failed')
+                    raise VoiceError(code)
+                data=bytearray()
+                async for part in response.aiter_bytes():
+                    data.extend(part)
+                    if len(data)>128000:raise VoiceError('voice_provider_invalid')
+                account=json.loads(data)
+        tier=account.get('tier')
+        if not isinstance(tier,str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,40}',tier):
+            raise VoiceError('voice_provider_invalid')
+        return {'tier':tier if tier in {'free','starter','creator','pro','scale','business','enterprise','trial','team'} else 'custom',
+            'subscription_status':account.get('status') if account.get('status') in {'active','canceled','incomplete','past_due','unpaid','free'} else 'unknown',
+            'zero_retention_verified':False,'zero_retention_candidate':tier in ('enterprise','trial'),
+            'retention_reference':'https://elevenlabs.io/docs/eleven-api/resources/zero-retention-mode',
+            'scope':'subscription_only','audio_tested':False}
+    except VoiceError:raise
+    except Exception:raise VoiceError('voice_provider_failed') from None
+
+
 def spoken_text(text):
     text=re.sub(r'\[report-\d+\]','',text)
     text=re.sub(r'\[([^\]]+)\]\(https?://[^)]+\)',r'\1',text)

@@ -68,12 +68,16 @@ class Voice(Strict):
 class Policy(Strict):
     _credential_revision: str | None = PrivateAttr(default=None)
     enabled: bool = False
+    daily_budget_usd: Decimal = Field(default=Decimal(2), gt=0, le=1000)
+    user_daily_budget_usd: Decimal = Field(default=Decimal('0.5'), gt=0, le=100)
     continuous_enabled: bool = False
     stt_verified: bool = False
     require_zero_retention: bool = False
+    zero_retention_verified: bool = False
+    retention_reference: str = Field(default='', max_length=240)
     voices: list[Voice] = Field(default_factory=list, max_length=12)
-    stt_usd_per_minute: Decimal = Field(default=Decimal('0.01'), gt=0, le=10)
-    keyterms_multiplier: Decimal = Field(default=Decimal('1.2'), ge=1, le=5)
+    stt_usd_per_minute: Decimal = Field(default=Decimal('0.0065'), gt=0, le=10)
+    keyterms_multiplier: Decimal = Field(default=Decimal('1.2051282052'), ge=1, le=5)
     price_reference: str = Field(default='', max_length=240)
     price_expires_at: datetime | None = None
     max_input_seconds: int = Field(default=120, ge=10, le=120)
@@ -86,6 +90,8 @@ class Policy(Strict):
 
     @model_validator(mode='after')
     def valid(self):
+        if self.user_daily_budget_usd>self.daily_budget_usd:
+            raise ValueError('user voice budget exceeds global voice budget')
         if len({v.key for v in self.voices}) != len(self.voices):
             raise ValueError('duplicate voice')
         if self.price_expires_at and self.price_expires_at.tzinfo is None:
@@ -114,6 +120,7 @@ class Start(Strict):
 
 
 class TTS(Strict):
+    streaming: bool = False
     idempotency_key: str = Key
     voice_key: str = Field(min_length=8, max_length=150)
     transfer_consent: Literal[True]

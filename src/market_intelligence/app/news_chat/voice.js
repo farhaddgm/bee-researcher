@@ -18,7 +18,7 @@
     const generation=epoch,data=await api('/user/api/voice/capabilities?assistant_id='+aid);
     if(generation===epoch&&workspace===aid)caps=data;return data;
   }
-  function prepareInput(){const context=new AudioContext();return {context,resumed:context.resume()}}
+  function prepareInput(){const context=new AudioContext(),resumed=context.resume();resumed.catch(()=>{});return {context,resumed}}
   function detachMic(r){clearTimeout(r.timer);r.track?.getTracks().forEach(n=>n.stop());r.source?.disconnect();r.worklet?.disconnect();r.context?.close().catch(()=>{})}
   function stopRecording(graceful=false){
     const r=recording;if(!r)return;recording=null;
@@ -90,14 +90,14 @@
       api('/user/api/voice-audio/'+asset.id+'/playback',{method:'POST',body:JSON.stringify({played_seconds:Math.min(600,audio.currentTime),played_ranges:snapshot.slice(-100),interrupted:!audio.ended&&audio.currentTime<audio.duration})}).catch(()=>{})};
     audio.addEventListener('pause',acknowledge);audio.addEventListener('ended',acknowledge);
   }
-  async function livePreview(asset,stamp,onState){
+  async function livePreview(asset,stamp,onState,prepared){
     if(!window.AudioContext)return null;
-    const ctx=new AudioContext(),controller=new AbortController(),sources=new Set();let at=0,first=null,position=0,stopped=false;const intervals=[];
+    const ctx=prepared?.context||new AudioContext(),controller=new AbortController(),sources=new Set();let at=0,first=null,position=0,stopped=false;const intervals=[];
     const out={position:()=>{let played=0;for(const [start,end,offset] of intervals){if(ctx.currentTime<start)break;played=offset+Math.min(end-start,Math.max(0,ctx.currentTime-start))}return played},stop:(interrupted=true)=>{
       if(stopped)return;stopped=true;controller.abort();const played=out.position();for(const source of sources){try{source.stop()}catch(_){}}
       ctx.close().catch(()=>{});if(played>0)api('/user/api/voice-audio/'+asset.id+'/playback',{method:'POST',body:JSON.stringify({played_seconds:Math.min(600,played),played_ranges:[[0,Math.min(600,played)]],interrupted:interrupted&&played+0.1<position})}).catch(()=>{})
     }};
-    try{await Promise.race([ctx.resume(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('audio_autoplay')),1000))]);if(ctx.state!=='running'){out.stop();return null}}catch(_){out.stop();return null}
+    try{await Promise.race([prepared?.resumed||ctx.resume(),new Promise((_,reject)=>setTimeout(()=>reject(new Error('audio_autoplay')),1000))]);if(ctx.state!=='running'){out.stop();return null}}catch(_){out.stop();return null}
     previewAudio=out;
     out.done=(async()=>{
       try{
@@ -149,32 +149,32 @@
     parent.append(box);return audio;
   }
   async function answer(row,onState,options={}){
-    if(!caps.enabled){onState('voiceNotConfigured');return null}
+    if(!caps.enabled){options.prepared?.context.close().catch(()=>{});onState('voiceNotConfigured');return null}
     const voice=caps.voices.find(v=>v.key===options.voiceKey&&v.languages.includes(row.language))||caps.voices.find(v=>v.languages.includes(row.language));
-    if(!voice){onState('voiceUnavailable');return null}
-    stop();const stamp=epoch,key=row.id+':'+voice.key;
+    if(!voice){options.prepared?.context.close().catch(()=>{});onState('voiceUnavailable');return null}
+    const prepared=options.prepared||prepareInput();stop();const stamp=epoch,key=row.id+':'+voice.key;
     try{
       let a=assets.get(key);onState('voicePreparing');
-      const create=async(regenerate=false)=>{if(!keys.has(key)||regenerate)keys.set(key,crypto.randomUUID());return api('/user/api/chat-generations/'+row.id+'/audio',{method:'POST',body:JSON.stringify({idempotency_key:keys.get(key),voice_key:voice.key,transfer_consent:true,input_session_ids:options.inputs||[],regenerate})})};
+      const create=async(regenerate=false)=>{if(!keys.has(key)||regenerate)keys.set(key,crypto.randomUUID());return api('/user/api/chat-generations/'+row.id+'/audio',{method:'POST',body:JSON.stringify({idempotency_key:keys.get(key),voice_key:voice.key,transfer_consent:true,streaming:Boolean(options.streaming),input_session_ids:options.inputs||[],regenerate})})};
       if(a&&!a.saved_at&&new Date(a.expires_at).getTime()<=Date.now())a=null;
       if(!a){try{a=await create()}catch(e){if(e.message==='voice_retry_confirmation_required'&&!options.auto&&window.confirm(t('voiceCost')))a=await create(true);else throw e}}
       if(a.status==='failed'&&!options.auto&&window.confirm(t('voiceCost')))a=await create(true);
-      if(stamp!==epoch)return null;
-      let preview=null;if(['preparing','running'].includes(a.status))preview=await livePreview(a,stamp,onState);
+      if(stamp!==epoch){prepared.context.close().catch(()=>{});return null}
+      let preview=null;if(['preparing','running'].includes(a.status))preview=await livePreview(a,stamp,onState,prepared);else prepared.context.close().catch(()=>{});
       if(['preparing','running'].includes(a.status))a=await new Promise((resolve,reject)=>{
         streamReject=reject;stream=new EventSource('/user/api/voice-audio/'+a.id+'/events');const events=stream;
         events.addEventListener('snapshot',event=>{const item=JSON.parse(event.data);if(stamp!==epoch){events.close();reject(new Error('voice_cancelled'));return}if(!['preparing','running'].includes(item.status)){events.close();if(stream===events){stream=null;streamReject=null}item.status==='ready'?resolve(item):reject(new Error(item.metadata.error_code||'voice_failed'))}});
         events.addEventListener('access_denied',()=>{events.close();reject(new Error('voice_access_denied'))});events.onerror=()=>{events.close();reject(new Error('voice_failed'))};
       });
       const played=preview?.position()||0;preview?.stop(false);if(previewAudio===preview)previewAudio=null;
-      if(stamp!==epoch)return null;if(a.status!=='ready')throw new Error('voice_failed');assets.set(key,a);options.onReady?.(a);
+      if(stamp!==epoch){prepared.context.close().catch(()=>{});return null}if(a.status!=='ready')throw new Error('voice_failed');assets.set(key,a);options.onReady?.(a);
       if(options.container){let element=options.container.querySelector('[data-audio-id="'+a.id+'"] audio');if(!element)element=player(a,options.container,onState);currentAudio=element;
         if(played>0){element.addEventListener('loadedmetadata',()=>{element.currentTime=Math.min(played,element.duration)},{once:true});element.preload='metadata'}
         element.onended=()=>onState('voiceEnded');element.onerror=()=>onState('voiceError');
         try{await element.play();onState('speaking')}catch(_){onState('audioAutoplay')}
       }
       return a;
-    }catch(e){previewAudio?.stop();previewAudio=null;streamReject=null;if(stamp===epoch)onState(errorState(e));return null}
+    }catch(e){prepared.context.close().catch(()=>{});previewAudio?.stop();previewAudio=null;streamReject=null;if(stamp===epoch)onState(errorState(e));return null}
   }
   async function saveDialog(cid,available,title,onSaved=()=>{}){
     const eligible=available.filter(a=>a.status==='ready'&&!a.saved_at);
@@ -222,7 +222,7 @@
           events.addEventListener('access_denied',()=>{events.close();reject(new Error('voice_failed'))});events.onerror=()=>{events.close();reject(new Error('voice_failed'))};
         });
       }
-      if(stamp!==epoch)return null;
+      if(stamp!==epoch){prepared.context.close().catch(()=>{});return null}
       assets.set(key,a);options.onReady?.(a);options.container?.replaceChildren();
       if(options.container){const audio=player(a,options.container,onState);audio.onended=()=>onState('voiceEnded');try{await audio.play();onState('speaking')}catch(_){onState('audioAutoplay')}}
       return a;

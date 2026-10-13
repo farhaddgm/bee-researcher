@@ -26,7 +26,13 @@ await page.route(/\/publications\/bulk$/,route=>{
 });
 try{
  await page.goto(new URL('/admin/login-up',base).href);
+ await page.waitForFunction(()=>typeof document.getElementById('loginForm')?.onsubmit==='function');
+ const loggedIn=page.waitForResponse(r=>r.url().endsWith('/admin/api/login')&&r.request().method()==='POST');
  await page.locator('#loginUser').fill(username);await page.locator('#loginPass').fill(password);await page.locator('#loginSubmit').click();
+ assert.equal((await loggedIn).status(),200);
+ // Wait for the normal handler, successful authentication and visible
+ // portal; the recovery handler otherwise reloads this same URL.
+ await page.locator('#app:not(.hidden)').waitFor();
  await page.waitForFunction(()=>window.__researchBeeState?.projectListReady);
  assert.equal((await (await page.request.get(new URL('/meta',base).href)).json()).environment,'test');
  await page.evaluate(()=>window.loadAll());

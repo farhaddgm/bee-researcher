@@ -218,6 +218,27 @@ class ReaderProjectionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ProviderContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_idle_flush_tick_preserves_one_pending_provider_read(self):
+        released=asyncio.Event();closed=[];reads=[]
+        async def stalled():
+            try:
+                reads.append('first');yield {'text':'First '}
+                reads.append('sentence');yield {'text':'sentence. '}
+                reads.append('pending');await released.wait()
+                yield {'text':'Final.'}
+            finally:
+                closed.append(True)
+        with patch('app.news_chat.service.live',new=AsyncMock()):
+            async with service.aclosing(service.monitored_events(uuid.uuid4(),stalled())) as events:
+                self.assertEqual({'text':'First '},await events.__anext__())
+                self.assertEqual({'text':'sentence. '},await events.__anext__())
+                self.assertEqual({},await asyncio.wait_for(events.__anext__(),2))
+                self.assertEqual({},await asyncio.wait_for(events.__anext__(),2))
+                self.assertEqual(['first','sentence','pending'],reads)
+                released.set()
+                self.assertEqual({'text':'Final.'},await events.__anext__())
+        self.assertEqual([True],closed)
+
     async def test_stalled_provider_is_closed_when_access_expires(self):
         closed=[]
         async def stalled():

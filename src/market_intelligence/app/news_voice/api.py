@@ -14,7 +14,7 @@ from app.database import SessionLocal
 from app.news_chat.api import owner
 from app.security_controls import ADMIN_SESSION_COOKIE
 from app.news_chat import service as chat
-from app.news_voice import gateway, service as svc, storage, preview, credentials, providers
+from app.news_voice import gateway, service as svc, storage, preview, credentials, providers, pricing
 from app.news_voice.models import VoiceAudio, VoicePolicy, VoiceSaveJob, VoiceSegment, VoiceSession, VoiceUsage
 from app.news_voice.schemas import Bookmark, Brief, ConnectionCheck, CredentialUpdate, Playback, Policy, Reconcile, Save, Start, TTS
 
@@ -25,6 +25,12 @@ router=APIRouter();COOKIE=admin.USER_SESSION_COOKIE;ROOT=Path(__file__).parent
 async def asset(asset:str):
     files={'pcm-worklet.js':'application/javascript','pcm.js':'application/javascript','admin.js':'application/javascript','admin.css':'text/css','i18n.js':'application/javascript','admin-i18n.js':'application/javascript'}
     if asset not in files:raise HTTPException(404)
+    if asset=='pcm-worklet.js':
+        # Ship a single external module; worklet module graphs are less
+        # consistent across engines than ordinary window ESM loading.
+        source=(ROOT/'pcm.js').read_text().replace('export class PCMEncoder','class PCMEncoder')
+        source+='\n'+(ROOT/asset).read_text().replace("import {PCMEncoder} from './pcm.js';",'')
+        return Response(source,media_type='application/javascript',headers={'Cache-Control':'no-cache'})
     return FileResponse(ROOT/asset,media_type=files[asset],headers={'Cache-Control':'no-cache'})
 
 
@@ -306,7 +312,7 @@ async def get_policy(token:str|None=Cookie(None,alias=ADMIN_SESSION_COOKIE)):
     await owner(token)
     async with SessionLocal() as s:return {'policy':(await svc.policy(s)).model_dump(mode='json'),
         'configured':svc.configured(),'server_enabled':get_settings().news_voice_enabled,
-        'credential':await asyncio.to_thread(credentials.status)}
+        'credential':await asyncio.to_thread(credentials.status),'published_pricing':pricing.snapshot()}
 
 
 @router.put('/admin/api/news-voice/credential')
@@ -343,10 +349,24 @@ async def connection_check(payload:ConnectionCheck,token:str|None=Cookie(None,al
     return result
 
 
+@router.post('/admin/api/news-voice/account-check')
+async def account_check(token:str|None=Cookie(None,alias=ADMIN_SESSION_COOKIE)):
+    await owner(token)
+    async with SessionLocal() as s:
+        available=await s.scalar(text('SELECT pg_try_advisory_xact_lock(:key)'),{'key':918473202})
+        if not available:raise HTTPException(429,'voice_rate_limited')
+        try:
+            async with asyncio.timeout(12):return await providers.subscription()
+        except providers.VoiceError as exc:raise HTTPException(422,exc.code) from None
+        except TimeoutError:raise HTTPException(503,'voice_provider_failed') from None
+
+
 @router.put('/admin/api/news-voice/policy')
 async def put_policy(payload:Policy,token:str|None=Cookie(None,alias=ADMIN_SESSION_COOKIE),
         expected_credential_revision:str|None=Header(None,alias='X-Voice-Credential-Revision')):
     actor=await owner(token)
+    if payload.enabled and payload.require_zero_retention and (not payload.zero_retention_verified or len(payload.retention_reference)<10):
+        raise HTTPException(422,'voice_retention_unavailable')
     if payload.enabled and payload.price_expires_at<=svc.now():raise HTTPException(422,'voice_price_expired')
     if payload.enabled and not svc.configured():raise HTTPException(422,'voice_unconfigured')
     credential=credentials.status()

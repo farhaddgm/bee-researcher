@@ -375,6 +375,9 @@ async def monitored_events(gid, stream):
                         last_check = time.monotonic()
                     if done:
                         break
+                    # Flush buffered text even if the provider pauses between
+                    # tokens. The same pending read remains alive; no retry.
+                    yield {}
                 try:
                     event = pending.result()
                 except StopAsyncIteration:
@@ -405,6 +408,7 @@ async def generate(gid):
             deadline = g.deadline
             structured = g.usage.get('intent') == 'lens_analysis'
         last_write = time.monotonic()
+        persisted_answer = ""
         contacted = True
         native_options = {}
         if context.get('_analysis') and g.usage.get('intent') == 'lens_analysis':
@@ -418,7 +422,7 @@ async def generate(gid):
                         raise providers.ProviderError("provider_incomplete")
                 if event.get("usage"):
                     usage = event["usage"]
-                if not structured and time.monotonic() - last_write > 0.25:
+                if not structured and answer != persisted_answer and (not persisted_answer or time.monotonic() - last_write > 0.25):
                     async with SessionLocal() as s:
                         row = await s.get(ChatGeneration, gid, with_for_update=True)
                         if row.cancel_requested:
@@ -426,6 +430,7 @@ async def generate(gid):
                         row.answer = answer
                         await s.commit()
                     last_write = time.monotonic()
+                    persisted_answer = answer
         await live(gid)
         if structured:
             from app.analysis_lenses.results import validate

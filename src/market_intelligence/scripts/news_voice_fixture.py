@@ -35,6 +35,7 @@ def configure():
     providers.ttd_tts=fake_tts
     providers.scribe=fake_scribe
     providers.catalog=fake_catalog
+    providers.subscription=fake_subscription
 
 
 async def fake_catalog(candidate=None,search='',page_token=None):
@@ -45,10 +46,15 @@ async def fake_catalog(candidate=None,search='',page_token=None):
             'scope':'authentication_and_catalog_only','audio_tested':False}
 
 
+async def fake_subscription():
+    return {'tier':'trial','subscription_status':'active','zero_retention_verified':False,
+        'zero_retention_candidate':True,'scope':'subscription_only','audio_tested':False}
+
+
 async def seed():
     voice=Voice(voice_id='syntheticvoice001',label='Synthetic PCM test voice',languages=['fa','en','tr','ar','es','it','de','fr'],
         verified=True,timing=True,usd_per_1000_chars='0.05')
-    p=Policy(enabled=True,stt_verified=True,continuous_enabled=True,voices=[voice],
+    p=Policy(enabled=True,stt_verified=True,continuous_enabled=True,voices=[voice],daily_budget_usd=20,user_daily_budget_usd=10,
         price_reference='Synthetic fixture price; never a production tariff',price_expires_at=service.now()+timedelta(days=1))
     async with SessionLocal() as s:
         row=await s.get(VoicePolicy,1)

@@ -13,7 +13,7 @@
   let seq=0,pid=null,context=null,models=[],cid=null,active=null,events=null,rows=[],pending=false,returnUrl=null,heartbeat=null;
   let statusState={key:'loading'},lastError=null,daily=null,ready=false;
   let responseMode,lengthMode,lengthCharacters,microphone,voiceStop,voiceStatus,summaryBox,saveButton,savedAt=null,saving=false;
-  let voiceState=null,spoken=new Set();
+  let voiceState=null,spoken=new Set(),preparedOutput=null;
   let saveAudioButton,voiceSelect,voiceConsent,retainVoice,continuousVoice,voiceTerms,partialTranscript;
   let recordedInputs=[],continuousStarted=0,answerOptions;const voiceAssets=new Map();
   let analysis=null,anchorVersion=null;
@@ -37,12 +37,13 @@
   function fail(e){lastError=e;error.textContent=messageFor(e);if(e?.status===401||e?.status===410){for(const id of [...windowThreads.keys()])eraseServer(id);eraseLocal();ready=false;context=null;models=[];provider.replaceChildren();model.replaceChildren();error.textContent=messageFor(e);lastError=e;controls()}}
   function availability(enabled){layout.dataset.chatEnabled=String(enabled);root.hidden=!enabled;summaryBox.hidden=!enabled;layout.previousElementSibling.hidden=!enabled;if(!enabled){layout.dataset.mobileTab='news';syncTabs()}}
   function voiceUpdate(key){if(key==='voiceEnded'){voiceStop.hidden=true;if(voiceState==='listening')voiceState='voiceReview';else if(voiceState==='speaking')voiceState=null}else{voiceState=key;voiceStop.hidden=!['listening','speaking','voicePreparing'].includes(key)}voiceStatus.textContent=voiceState?t(voiceState):'';microphone.setAttribute('aria-pressed',String(voiceState==='listening'));controls();if(['voiceUnavailable','voiceError','voiceNotConfigured','voiceBudget'].includes(key)){setResponseMode('text');render()}}
-  function stopVoice(){voice?.stop();voiceState=null;if(voiceStop){voiceStop.hidden=true;voiceStatus.textContent='';microphone.setAttribute('aria-pressed','false')}}
+  function stopVoice(){preparedOutput?.context.close().catch(()=>{});preparedOutput=null;voice?.stop();voiceState=null;if(voiceStop){voiceStop.hidden=true;voiceStatus.textContent='';microphone.setAttribute('aria-pressed','false')}}
   async function readAnswer(row,auto=false){
     if(!voiceConsent.checked){if(!window.confirm(t('voiceConsent')+'\n'+t('voiceCost')))return;voiceConsent.checked=true;controls()}
     const generation=seq,container=messages.querySelector('[data-generation="'+row.id+'"] .voice-output');
+    const prepared=preparedOutput;preparedOutput=null;
     await voice?.answer(row,key=>{if(generation!==seq)return;voiceUpdate(key);if(key==='voiceEnded'&&continuousVoice.checked)startRecording()},
-      {auto,voiceKey:voiceSelect.value,inputs:row.voice_session_ids||[],container,onReady:a=>{if(generation===seq){voiceAssets.set(a.id,a);controls()}}});
+      {auto,prepared,streaming:auto&&['queued','running'].includes(row.status),voiceKey:voiceSelect.value,inputs:row.voice_session_ids||[],container,onReady:a=>{if(generation===seq){voiceAssets.set(a.id,a);controls()}}});
   }
   function fillVoices(selected=voiceSelect.value){
     const caps=voice?.capabilities()||{voices:[]};voiceSelect.replaceChildren();
@@ -69,7 +70,7 @@
             if(continuousVoice.checked&&data.complete){pending=false;send()}else controls()}});
     }catch(e){prepared?.context.close().catch(()=>{});if(generation===seq)fail(e)}finally{if(generation===seq){pending=false;controls()}}
   }
-  function autoRead(row){if(row.status==='completed'&&responseMode.dataset.value==='text'&&continuousVoice.checked){startRecording();return}if(row.status==='completed'&&row.answer&&responseMode.dataset.value!=='text'&&!spoken.has(row.id)){spoken.add(row.id);readAnswer(row,true)}}
+  function autoRead(row){if(row.status==='completed'&&responseMode.dataset.value==='text'&&continuousVoice.checked){startRecording();return}if(['queued','running','completed'].includes(row.status)&&responseMode.dataset.value!=='text'&&voiceConsent.checked&&!spoken.has(row.id)){spoken.add(row.id);readAnswer(row,true)}}
   function unavailable(key){root.dataset.unavailable='true';availability(true);summaryBox.hidden=true;setStatus(key);controls()}
   function fillModels(key){model.replaceChildren();for(const m of models.filter(m=>m.provider===provider.value)){const o=node('option',m.label);o.value=m.key;model.append(o)}if(key&&[...model.options].some(o=>o.value===key))model.value=key;controls()}
   function resetConversation(){if(cid)eraseServer(cid);eraseLocal();render();controls()}
@@ -77,6 +78,7 @@
   function jump(citation){if(citation.version!==context?.version){setStatus('changed');return}let target=$('chat-'+citation.segment_id);if(!target){const segment=context.segments.find(s=>s.id===citation.segment_id);if(!segment)return;const box=node('details',undefined,'chat-evidence');box.append(node('summary',t('references')));target=node('p',segment.text,'chat-segment');target.id='chat-'+segment.id;target.tabIndex=-1;box.append(target);box.open=true;$('dialogBody').append(box)}layout.dataset.mobileTab='news';syncTabs();target.scrollIntoView({block:'nearest',behavior:'auto'});target.focus({preventScroll:true})}
   function render(){
     const pinned=messages.scrollHeight-messages.scrollTop-messages.clientHeight<60;
+    const audioBoxes=new Map([...messages.querySelectorAll('[data-generation]')].map(n=>[n.dataset.generation,n.querySelector('.voice-output')]));
     messages.replaceChildren();
     messages.hidden=!rows.length;
     for(const row of rows){
@@ -95,8 +97,8 @@
         for(const [key,value] of [['useful',1],['unhelpful',-1]]){const b=btn(key,async()=>{const generation=seq;try{await api('/user/api/chat-messages/'+row.id+'/feedback',{method:'POST',body:JSON.stringify({value})});if(generation!==seq)return;row.feedback=value;render()}catch(e){if(generation===seq)fail(e)}});b.setAttribute('aria-pressed',String(row.feedback===value));actions.append(b)}
       }
       if(['failed','unknown','stopped'].includes(row.status)){const b=btn('retry',()=>{composer.value=row.question;composer.focus();setStatus('retry')});b.disabled=Boolean(active);actions.append(b)}
-      const audioBox=node('div',undefined,'voice-output');turn.append(audioBox);
-      for(const a of voiceAssets.values())if(a.generation_id===row.id&&a.status==='ready')voice?.player(a,audioBox,voiceUpdate);
+      const audioBox=audioBoxes.get(row.id)||node('div',undefined,'voice-output');turn.append(audioBox);
+      for(const a of voiceAssets.values())if(a.generation_id===row.id&&a.status==='ready'&&!audioBox.querySelector('[data-audio-id="'+a.id+'"]'))voice?.player(a,audioBox,voiceUpdate);
       if(row.status==='completed'){
         const showText=btn('showAnswerText',()=>{turn.classList.toggle('voice-text-open');showText.setAttribute('aria-expanded',String(turn.classList.contains('voice-text-open')))});showText.classList.add('voice-text-toggle');showText.setAttribute('aria-expanded','false');actions.append(showText);
       }
@@ -117,6 +119,7 @@
     if(composer.dataset.signature!==signature){composer.dataset.signature=signature;composer.dataset.key=requestKey()}
     const idempotencyKey=composer.dataset.key;
     try{
+      preparedOutput=responseMode.dataset.value!=='text'&&voiceConsent.checked&&voice?.canSpeak(language.value)?voice.prepareInput():null;
       if(!cid){cid=requestKey();windowThreads.set(cid,news)}
       const id=cid;
       // Predetermined UUID + server tombstone make a close-before-ack safe.
@@ -131,8 +134,8 @@
       composer.dataset.signature=[pid,context.version,key,language.value,intent,question,targetGeneration,lengthMode.dataset.value,JSON.stringify(lengthCharacters)].join('\u0000');
       const row=await api('/user/api/conversations/'+id+'/messages',{method:'POST',body:JSON.stringify({question,model_key:key,language:language.value,response_length:lengthMode.dataset.value,length_characters:lengthCharacters,context_version:context.version,...(context.analysis?{analysis_version:context.analysis.analysis_version}:{}),intent,idempotency_key:idempotencyKey,voice_session_ids:recordedInputs,...(intent==='critique'?{target_generation_id:targetGeneration}:{})})});
       if(generation!==seq)return;
-      recordedInputs=[];if(!rows.some(r=>r.id===row.id))rows.push(row);active=['queued','running'].includes(row.status)?row.id:null;composer.value='';delete composer.dataset.signature;setStatus(row.status);render();if(active)watch(active,generation);else autoRead(row);
-    }catch(e){if(generation===seq)fail(e)}finally{if(generation===seq){pending=false;controls()}}
+      recordedInputs=[];if(!rows.some(r=>r.id===row.id))rows.push(row);active=['queued','running'].includes(row.status)?row.id:null;composer.value='';delete composer.dataset.signature;setStatus(row.status);render();if(active)watch(active,generation);autoRead(row);
+    }catch(e){preparedOutput?.context.close().catch(()=>{});preparedOutput=null;if(generation===seq)fail(e)}finally{if(generation===seq){pending=false;controls()}}
   }
   function syncTabs(){layout.previousElementSibling?.querySelectorAll('[data-tab]').forEach(b=>{const selected=b.dataset.tab===layout.dataset.mobileTab;b.setAttribute('aria-selected',String(selected));b.tabIndex=selected?0:-1})}
   function build(){
