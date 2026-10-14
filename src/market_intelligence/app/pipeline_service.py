@@ -75,7 +75,6 @@ LOGGER = logging.getLogger(__name__)
 # Borderline items are intentionally visible to an operator, but they never
 # become publishable on their own.  A tenth of a point is wide enough to catch
 # useful misses without turning the review queue into a copy of every feed.
-REVIEW_MARGIN = 0.10
 
 
 class BusinessContext(Protocol):
@@ -204,6 +203,10 @@ async def settings_for_assistant(settings: Settings, assistant_id: uuid.UUID | N
         return settings
     telegram = (assistant.config or {}).get("telegram") or {}
     runtime = (assistant.config or {}).get("runtime") or {}
+    from app.analysis_policy import policy_values
+    policy = policy_values(assistant.config or {})
+    if policy:
+        settings = settings.model_copy(update=policy)
     if "relevance_threshold" not in runtime and assistant_id != DEFAULT_ASSISTANT_ID:
         # Topic thresholds are authoritative unless an admin explicitly adds
         # a project-wide floor. Do not silently raise a configured .20 to .45.
@@ -307,8 +310,9 @@ def _not_retention_tombstone():
 
 def _freshness_condition(column, settings: Settings):
     """Accept undated feed items, but reject dated items older than the window."""
-    cutoff = _utcnow() - timedelta(days=settings.freshness_window_days)
-    return or_(column.is_(None), column >= cutoff)
+    now = _utcnow()
+    cutoff = now - timedelta(days=settings.freshness_window_days)
+    return or_(column.is_(None), and_(column >= cutoff, column <= now + timedelta(minutes=5)))
 
 
 async def _profile_for_assistant(session, assistant_id: uuid.UUID | None) -> BusinessProfile | CompiledBusinessProfile | None:
@@ -337,6 +341,7 @@ async def _profile_for_assistant(session, assistant_id: uuid.UUID | None) -> Bus
 def _relevance_hash(settings: Settings, assistant: AssistantWorkspace | None, topics: Sequence[Topic], profile: BusinessContext | None) -> str:
     return relevance_context_hash({
         "revision": SCORER_REVISION, "model": settings.analysis_model,
+        "input_char_limit": settings.relevance_max_input_chars,
         "assistant_id": str(getattr(assistant, "id", "")),
         "topics": [{"topic_key": t.topic_key, "name": t.name, "definition": t.definition,
                     "positive_terms": list(t.positive_terms), "negative_terms": list(t.negative_terms)} for t in topics],
@@ -368,10 +373,12 @@ async def _article_decisions(session, articles: Sequence[NormalizedArticle], set
                 metadata = assessment_metadata(score.explanation)
                 topic = by_topic[score.topic_id]
                 assessed.append({**metadata, "score": score.ai_score, "topic_key": topic.topic_key,
-                                 "threshold": max(topic.threshold, effective.relevance_threshold),
+                                 "threshold": topic.threshold,
                                  "valid": score.ai_score is not None and score.context_hash == context_hash and metadata.get("content_hash") == content_hash
                                      and (not context or not context.live or metadata.get("full_content_hash") == full_article_hash(article.title, article.normalized_text, article.extraction_status != "complete"))})
-            decisions[article.id] = relevance_decision(assessed, topic_count=len(topics), incomplete=article.extraction_status != "complete" or any(r.get("truncated") for r in assessed))
+            decisions[article.id] = relevance_decision(assessed, topic_count=len(topics),
+                incomplete=article.extraction_status != "complete" or any(r.get("truncated") for r in assessed),
+                review_margin=effective.relevance_review_margin, min_confidence=effective.relevance_min_confidence)
         await apply_context_decisions(session, list(scoped), decisions, context, effective)
     return decisions
 
@@ -828,13 +835,13 @@ async def score_pending_articles(
                 semantic_status = "budget_deferred"
                 break
             batch = articles[offset:offset + batch_size]
-            inputs: list[dict[str, Any]] = [{"id": str(a.id), "title": a.title, "text": a.normalized_text if context and context.live else a.normalized_text[:6000], "incomplete": a.extraction_status != "complete"} for a in batch]
+            inputs: list[dict[str, Any]] = [{"id": str(a.id), "title": a.title, "text": a.normalized_text, "incomplete": a.extraction_status != "complete"} for a in batch]
             input_chars = sum(len(a["text"]) + len(a["title"]) for a in inputs) + len(str(topic_context)) + len(str(business)) + len(mission)
             batch_scores, semantic_status, used_requests = await _classify_relevance_batch(
                 settings, client, assistant_id=assistant_id, inputs=inputs, topics=topic_context,
                 business=business, mission=mission, input_chars=input_chars,
                 remaining_requests=settings.relevance_max_requests_per_run - requests,
-                max_input_chars=20000 if context and context.live else 6000,
+                max_input_chars=settings.relevance_max_input_chars,
             )
             requests += used_requests
             ai_scores.update(batch_scores)
@@ -856,7 +863,7 @@ async def score_pending_articles(
             score = combine_topic_score(
                 lexical=lexical,
                 semantic=None,
-                threshold=max(topic.threshold, settings.relevance_threshold),
+                threshold=topic.threshold,
                 positive_matches=positive,
                 negative_matches=negative,
             )
@@ -864,8 +871,9 @@ async def score_pending_articles(
             combined = model_score[0] if model_score is not None else score.combined_score
             metadata = assessment_metadata(model_score[1]) if model_score else {}
             decision = relevance_decision([{**metadata, "valid": bool(metadata), "score": combined,
-                                           "threshold": max(topic.threshold, settings.relevance_threshold)}], topic_count=1,
-                                          incomplete=article.extraction_status != "complete")
+                                           "threshold": topic.threshold}], topic_count=1,
+                                          incomplete=article.extraction_status != "complete" or bool(metadata.get("truncated")),
+                                          review_margin=settings.relevance_review_margin, min_confidence=settings.relevance_min_confidence)
             selected = decision["publishable"]
             selected_articles.update([article.id] if selected else [])
             rows.append(
@@ -1451,7 +1459,7 @@ async def analyze_pending_articles(settings: Settings, *, limit: int, assistant_
                 Topic.enabled.is_(True), Topic.assistant_id == assistant_id,
                 ArticleTopic.ai_score.is_not(None),
                 ArticleTopic.context_hash == current_hash,
-                ArticleTopic.ai_score >= func.greatest(Topic.threshold, settings.relevance_threshold) - REVIEW_MARGIN,
+                ArticleTopic.ai_score >= Topic.threshold - settings.relevance_review_margin,
             )
         )
         rows = (
@@ -2039,6 +2047,8 @@ async def publish_publication(publication_id: uuid.UUID, *, allow_stale_claim: b
             published_at = observer_row[1].published_at
             if published_at is not None and published_at < _utcnow() - timedelta(days=effective.freshness_window_days):
                 raise RuntimeError("publication is outside the configured freshness window")
+            if published_at is not None and published_at > _utcnow() + timedelta(minutes=5):
+                raise RuntimeError("publication has an invalid future publisher date")
             if observer_row[0].status != "succeeded":
                 raise RuntimeError("publication requires completed AI analysis")
             current_topics = (await session.scalars(select(Topic).where(Topic.assistant_id == assistant_id, Topic.enabled.is_(True)).order_by(Topic.topic_key))).all()
@@ -2131,6 +2141,12 @@ async def _send_claimed_publication(
         if _template_has_image(feedback_template if isinstance(feedback_template, list) else None):
             candidate = str((delivery_article.provenance or {}).get("image_url") or "").strip()
             image_url = candidate if candidate.startswith("https://") else None
+    if not settings.telegram_channel_id and not settings.telegram_observer_channel_id:
+        # The Reader is a publication destination itself. No configured
+        # Telegram channel means no external send, not a publishing failure.
+        await _record_delivery(publication_id, settings, [], [], None, None)
+        return {"publication_id": str(publication_id), "status": "published", "message_ids": [],
+                "observer_message_ids": [], "destinations": ["user_portal"], "idempotent": False}
     telegram = TelegramClient(settings)
     permission = await telegram.check_permissions()
     if not permission.ready:
@@ -2188,7 +2204,7 @@ async def _record_delivery(
         publication.audit = {
             **audit,
             "published_by": "pipeline",
-            "permission": asdict(permission),
+            "permission": asdict(permission) if permission is not None else {"destination": "user_portal", "telegram": "not_configured"},
         }
         publication.published_at = now
         publication.updated_at = now
@@ -2595,6 +2611,7 @@ async def list_publications(*, status: str | None = None, limit: int = 50, assis
         {
             "id": str(publication.id),
             "analysis_id": str(publication.analysis_id),
+            "article_id": str(_article.id),
             "status": publication.status,
             "message_id": publication.message_id,
             "message_text": publication.message_text,
@@ -2618,6 +2635,38 @@ async def list_publications(*, status: str | None = None, limit: int = 50, assis
     ]
 
 
+def review_queue_eligible(decision: dict, margin: float = .10) -> bool:
+    score, threshold = decision.get("relevance_score"), decision.get("relevance_threshold")
+    return (decision.get("score_kind") == "ai" and score is not None and threshold is not None
+            and float(score) + 1e-9 >= float(threshold) - margin
+            and decision.get("relevance_state") in {"selected", "borderline"})
+
+
+async def list_review_queue(*, assistant_id: uuid.UUID, limit: int = 1000) -> list[dict]:
+    """Scored news is visible even before its separate report-writing job runs."""
+    settings = await settings_for_assistant(get_settings(), assistant_id)
+    existing = await list_publications(assistant_id=assistant_id, limit=limit)
+    async with SessionLocal() as session:
+        rows = (await session.execute(select(NormalizedArticle, Source.name, Source.source_key)
+            .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id).join(Source, Source.id == SourceItem.source_id)
+            .where(NormalizedArticle.assistant_id == assistant_id, Source.assistant_id == assistant_id,
+                _freshness_condition(NormalizedArticle.published_at, settings),
+                ~exists(select(Publication.id).join(ArticleAnalysis, ArticleAnalysis.id == Publication.analysis_id)
+                    .where(ArticleAnalysis.article_id == NormalizedArticle.id)),
+                exists(select(ArticleTopic.id).join(Topic, Topic.id == ArticleTopic.topic_id)
+                    .where(ArticleTopic.article_id == NormalizedArticle.id, Topic.assistant_id == assistant_id,
+                        Topic.enabled.is_(True), ArticleTopic.ai_score >= Topic.threshold - settings.relevance_review_margin)))
+            .order_by(NormalizedArticle.extracted_at.desc()).limit(limit))).all()
+        decisions = await _article_decisions(session, [r[0] for r in rows], settings)
+    pending = [{"id": "article:" + str(article.id), "article_id": str(article.id), "analysis_id": None,
+        "status": "preview", "message_id": None, "message_text": article.title,
+        "created_at": article.extracted_at, "published_at": None, "article_published_at": article.published_at,
+        "source_name": name, "source_key": key, "source_url": article.canonical_url, "analysis_ready": False,
+        **decisions[article.id], "can_approve": False} for article, name, key in rows]
+    result = [row for row in existing + pending if review_queue_eligible(row, settings.relevance_review_margin)]
+    return sorted(result, key=lambda row: row["created_at"], reverse=True)[:limit]
+
+
 async def list_relevance_assessments(*, assistant_id: uuid.UUID, limit: int = 200, offset: int = 0, state: str | None = None, query: str | None = None) -> dict[str, object]:
     """Paginate a disclosed recent 500-item window using current AI decisions.
 
@@ -2630,18 +2679,20 @@ async def list_relevance_assessments(*, assistant_id: uuid.UUID, limit: int = 20
                 .join(SourceItem, SourceItem.id == NormalizedArticle.source_item_id)
                 .join(Source, Source.id == SourceItem.source_id)
                 .where(NormalizedArticle.assistant_id == assistant_id, Source.assistant_id == assistant_id,
-                       _freshness_condition(NormalizedArticle.published_at, settings)))
+                       or_(and_(NormalizedArticle.published_at >= _utcnow() - timedelta(days=7), NormalizedArticle.published_at <= _utcnow()),
+                           and_(NormalizedArticle.published_at.is_(None), NormalizedArticle.extracted_at >= _utcnow() - timedelta(days=7)))))
         if query and query.strip():
             term = "%" + query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
             statement = statement.where(or_(NormalizedArticle.title.ilike(term, escape="\\"), Source.name.ilike(term, escape="\\")))
-        available = int(await session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
-        rows = (await session.execute(statement.order_by(NormalizedArticle.extracted_at.desc(), NormalizedArticle.id).limit(500))).all()
+        rows = (await session.execute(statement.order_by(NormalizedArticle.published_at.desc().nullslast(), NormalizedArticle.id))).all()
         decisions = await _article_decisions(session, [r[0] for r in rows], settings)
-    counts = {state: sum(d["relevance_state"] == state for d in decisions.values()) for state in ("selected", "borderline", "rejected", "pending")}
+    rows = [r for r in rows if decisions[r[0].id].get("score_kind") == "ai"
+            and float(decisions[r[0].id].get("relevance_score") or 0) >= settings.relevance_min_score]
+    counts = {state: sum(decisions[r[0].id]["relevance_state"] == state for r in rows) for state in ("selected", "borderline", "rejected", "pending")}
     filtered = [r for r in rows if not state or decisions[r[0].id]["relevance_state"] == state]
     page_rows = filtered[max(0, offset):max(0, offset) + min(max(limit, 1), 200)]
-    return {"revision": SCORER_REVISION, "counts": counts, "counts_scope": "recent_search_window", "window_limit": 500,
-            "window_capped": available > 500, "total_available": available, "total": len(filtered),
+    return {"revision": SCORER_REVISION, "counts": counts, "counts_scope": "related_news_last_seven_days", "window_limit": None,
+            "window_capped": False, "total_available": len(rows), "total": len(filtered),
             "offset": offset, "limit": limit, "no_external_request": True, "articles": [
         {"id": str(article.id), "title": article.title, "source_name": source_name,
          "source_url": article.canonical_url, "published_at": article.published_at, **decisions[article.id]} for article, source_name in page_rows]}

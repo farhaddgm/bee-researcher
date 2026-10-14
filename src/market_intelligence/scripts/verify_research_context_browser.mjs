@@ -28,8 +28,10 @@ try{
     for(const width of [1440,900,390,320]){
       await page.setViewportSize({width,height:900});await page.locator('#researchConfigure').click();const modal=page.locator('#modalRoot [role=dialog]');await modal.waitFor();
       assert.equal(await modal.locator('select').count(),4);
+      await modal.locator('#researchSource').selectOption('none');
       assert.equal(await modal.locator('#researchSections').isVisible(),false);
       await modal.locator('#researchSource').selectOption('local');await modal.locator('#researchMode').selectOption('focused');
+      await modal.locator('#researchRollout').selectOption('shadow');
       assert.equal(await modal.locator('#researchThresholdField').isVisible(),true);
       assert.equal(await modal.locator('#researchSections input').count(),8);
       assert.equal(await modal.locator('#researchLocal b').count(),0,'Business name executed as HTML');
@@ -53,17 +55,41 @@ try{
   }
   await page.setViewportSize({width:1440,height:900});await page.evaluate(()=>window.setLanguage('en'));
   // Real HTTP activation: compilation-only shadow never changes publication.
-  await page.locator('#researchConfigure').click();await page.locator('#researchSource').selectOption('local');await page.locator('#researchMode').selectOption('contextual');await page.locator('#researchConsent').check();await page.locator('#researchPreview').click();await page.locator('#researchActivate:not([disabled])').waitFor();
-  const activation=page.waitForResponse(r=>r.url().endsWith('/research-context/activate'));await page.locator('#researchActivate').click();assert.equal((await activation).status(),200);
+  await page.locator('#researchConfigure').click();await page.locator('#researchSource').selectOption('local');await page.locator('#researchMode').selectOption('contextual');await page.locator('#researchRollout').selectOption('shadow');await page.locator('#researchConsent').check();await page.locator('#researchPreview').click();await page.locator('#researchActivate:not([disabled])').waitFor();
+  const activation=page.waitForResponse(r=>r.url().endsWith('/research-context/configure'));await page.locator('#researchActivate').click();assert.equal((await activation).status(),200);
   await page.waitForFunction(()=>!document.querySelector('[data-research-actor]'));
   const own=`/admin/api/assistants/${projects[0]}/research-context`,other=`/admin/api/assistants/${projects[1]}/research-context`;
   assert.equal((await api(page,own)).data.active.rollout,'shadow');assert.equal((await api(page,other)).data.active,null);
+  // A valid selected profile can be saved live without news, topics or a paid
+  // preview. Consent remains mandatory and focused gates remain protected.
+  await page.locator('#researchConfigure').click();await page.locator('#researchRollout').selectOption('live');await page.locator('#researchConsent').check();
+  const configured=page.waitForResponse(r=>r.url().endsWith('/research-context/configure'));await page.locator('#researchActivate').click();assert.equal((await configured).status(),200);
+  await page.waitForFunction(()=>!document.querySelector('[data-research-actor]'));
+  assert.equal((await api(page,own)).data.active.rollout,'live');
+  assert.equal((await api(page,own)).data.active.brief.business_name,'Acme <b>synthetic</b>');
+  const runtime=`/admin/api/assistants/${projects[0]}/runtime-settings`;
+  assert.equal((await api(page,runtime,'PUT',{analysis_model:'gpt-6-luna'})).status,200);
+  await page.evaluate(()=>window.loadAll());
+  const health=page.waitForResponse(r=>r.url().includes('/operations/status?')&&r.url().includes('assistant_id='+projects[0]));
+  await page.locator('.nav-btn[data-view="overview"]').click();assert.equal((await health).status(),200);
+  await page.waitForFunction(()=>document.getElementById('stepAnalyzeText')?.textContent==='gpt-6-luna');
+  assert(!(await page.locator('[data-product-health]').innerText()).includes('Could not load'));
+  await page.locator('.nav-btn[data-view="settings"]').click();await page.locator('#analyzerPolicyCard input:not([disabled])').first().waitFor();
+  assert.equal(await page.locator('#analyzerPolicyCard input').count(),8);
+  await page.locator('#policy-relevance_review_margin').fill('0.08');
+  const policySaved=page.waitForResponse(r=>r.url().endsWith('/analysis-policy')&&r.request().method()==='PUT');
+  await page.locator('#analyzerPolicyCard button[type="submit"]').click();assert.equal((await policySaved).status(),200);
+  assert.equal((await api(page,`/admin/api/assistants/${projects[0]}/analysis-policy`)).data.values.relevance_review_margin,.08);
+  await page.locator('.nav-btn[data-view="businesses"]').click();
   // Same compiled preview cannot be transferred; project switching closes the dialog.
   await page.locator('#researchConfigure').click();await page.locator('#workspaceSelect').selectOption(projects[1]);await page.waitForFunction(()=>!document.querySelector('[data-research-actor]'));
   for(const role of ['viewer','editor']){
     const user=`research-${role}-${Date.now()}`,pass='synthetic-research-context-password';const created=await api(page,'/admin/api/users','POST',{username:user,password:pass,role,assistant_ids:[projects[0]]});assert.equal(created.status,200);users.push(created.data.id);
     const session=await browser.newContext();const member=await session.newPage();member.on('pageerror',e=>errors.push(e.message));await login(member,user,pass);
     assert.equal((await api(member,own)).status,200);assert.equal((await api(member,other)).status,403);
+    assert.equal((await api(member,`/admin/api/assistants/${projects[0]}/analysis-policy`)).status,403);
+    const listed=(await api(member,'/admin/api/assistants')).data.assistants.find(p=>p.id===projects[0]);
+    assert(!Object.hasOwn(listed.config,'analysis_policy'),'Owner policy leaked through the generic project list');
     assert.equal((await api(member,own+'/preview','POST',{source:'none',mode:'topics'})).status,role==='viewer'?403:200);
     await member.locator('.nav-btn[data-view="businesses"]').click();await member.waitForFunction(()=>document.getElementById('researchContextCard')?.dataset.loadedAssistant===window.__researchBeeState.assistantId);
     assert.equal(await member.locator('#researchConfigure').count(),role==='viewer'?0:1);

@@ -18,13 +18,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', required=True)
     parser.add_argument('--revision', required=True)
+    parser.add_argument('--version', default='3.53.0', choices=['3.53.0', '3.54.0'])
     args = parser.parse_args()
-    candidate(args.image, args.revision, '3.53.0')
+    candidate(args.image, args.revision, args.version)
     values = migration_values(MIGRATOR)
     runtime = dict(v.split('=', 1) for v in inspect('ai-market-intelligence')['Config']['Env'] if '=' in v)
     backup_values = scoped_backup_values(values, runtime)
     stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())
-    directory = PRIVATE / ('3.53.0-migration-' + stamp)
+    directory = PRIVATE / (args.version + '-migration-' + stamp)
     directory.mkdir(mode=0o700)
     common = ['docker', 'run', '--rm', '--network', 'container:ai-market-intelligence', '--read-only',
               '--tmpfs', '/tmp:size=32m,mode=1777', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',

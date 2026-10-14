@@ -667,6 +667,7 @@ class BusinessKnowledgeUpdate(BaseModel):
     strategic_goals: list[str] = Field(default_factory=list, max_length=50)
     sensitivities: list[str] = Field(default_factory=list, max_length=50)
     source_urls: list[str] = Field(default_factory=list, max_length=50)
+    expected_revision: int | None = Field(default=None, ge=0)
 
 
 class PrivacySettingsUpdate(BaseModel):
@@ -2212,7 +2213,7 @@ async def assistants(user: AdminUser) -> dict[str, object]:
     # in the Researcher project selector. This also prevents a newly-created
     # Bee CFO workspace from becoming the default empty media/topics view.
     rows = [row for row in rows if str((row.config or {}).get("product") or "").strip().lower() != "bee_cfo"]
-    return {"count": len(rows), "assistants": [{"id": str(x.id), "slug": x.slug, "name": x.name, "business_name": x.business_name, "description": x.description, "status": x.status, "config": x.config, "deleted_at": x.deleted_at.isoformat() if x.deleted_at else None, "can_delete": (not x.deleted_at) and workspace_delete_allowed(effective_user_role(user), member_roles.get(x.id), owner=is_owner(user)), "can_restore": bool(x.deleted_at and is_owner(user)), "can_permanent_delete": bool(x.deleted_at and is_owner(user)), "created_at": x.created_at.isoformat(), "updated_at": x.updated_at.isoformat()} for x in rows]}
+    return {"count": len(rows), "assistants": [{"id": str(x.id), "slug": x.slug, "name": x.name, "business_name": x.business_name, "description": x.description, "status": x.status, "config": {key: value for key, value in (x.config or {}).items() if key not in {"analysis_policy", "analysis_policy_updated_at"}}, "deleted_at": x.deleted_at.isoformat() if x.deleted_at else None, "can_delete": (not x.deleted_at) and workspace_delete_allowed(effective_user_role(user), member_roles.get(x.id), owner=is_owner(user)), "can_restore": bool(x.deleted_at and is_owner(user)), "can_permanent_delete": bool(x.deleted_at and is_owner(user)), "created_at": x.created_at.isoformat(), "updated_at": x.updated_at.isoformat()} for x in rows]}
 
 
 async def assistant_readiness(assistant_id: uuid.UUID, user: AdminUser) -> dict[str, object]:
@@ -2590,6 +2591,15 @@ async def _copy_workspace_catalog(session, source_assistant_id: uuid.UUID, targe
 
 
 async def create_assistant(payload: AssistantRequest, user: AdminUser) -> dict[str, object]:
+    if "analysis_policy" in (payload.config or {}):
+        if not is_owner(user):
+            raise HTTPException(403, "owner role required")
+        from app.analysis_policy import AnalysisPolicy
+        from pydantic import ValidationError
+        try:
+            AnalysisPolicy.model_validate(payload.config["analysis_policy"])
+        except ValidationError as exc:
+            raise HTTPException(422, "invalid_analysis_policy") from exc
     async with SessionLocal() as session:
         # The owner chooses the account-wide project ceiling from the owner
         # settings page.  Until one exists, keep the safe default of ten.
@@ -4546,6 +4556,8 @@ async def update_business_knowledge(assistant_id: uuid.UUID, payload: BusinessKn
             raise HTTPException(status_code=404, detail="assistant not found")
         config = dict(item.config or {})
         previous = _object_mapping(config.get("business_knowledge"))
+        if payload.expected_revision is not None and payload.expected_revision != _safe_int_value(previous.get("revision")):
+            raise HTTPException(409, "business_knowledge_changed")
         history = _object_list(previous.get("history"))
         if previous:
             history.append({"revision": _safe_int_value(previous.get("revision")), "updated_at": previous.get("updated_at"), "knowledge": _clean_knowledge(dict(previous))})
@@ -4611,6 +4623,7 @@ async def get_assistant_runtime_settings(assistant_id: uuid.UUID, user: AdminUse
         "telegram_silent_notifications": bool(runtime.get("telegram_silent_notifications", False)),
         "analysis_model": runtime.get("analysis_model", get_settings().analysis_model),
         "analysis_model_options": analysis_model_options(),
+        "auto_publish_effective": bool(app_settings.auto_publish and not app_settings.pilot_mode and not (assistant.config or {}).get("sandbox", {}).get("enabled")),
         "relevance_threshold": runtime.get("relevance_threshold", app_settings.relevance_threshold if assistant_id == DEFAULT_ASSISTANT_ID else 0.0),
         "ai_analysis_ready": app_settings.openai_ready,
         "allowed_feedback_usernames": list(runtime.get("allowed_feedback_usernames", sorted(get_settings().allowed_telegram_username_values))),

@@ -92,9 +92,21 @@
     const profile=data?.profile;
     if (!profile) return;
     const sectionNames=SECTIONS[S()?.language]||SECTIONS.en;
-    const content=(profile.sections||[]).map(section=>`<section><h4>${E(sectionNames[keys.indexOf(section.key)]||section.key)}</h4><div class="contenter-prose" data-user-content="true" dir="auto">${E(section.content||'—')}</div></section>`).join('');
+    const content=(profile.sections||[]).map(section=>`<section class="contenter-section"><h4>${E(sectionNames[keys.indexOf(section.key)]||section.key)}</h4>${profileValue(section.content||'—')}</section>`).join('');
     const groups=[['facts',31],['terms',32],['notes',33],['references',34],['assets',35]].map(([key,title])=>`<section><h4>${E(L(title))}</h4>${(profile[key]||[]).map(item=>`<div class="contenter-prose" data-user-content="true" dir="auto">${E([item.label||item.term||item.title||'',item.value||item.text||item.excerpt||item.description||'',item.analysis?.summary||''].filter(Boolean).join('\n'))}</div>`).join('')||`<p>${E(L(38))}</p>`}</section>`).join('');
-    showModal(data.business_name,`<div class="contenter-profile" data-dynamic-copy><p class="notice">${E(L(1))}</p>${content}${groups}</div>`).dataset.contenterProfile='';
+    const dialog=showModal(data.business_name,`<div class="contenter-profile contenter-profile-grid" data-dynamic-copy><p class="notice">${E(L(25))} · ${E(L(22))} ${E(data.version)}</p>${content}${groups}</div>`);
+    dialog.dataset.contenterProfile='';dialog.classList.add('contenter-profile-dialog');
+  }
+  function profileValue(value,depth=0) {
+    // Structured export sections may be JSON, rich objects, arrays or prose.
+    // Render every value as text, never HTML or model-generated markup.
+    if(typeof value==='string'){
+      if(depth<6&&/^[\[{]/.test(value.trim())){try{return profileValue(JSON.parse(value),depth+1);}catch(_){}}
+      return value.split(/\n\s*\n/).map(part=>`<p class="contenter-prose" data-user-content="true" dir="auto">${E(part)}</p>`).join('');
+    }
+    if(Array.isArray(value)&&depth<6)return `<ul class="contenter-values">${value.map(item=>`<li>${profileValue(item,depth+1)}</li>`).join('')}</ul>`;
+    if(value&&typeof value==='object'&&depth<6)return `<dl class="contenter-fields">${Object.entries(value).map(([key,item])=>`<div><dt data-user-content="true" dir="auto">${E(key.replace(/([a-z])([A-Z])/g,'$1 $2').replace(/_/g,' '))}</dt><dd>${profileValue(item,depth+1)}</dd></div>`).join('')}</dl>`;
+    return `<span data-user-content="true" dir="auto">${E(value&&typeof value==='object'?JSON.stringify(value):value??'—')}</span>`;
   }
   async function choose() {
     const id=S()?.assistantId,currentActor=actor();if(!id||!write())return;

@@ -68,7 +68,8 @@ class ProductReliabilityTest(unittest.TestCase):
             self.assertEqual(200,response.status_code)
             service.assert_awaited_once_with(assistant_id=aid,limit=25,offset=25,state="pending",query="Gemini")
             self.assertEqual(422,TestClient(app).get(f"/publications/relevance-assessments?assistant_id={aid}&state=published").status_code)
-            self.assertEqual(422,TestClient(app).get(f"/publications/relevance-assessments?assistant_id={aid}&offset=501").status_code)
+            self.assertEqual(200,TestClient(app).get(f"/publications/relevance-assessments?assistant_id={aid}&offset=501").status_code)
+            self.assertEqual(422,TestClient(app).get(f"/publications/relevance-assessments?assistant_id={aid}&offset=100001").status_code)
 
 
 if __name__ == "__main__":

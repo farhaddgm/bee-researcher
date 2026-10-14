@@ -75,6 +75,7 @@ ADMIN_HTML = ADMIN_HTML.replace("__UX_WRITING_CATALOG__", _UX_WRITING_CATALOG_JS
 )
 
 # One shared login/identity controller replaces the legacy delayed layers.
+ADMIN_HTML = ADMIN_HTML.replace('</body>', '<script id="admin-analysis-tools">' + Path(__file__).with_name("admin_analysis_tools.js").read_text(encoding="utf-8") + '</script></body>', 1)
 ADMIN_HTML = ADMIN_HTML.replace('</head>', '<style id="admin-declarations">' + (_MODULE_ROOT / 'declarations.css').read_text(encoding='utf-8') + '</style></head>', 1)
 from app.auth_ui import decorate_auth_html
 ADMIN_HTML = decorate_auth_html(ADMIN_HTML, admin=True)

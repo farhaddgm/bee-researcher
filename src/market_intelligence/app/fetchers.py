@@ -252,9 +252,10 @@ def parse_feed(content: bytes, base_url: str, limit: int = 50) -> list[Discovere
         excerpt = _clean(
             _child_text(entry, ("description", "summary", "content", "encoded"))
         )[:2000]
-        published_at = _parse_date(
-            _child_text(entry, ("pubdate", "published", "updated", "date"))
-        )
+        from app.publisher_dates import latest_publisher_date
+        published_at = latest_publisher_date(*(
+            _child_text(entry, (key,)) for key in ("pubdate", "published", "updated", "date", "modified")
+        ))
         try:
             validate_public_url_syntax(url)
         except ValueError:
@@ -273,6 +274,7 @@ def parse_feed(content: bytes, base_url: str, limit: int = 50) -> list[Discovere
 
 
 def parse_json_feed(content: bytes, base_url: str, limit: int = 50) -> list[DiscoveredItem]:
+    from app.publisher_dates import latest_publisher_date
     payload = json.loads(content)
     entries = payload.get("items", []) if isinstance(payload, dict) else []
     items: list[DiscoveredItem] = []
@@ -296,9 +298,7 @@ def parse_json_feed(content: bytes, base_url: str, limit: int = 50) -> list[Disc
                 title=title,
                 url=normalize_item_url(url),
                 excerpt=excerpt,
-                published_at=_parse_date(
-                    str(entry.get("date_published") or entry.get("date_modified") or "")
-                ),
+                published_at=latest_publisher_date(entry.get("date_published"), entry.get("date_modified")),
                 raw_metadata={"adapter": "json"},
             )
         )

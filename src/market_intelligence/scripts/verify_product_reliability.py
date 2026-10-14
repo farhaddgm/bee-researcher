@@ -56,7 +56,7 @@ async def main():
             transport=AsyncMock()
             transport.draft_json.return_value={"scores":[
                 {"article_id":a["id"],"topic_key":t["topic_key"],
-                 "score":.02 if "rejected" in a["title"] else .91,
+                 "score":.02 if "rejected" in a["title"] else .61 if "near" in a["title"] else .59 if "below" in a["title"] else .91,
                  "reason":"Verified fixture evidence","confidence":.9,
                  "evidence":[f"a{index}-title-0"],"excluded":False}
                 for index,a in enumerate(articles) for t in topics
@@ -73,7 +73,8 @@ async def main():
         metrics=await p.pipeline_metrics(assistant_id=aids[0])
         assert metrics["pending_ai_articles"]==1,"Metrics use deployment model instead of workspace model"
         triage=await p.list_relevance_assessments(assistant_id=aids[0],limit=1,state="pending")
-        assert triage["total"]==1 and triage["articles"][0]["id"]==str(articles[2])
+        assert triage["total"]==0,"Unassessed news was represented as a confirmed related article"
+        assert triage["counts"]["selected"]==2 and metrics["pending_ai_articles"]==1
         assert (await p.list_relevance_assessments(assistant_id=aids[0],query="%"))["total"]==0,"Search wildcard was not literal"
         first=await p.list_relevance_assessments(assistant_id=aids[0],limit=1)
         second=await p.list_relevance_assessments(assistant_id=aids[0],limit=1,offset=1)
@@ -117,6 +118,26 @@ async def main():
         assert ra["report_id"]!=rb["report_id"],"Weekly report identity crossed projects"
         assert (await p.generate_weekly_report(now=report_end,assistant_id=aids[0]))["report_id"]==ra["report_id"],"Weekly report retry returned a nonexistent ID"
         assert rb["trends"]==[{"topic":"AI","articles":1}],"Weekly trend ignores current AI evidence"
+        # A scored article must be visible before its report exists. All
+        # current topics are assessed once; reads/threshold edits are free.
+        pending_ids=[]
+        async with SessionLocal() as db:
+            source=await db.scalar(select(Source).where(Source.assistant_id==aids[0]))
+            for title in ('model near','model below'):
+                iid,nid=uuid.uuid4(),uuid.uuid4();pending_ids.append(nid)
+                db.add(SourceItem(id=iid,assistant_id=aids[0],source_id=source.id,fingerprint=str(iid),title=title,url='https://example.org/'+str(iid),published_at=now));await db.flush()
+                db.add(NormalizedArticle(id=nid,assistant_id=aids[0],source_item_id=iid,title=title,normalized_text=title,canonical_url='https://example.org/'+str(iid),published_at=now,language='en',extraction_status='complete',extraction_method='fixture'))
+            await db.commit()
+        with patch.object(p,'classify_articles',side_effect=classify) as classifier:
+            await p.score_pending_articles(paid,limit=20,assistant_id=aids[0]);count=classifier.await_count
+            await p.score_pending_articles(paid,limit=20,assistant_id=aids[0]);assert classifier.await_count==count,'Unchanged news was charged twice'
+            queue=await p.list_review_queue(assistant_id=aids[0])
+            near=next(x for x in queue if x['id']=='article:'+str(pending_ids[0]))
+            assert not near['analysis_ready'] and not near['can_approve'] and near['relevance_score']==.61
+            assert not any(x['id']=='article:'+str(pending_ids[1]) for x in queue),'Below-band news leaked into the main queue'
+            async with SessionLocal() as db:
+                topic=await db.scalar(select(Topic).where(Topic.assistant_id==aids[0]));topic.threshold=.75;await db.commit()
+            await p.score_pending_articles(paid,limit=20,assistant_id=aids[0]);assert classifier.await_count==count,'A threshold-only edit triggered paid scoring'
         print("Product SQL passed: workspace recovery, optional business, model/timezone metrics, honest status, budget duplicate/cooldown guards, translation/send immutability, decision filters, weekly isolation/idempotency")
     finally:
         async with SessionLocal() as db:
