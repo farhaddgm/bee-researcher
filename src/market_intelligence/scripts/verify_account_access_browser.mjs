@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {refreshAdmin} from './admin_browser_helpers.mjs';
 import {chromium} from 'playwright';
 const base=process.env.BEE_ADMIN_URL,userBase=process.env.BEE_USER_URL;
 const username=process.env.MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_USERNAME,password=process.env.MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_PASSWORD;
@@ -35,7 +36,7 @@ try{
  const meta=await api('/meta');assert.equal(meta.data.environment,'test');assert.equal(meta.data.pipeline.scheduler_enabled,false);
  assert.equal(meta.data.session_idle_minutes,30);assert.equal(meta.data.session_absolute_hours,12);
  const created=await api('/admin/api/assistants','POST',{name:'Synthetic account UI',slug:'account-ui-'+Date.now(),business_name:''});assert.equal(created.status,200);projects.push(created.data.id);
- await page.evaluate(()=>window.loadAll());await page.evaluate(()=>{window.setLanguage('en');window.setView('account')});await page.locator('#accountsPanel').waitFor();
+ await refreshAdmin(page);await page.evaluate(()=>{window.setLanguage('en');window.setView('account')});await page.locator('#accountsPanel').waitFor();
  assert.equal(await page.locator('#accountsPanel h3').innerText(),'Accounts and access');
  assert.equal(await page.locator('#userRows').isVisible(),false,'Old directory still displayed');
  for(const language of ['fa','en','tr','ar','es','it','de','fr']){

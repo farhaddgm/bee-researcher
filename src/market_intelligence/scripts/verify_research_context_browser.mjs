@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {chromium} from 'playwright';
+import {refreshAdmin} from './admin_browser_helpers.mjs';
 
 const base=process.env.BEE_ADMIN_URL, username=process.env.MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_USERNAME, password=process.env.MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_PASSWORD;
 if(!base||!username||!password||process.env.MARKET_INTELLIGENCE_ENVIRONMENT!=='test')throw new Error('Isolated test URL and synthetic credentials required');
@@ -21,7 +22,7 @@ try{
   for(let n=0;n<2;n++){const result=await api(page,'/admin/api/assistants','POST',{name:'Research context browser '+n,slug:`research-context-${Date.now()}-${n}`,business_name:'',config:{active_business_id:null}});assert.equal(result.status,200);projects.push(result.data.id);}
   const business=await api(page,`/admin/api/assistants/${projects[0]}/businesses`,'POST',{business_name:'Acme <b>synthetic</b>',description:'Battery technology supplier',products_services:'Battery systems',target_customers:'Manufacturers',markets:'Europe'});
   assert.equal(business.status,200);
-  await page.evaluate(()=>window.loadAll());await select(projects[0]);
+  await refreshAdmin(page);await select(projects[0]);
   for(const locale of ['fa','en','tr','ar','es','it','de','fr']){
     await page.evaluate(locale=>window.setLanguage(locale),locale);
     const heading=await page.locator('#researchContextCard h3').innerText();if(!['fa','ar'].includes(locale))assert(!/[پچژگک]/.test(heading),locale);
@@ -69,7 +70,7 @@ try{
   assert.equal((await api(page,own)).data.active.brief.business_name,'Acme <b>synthetic</b>');
   const runtime=`/admin/api/assistants/${projects[0]}/runtime-settings`;
   assert.equal((await api(page,runtime,'PUT',{analysis_model:'gpt-6-luna'})).status,200);
-  await page.evaluate(()=>window.loadAll());
+  await refreshAdmin(page);
   const health=page.waitForResponse(r=>r.url().includes('/operations/status?')&&r.url().includes('assistant_id='+projects[0]));
   await page.locator('.nav-btn[data-view="overview"]').click();assert.equal((await health).status(),200);
   await page.waitForFunction(()=>document.getElementById('stepAnalyzeText')?.textContent==='gpt-6-luna');
