@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {chromium} from 'playwright';
+import {refreshAdmin} from './admin_browser_helpers.mjs';
 
 const base=process.env.BEE_ADMIN_URL;
 const username=process.env.MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_USERNAME;
@@ -34,12 +35,17 @@ try{
  const loggedIn=page.waitForResponse(r=>r.url().endsWith('/admin/api/login')&&r.request().method()==='POST');
  await page.locator('#loginUser').fill(username);await page.locator('#loginPass').fill(password);await page.locator('#loginSubmit').click();
  assert.equal((await loggedIn).status(),200);
- // Wait for the normal handler, successful authentication and visible
- // portal; the recovery handler otherwise reloads this same URL.
+ // Require normal authentication and a visible portal before refreshing.
  await page.locator('#app:not(.hidden)').waitFor();
  await page.waitForFunction(()=>window.__researchBeeState?.projectListReady);
  assert.equal((await (await page.request.get(new URL('/meta',base).href)).json()).environment,'test');
- await page.evaluate(()=>window.loadAll());
+ for(let attempt=0;attempt<3;attempt++)await refreshAdmin(page,{collectGarbage:true});
+ // The helper must surface an actual rejected operation, not turn any
+ // execution failure into a successful wait, and must release every root.
+ await page.evaluate(()=>{window.__beeE2EOriginalLoad=window.loadAll;window.loadAll=()=>Promise.reject(Error('synthetic refresh rejection'));});
+ try{await assert.rejects(()=>refreshAdmin(page,{collectGarbage:true}),/synthetic refresh rejection/);}
+ finally{await page.evaluate(()=>{window.loadAll=window.__beeE2EOriginalLoad;delete window.__beeE2EOriginalLoad;});}
+ assert.equal(await page.evaluate(()=>Object.keys(window.__beeE2ERefreshRuns).length),0);
  await page.evaluate(()=>{window.setView('content');document.getElementById('publicationStatus').value='';window.renderPublications();});
  await page.locator('#publicationRows tr[data-publication-row]').first().waitFor();
  for(const language of ['fa','en','ar','tr','es','it','de','fr']){
@@ -148,7 +154,7 @@ try{
  await page.route(/\/admin\/api\/assistants\/[^/]+\/contenter$/,route=>json(route,{linked:true,can_write:false,business_name:businessName,state:'healthy',version:7,profile:{sections:[
   {key:'OVERVIEW',content:JSON.stringify({company:businessName,products:['Batteries','Charging stations']})},
   {key:'SERVICES',content:'First paragraph.\n\nSecond paragraph.'}],facts:[],terms:[],notes:[],references:[],assets:[]}}));
- await page.evaluate(()=>window.loadAll());
+ await refreshAdmin(page);
  for(const locale of ['en','fa','tr','ar','es','it','de','fr']){
   await page.evaluate(locale=>window.setLanguage(locale),locale);
   for(const width of [1440,390]){

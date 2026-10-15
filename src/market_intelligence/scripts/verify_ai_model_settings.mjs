@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {refreshAdmin} from './admin_browser_helpers.mjs';
 import { chromium } from 'playwright';
 
 const base = process.env.BEE_ADMIN_URL;
@@ -50,7 +51,7 @@ try {
     assert.equal(response.status, 200);
     created = response.data.id;
     assistants.unshift(response.data);
-    await page.evaluate(() => loadAll());
+    await refreshAdmin(page);
   }
   for (const { id } of assistants.slice(0, 2)) originals.set(id, (await api(`/admin/api/assistants/${id}/runtime-settings`)).data.analysis_model);
   const first = assistants[0].id, second = assistants[1].id;

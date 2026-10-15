@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {refreshAdmin} from './admin_browser_helpers.mjs';
 import { chromium } from 'playwright';
 
 const base = process.env.BEE_ADMIN_URL;
@@ -52,7 +53,7 @@ try {
     const result=await api(page,'/admin/api/assistants','POST',{name:`Contenter browser fixture ${n}`,slug:`contenter-e2e-${Date.now()}-${n}`,business_name:'',description:'Isolated synthetic fixture',config:{active_business_id:null}});
     assert.equal(result.status,200);assistants.push(result.data.id);
   }
-  await page.evaluate(()=>window.loadAll());
+  await refreshAdmin(page);
   await selectProject(assistants[0]);
   const pickerResponse=page.waitForResponse(r=>r.url().includes('/contenter/businesses?') && r.status()===200);
   await page.locator('#contenterBusinessCard [data-contenter-action="choose"]').click();
