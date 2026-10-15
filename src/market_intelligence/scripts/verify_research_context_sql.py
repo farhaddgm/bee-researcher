@@ -171,7 +171,8 @@ async def main():
         with patch.object(pipeline,"TelegramClient",NoNetworkTelegram):
             sent=await pipeline.publish_publication(publication_id)
             repeat=await pipeline.publish_publication(publication_id)
-        assert sent["status"]=="published" and repeat["idempotent"] and NoNetworkTelegram.sends==1
+        assert sent["status"]=="published" and repeat["idempotent"] and NoNetworkTelegram.sends==0
+        assert sent["destinations"]==["user_portal"],"A channel-free project did not publish to the Reader"
         # Switching to a new shadow proposal must retain the previous LIVE policy.
         shadow_proposal=await create_preview(aid,actor,request.model_copy(update={"business_threshold":.99}),cfg)
         await activate(aid,actor,shadow_proposal,cfg)

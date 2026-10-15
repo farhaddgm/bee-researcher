@@ -44,6 +44,10 @@ class ActivateRequest(BaseModel):
     confirmed: Literal[True]
 
 
+class ConfigureRequest(PreviewRequest):
+    confirmed: Literal[True]
+
+
 @dataclass
 class EffectiveContext:
     record: ProjectResearchContext
@@ -243,9 +247,10 @@ async def evaluate_preview(assistant_id: uuid.UUID, proposal: dict, settings: Se
                 await _finish_job(job, status="succeeded", result={"input_chars": bchars, "model": settings.analysis_model})
             for article in batch:
                 score_rows = [{**assessment_metadata(meta), "score": score, "valid": True,
-                    "topic_key": key, "threshold": max(by_key[key].threshold, settings.relevance_threshold)}
+                    "topic_key": key, "threshold": by_key[key].threshold}
                     for (aid, key), (score, meta) in scores.items() if aid == str(article.id)]
-                proposed = relevance_decision(score_rows, topic_count=len(topics), incomplete=article.extraction_status != "complete" or len(article.normalized_text) > 20000)
+                proposed = relevance_decision(score_rows, topic_count=len(topics), incomplete=article.extraction_status != "complete" or len(article.normalized_text) > 20000,
+                    review_margin=settings.relevance_review_margin, min_confidence=settings.relevance_min_confidence)
                 proposed = apply_business_policy(proposed, mode=params["mode"], threshold=params["business_threshold"], assessment=business_scores.get(str(article.id)))
                 result["rows"].append({"article_id": str(article.id), "title": article.title,
                     "content_hash": full_article_hash(article.title, article.normalized_text, article.extraction_status != "complete"),
@@ -364,6 +369,36 @@ router = APIRouter(prefix="/admin/api", tags=["research-context"])
 async def authorize(token: str | None, assistant_id: uuid.UUID, *, write: bool = False) -> Any:
     from app.contenter import _user
     return await _user(token, assistant_id, write=write)
+
+
+@router.post("/assistants/{assistant_id}/research-context/configure")
+async def configure_context(assistant_id: uuid.UUID, payload: ConfigureRequest,
+        token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict:
+    """Save validated context without requiring paid samples or pre-existing news.
+
+    Focused eligibility changes still require the comparative AI preview. Topic
+    and contextual modes cannot bypass the existing per-news evidence gate.
+    """
+    actor = await authorize(token, assistant_id, write=True)
+    if payload.mode == "focused":
+        raise HTTPException(409, "evaluated_preview_required")
+    params = PreviewRequest.model_validate(payload.model_dump(exclude={"confirmed"}))
+    settings = get_settings()
+    try:
+        async with SessionLocal() as session:
+            await session.scalar(select(AssistantWorkspace).where(AssistantWorkspace.id == assistant_id).with_for_update())
+            proposal = await candidate(session, assistant_id, params, settings)
+            proposal["samples"] = []
+            preview = ResearchContextPreview(id=uuid.uuid4(), assistant_id=assistant_id, actor_id=actor.id,
+                payload=proposal, result={"live_ready": True, "state": "configuration_validated", "calls": 0},
+                input_hash=proposal["input_hash"], expires_at=datetime.now(timezone.utc) + timedelta(minutes=15))
+            session.add(preview)
+            await session.flush()
+            await activate_preview(session, assistant_id, actor.id, preview.id, settings)
+            await session.commit()
+    except ContextError as exc:
+        raise HTTPException(409, exc.code) from exc
+    return {**await view_context(assistant_id, settings), "can_write": True}
 
 
 @router.get("/assistants/{assistant_id}/research-context")

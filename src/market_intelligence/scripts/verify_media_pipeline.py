@@ -113,6 +113,8 @@ async def main():
                 row.status = "preview"
                 workspace = await session.get(AssistantWorkspace, ids[0])
                 workspace.config = {**workspace.config, "runtime": {"relevance_threshold": .95}}
+                topic = (await session.scalars(select(Topic).where(Topic.assistant_id == ids[0]))).one()
+                topic.threshold = .95
                 await session.commit()
             try:
                 await pipeline.publish_publication(publication_id)
@@ -136,7 +138,7 @@ async def main():
             await session.commit()
         assert (await pipeline.list_publications(assistant_id=ids[0]))[0]["publishable"], "A threshold-only change unnecessarily invalidated model evidence"
         assessed = await pipeline.list_relevance_assessments(assistant_id=ids[0])
-        assert assessed["counts"]["rejected"] == 2 and assessed["counts"]["selected"] == 1, "Unrelated or semantically excluded news was not rejected"
+        assert assessed["counts"]["selected"] == 1 and assessed["counts"]["rejected"] == 1 and assessed["total"] == 2, "Related exclusions must remain diagnosable; truly unrelated news must not appear"
         async with SessionLocal() as session:
             topic = (await session.scalars(select(Topic).where(Topic.assistant_id == ids[0]))).one()
             topic.threshold = .6

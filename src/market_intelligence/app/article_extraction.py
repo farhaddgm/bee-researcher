@@ -15,6 +15,7 @@ import httpx
 from app.public_network import PublicHTTPTransport
 
 from app.config import Settings
+from app.publisher_dates import latest_publisher_date
 from app.fetchers import (
     FetchFailure,
     SourceFetcher,
@@ -268,10 +269,10 @@ def extract_article_document(
             or fallback_title
         )
     )
-    published_at = (
-        _parse_datetime(article_json.get("datePublished"))
-        or _parse_datetime(parser.meta.get("article:published_time"))
-        or fallback_published_at
+    published_at = latest_publisher_date(
+        article_json.get("datePublished"), article_json.get("dateModified"),
+        parser.meta.get("article:published_time"), parser.meta.get("article:modified_time"),
+        parser.meta.get("datepublished"), parser.meta.get("datemodified"), fallback_published_at,
     )
     image_url = _article_image_url(parser, article_json, response_url)
     length_score = min(len(normalized_text) / 2500, 1.0)

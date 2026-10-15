@@ -15,9 +15,13 @@ const fixtures=Array.from({length:42},(_,i)=>({id:`news-fixture-${i}`,status:'pr
 const browser=await chromium.launch({headless:true});
 const page=await browser.newPage({viewport:{width:1440,height:1000},reducedMotion:'reduce'});
 const errors=[];page.on('pageerror',e=>errors.push(e.message));
+const navigation=[];const cdp=await page.context().newCDPSession(page);await cdp.send('Page.enable');
+cdp.on('Page.frameScheduledNavigation',event=>navigation.push({reason:event.reason,path:new URL(event.url,base).pathname}));
+page.on('console',message=>{if(message.text().startsWith('BEE_FORM_DIAGNOSTIC '))navigation.push({form:message.text().slice(20)});});
+await page.addInitScript(()=>document.addEventListener('submit',event=>{if(event.target.id!=='loginForm')return;queueMicrotask(()=>console.debug('BEE_FORM_DIAGNOSTIC '+JSON.stringify({prevented:event.defaultPrevented,handler:typeof event.target.onsubmit,ready:document.readyState})));},true));
 page.setDefaultTimeout(15000);
 const json=(route,value)=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify(value)});
-await page.route(/\/publications(?:\?.*)?$/,route=>json(route,{publications:fixtures}));
+await page.route(/\/publications(?:\/review-queue)?(?:\?.*)?$/,route=>json(route,{publications:fixtures}));
 let bulkRequest=null;
 await page.route(/\/publications\/bulk$/,route=>{
  bulkRequest=route.request().postDataJSON();
@@ -72,6 +76,9 @@ try{
  assert(await page.locator('#bulkNewsBar').evaluate(n=>n.classList.contains('active')));
  await all.check();assert.equal(await page.locator('#publicationRows input:checked').count(),20);
  await page.locator('[data-publication-page="next"]').click();
+ await page.waitForTimeout(100);
+ assert.deepEqual(await page.locator('#publicationPager [data-publication-page]').evaluateAll(nodes=>nodes.map(n=>n.dataset.publicationPage)),['prev','1','2','3','next'],'Action normalization changed pagination order');
+ assert.equal(await page.locator('#publicationPager [aria-current="page"]').getAttribute('data-publication-page'),'2');
  assert.equal(await page.locator('#publicationRows input:checked').count(),0);assert(!(await all.isChecked()));
  await page.locator('[data-publication-page="prev"]').click();assert.equal(await page.locator('#publicationRows input:checked').count(),20);
  await all.uncheck();assert.equal(await page.locator('#publicationRows input:checked').count(),0);
@@ -136,6 +143,25 @@ try{
  await page.keyboard.press('Escape');
  await page.locator('#bizName').waitFor({state:'hidden'});
  assert.equal(await page.locator('#view-businesses [onclick]').count(),0);
+ // Real profile presentation with a synthetic export at the HTTP boundary:
+ // structured fields, lists, prose and hostile HTML stay readable and inert.
+ await page.route(/\/admin\/api\/assistants\/[^/]+\/contenter$/,route=>json(route,{linked:true,can_write:false,business_name:businessName,state:'healthy',version:7,profile:{sections:[
+  {key:'OVERVIEW',content:JSON.stringify({company:businessName,products:['Batteries','Charging stations']})},
+  {key:'SERVICES',content:'First paragraph.\n\nSecond paragraph.'}],facts:[],terms:[],notes:[],references:[],assets:[]}}));
+ await page.evaluate(()=>window.loadAll());
+ for(const locale of ['en','fa','tr','ar','es','it','de','fr']){
+  await page.evaluate(locale=>window.setLanguage(locale),locale);
+  for(const width of [1440,390]){
+   await page.setViewportSize({width,height:1000});await page.locator('[data-contenter-action="profile"]').click();
+   const profile=page.locator('[data-contenter-profile]');await profile.waitFor();
+   assert.equal(await profile.locator('.contenter-profile>section').count(),7);
+   assert.equal(await profile.locator('.contenter-fields').count(),1);
+   assert.equal(await profile.locator('.contenter-values li').count(),2);
+   assert.equal(await profile.locator('img,script').count(),0);
+   assert(await profile.evaluate(node=>node.scrollWidth<=node.clientWidth+1),'Profile content overflows its dialog');
+   await page.keyboard.press('Escape');
+  }
+ }
  if(process.env.CAPTURE_OUTPUT){
   await page.evaluate(()=>{window.setLanguage('fa');window.setView('content');});
   await fs.mkdir(process.env.CAPTURE_OUTPUT,{recursive:true});
@@ -143,4 +169,4 @@ try{
  }
  assert.deepEqual(errors,[]);
  console.log('News/action regressions passed: 8 locales × 4 widths × 2 themes, seven aligned columns, readable titles, real pointer clicks, bounded badges, one toolbar, select all/partial/pagination/filter/empty states, project isolation including delayed responses, bulk request and CSP-safe business deactivate/reactivate and quoted business editor values.');
-}finally{await browser.close();}
+}catch(error){console.error('Sanitized news E2E navigation diagnostics:',JSON.stringify(navigation));throw error;}finally{await browser.close();}

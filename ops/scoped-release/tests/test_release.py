@@ -22,6 +22,7 @@ class ScopedReleaseTests(unittest.TestCase):
         self.assertNotIn('alembic',service['command'][-1])
         self.assertEqual(service['image'],'old-image')
         self.assertNotIn('command',release.rollback_service(current,{},'3.52.0'))
+        self.assertIn('app.auth_deployment',release.rollback_service(current,{},'3.54.0')['command'][-1])
 
     def test_voice_rollback_keeps_forward_schema_and_authentication(self):
         current={'Image':'old-image','Config':{'Labels':{'org.opencontainers.image.version':'3.44.0'}}}

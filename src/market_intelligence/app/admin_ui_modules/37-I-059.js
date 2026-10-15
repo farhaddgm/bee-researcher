@@ -37,7 +37,7 @@
       renderPublications=function(){
         const scope=scopeKey();
         if(scope!==selectedScope){selected.clear();state.lastBulk=null;selectedScope=scope;}
-        const available=new Set(state.publications.map(item=>String(item.id)));
+        const available=new Set(state.publications.filter(item=>!String(item.id).startsWith('article:')).map(item=>String(item.id)));
         for(const id of selected)if(!available.has(id))selected.delete(id);
         baseRenderPublications();ensureNewsTools();
         const header=document.querySelector('#view-content thead tr');
@@ -54,6 +54,7 @@
           const cell=document.createElement('td');cell.className='publication-selection-cell';
           const input=document.createElement('input');input.type='checkbox';input.className='publication-select';
           input.dataset.publicationId=id;input.checked=selected.has(id);input.setAttribute('aria-label',label('انتخاب خبر','Select news'));
+          if(id.startsWith('article:')){input.disabled=true;delete input.dataset.publicationId;}
           input.onchange=()=>{if(input.checked)selected.add(id);else selected.delete(id);syncSelection();renderNewsTools();};
           cell.appendChild(input);row.insertBefore(cell,row.firstChild);
         });

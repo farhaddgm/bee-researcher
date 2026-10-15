@@ -160,7 +160,7 @@ class PipelineWorkspaceScopeTest(unittest.TestCase):
             datetime(2026, 8, 10, 8, 30, tzinfo=timezone.utc),
             hourly_processing_slot(datetime(2026, 8, 10, 8, 45, tzinfo=timezone.utc), timezone_name="Asia/Tehran"),
         )
-        self.assertIn("REVIEW_MARGIN", inspect.getsource(analyze_pending_articles))
+        self.assertIn("settings.relevance_review_margin", inspect.getsource(analyze_pending_articles))
         self.assertIn('"review_only"', inspect.getsource(create_publication_previews))
         self.assertIn('"publishable"', inspect.getsource(publish_ready_previews))
         self.assertIn("hourly_processing_slot", (inspect.getsource(scheduler_tick) + inspect.getsource(_tick_assistant)))

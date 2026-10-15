@@ -51,7 +51,7 @@
       <label class="field">${E(L(8))} ${help(41)}<select id="researchMode"><option value="topics">${E(L(9))}</option><option value="contextual">${E(L(10))}</option><option value="focused">${E(L(11))}</option></select></label>
       <label class="field">${E(L(12))} ${help(42)}<select id="researchRollout"><option value="shadow">${E(L(13))}</option><option value="live">${E(L(14))}</option></select></label>
       <label class="field" id="researchThresholdField">${E(L(15))} ${help(41)}<input type="number" id="researchThreshold" min="0" max="1" step="0.05" value="${E(active?.business_threshold??.5)}"></label>
-      <fieldset class="field full" id="researchSections"><legend>${E(L(16))} ${help(40)}</legend><div class="research-checks">${sections.map((key,i)=>`<label><input type="checkbox" value="${key}" ${(brief?.selected_sections||sections.slice(0,5)).includes(key)?'checked':''}>${E(L(45+i))}</label>`).join('')}</div></fieldset>
+      <fieldset class="field full" id="researchSections"><legend>${E(L(16))} ${help(40)}</legend><div class="research-checks">${sections.map((key,i)=>`<label><input type="checkbox" value="${key}" ${(active?.source==='none'?sections:(brief?.selected_sections||sections)).includes(key)?'checked':''}>${E(L(45+i))}</label>`).join('')}</div></fieldset>
       <fieldset class="field full" id="researchFacts"><legend>${E(L(37))}</legend><div class="research-checks">${data.facts.filter(x=>x.verified===true&&x.isActive===true).map(x=>`<label><input type="checkbox" value="${E(x.id)}" ${!brief?.selected_fact_ids||brief.selected_fact_ids.includes(x.id)?'checked':''}><span dir="auto" data-user-content="true">${E(x.label)}</span></label>`).join('')}</div></fieldset>
       <label class="research-consent full" id="researchConsentField"><input type="checkbox" id="researchConsent">${E(L(17))} ${help(40)}</label>
       <label class="research-consent full" id="researchPublicField"><input type="checkbox" id="researchPublic" ${brief?.public_business_facts?'checked':''}>${E(L(18))} ${help(43)}</label>
@@ -59,7 +59,7 @@
     const dialog=document.querySelector('#modalRoot [role=dialog]');dialog.dataset.researchActor=current;
     dialog.querySelector('#modalSubmit')?.classList.remove('primary');dialog.querySelector('.modal-foot .btn:not(#modalSubmit)')?.remove();
     const form=dialog.querySelector('form'), q=id=>form.querySelector('#'+id), activeSource=active?.source||'none';
-    q('researchSource').value=activeSource;q('researchMode').value=active?.mode||'topics';if(active?.local_business_id)q('researchLocal').value=active.local_business_id;
+    q('researchSource').value=active?.source||(data.contenter_available?'contenter':data.local_businesses.length?'local':'none');q('researchMode').value=active?.mode||(q('researchSource').value==='none'?'topics':'contextual');q('researchRollout').value=active?.rollout||'live';if(active?.local_business_id)q('researchLocal').value=active.local_business_id;
     let preview=null,busy=false;
     function conditions(){const none=q('researchSource').value==='none';q('researchLocalField').hidden=q('researchSource').value!=='local';
       if(none)q('researchMode').value='topics';q('researchMode').disabled=busy||none;
@@ -67,10 +67,10 @@
       for(const id of ['researchSections','researchConsentField','researchPublicField'])q(id).hidden=none;
       q('researchFacts').hidden=q('researchSource').value!=='contenter'||!data.facts.length;
     }
-    function invalidate(){preview=null;q('researchActivate').disabled=true;q('researchResult').replaceChildren();conditions();}
-    form.addEventListener('submit',event=>event.preventDefault());form.addEventListener('change',invalidate);form.addEventListener('input',invalidate);conditions();
+    function invalidate(){preview=null;q('researchActivate').disabled=busy||q('researchMode').value==='focused';q('researchResult').replaceChildren();conditions();}
+    form.addEventListener('submit',event=>event.preventDefault());form.addEventListener('change',invalidate);form.addEventListener('input',invalidate);q('researchSource').addEventListener('change',()=>{if(q('researchSource').value!=='none'&&q('researchMode').value==='topics')q('researchMode').value='contextual';invalidate();});conditions();lock(false);
     function valid(){return current===actor()&&form.isConnected;}
-    function lock(value){busy=value;form.querySelectorAll('input,select,button').forEach(x=>x.disabled=value);conditions();q('researchActivate').disabled=value||!preview||(q('researchRollout').value==='live'&&!preview.result.live_ready);}
+    function lock(value){busy=value;form.querySelectorAll('input,select,button').forEach(x=>x.disabled=value);conditions();q('researchActivate').disabled=value||(q('researchMode').value==='focused'&&(!preview||(q('researchRollout').value==='live'&&!preview.result.live_ready)));}
     q('researchPreview').addEventListener('click',async()=>{
       if(busy||!form.reportValidity())return;lock(true);q('researchResult').textContent=L(22);
       const source=q('researchSource').value,params={source,mode:q('researchMode').value,rollout:q('researchRollout').value,
@@ -84,8 +84,8 @@
       }catch(_){if(valid()){preview=null;q('researchResult').textContent=L(27);}}finally{if(valid())lock(false);}
     });
     q('researchActivate').addEventListener('click',async()=>{
-      if(!preview||busy||!confirm(L(35)))return;lock(true);
-      try{const result=await window.req(endpoint+'/activate',{method:'POST',body:JSON.stringify({preview_id:preview.preview_id,confirmed:true})});if(valid()){data=result;loaded=current;window.closeModal();paint();window.toast(L(34));}}
+      if(busy||!form.reportValidity()||!confirm(L(35)))return;const source=q('researchSource').value;if(source!=='none'&&!q('researchConsent').checked){q('researchConsent').focus();q('researchResult').textContent=L(17);return;}lock(true);
+      try{const result=await window.req(endpoint+(q('researchMode').value==='focused'?'/activate':'/configure'),{method:'POST',body:JSON.stringify(q('researchMode').value==='focused'?{preview_id:preview.preview_id,confirmed:true}:{source,mode:q('researchMode').value,rollout:q('researchRollout').value,local_business_id:source==='local'?Number(q('researchLocal').value):null,sections:Array.from(q('researchSections').querySelectorAll('input:checked'),x=>x.value),fact_ids:source==='contenter'?Array.from(q('researchFacts').querySelectorAll('input:checked'),x=>x.value):null,business_threshold:Number(q('researchThreshold').value),consent_ai:q('researchConsent').checked,public_business_facts:q('researchPublic').checked,confirmed:true})});if(valid()){data=result;loaded=current;window.closeModal();paint();window.toast(L(34));}}
       catch(_){if(valid()){preview=null;q('researchResult').textContent=L(57);}}finally{if(valid())lock(false);}
     });
   }

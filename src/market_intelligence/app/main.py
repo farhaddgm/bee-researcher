@@ -952,6 +952,10 @@ from app.contenter import router as contenter_router
 app.include_router(contenter_router)
 from app.research_context import router as research_context_router
 app.include_router(research_context_router)
+from app.analysis_policy import router as analysis_policy_router
+app.include_router(analysis_policy_router)
+from app.business_knowledge_ai import router as business_knowledge_ai_router
+app.include_router(business_knowledge_ai_router)
 
 
 @app.get("/robots.txt", include_in_schema=False)
@@ -2297,11 +2301,21 @@ async def publications(
     return {"count": len(rows), "publications": rows}
 
 
+@app.get("/publications/review-queue")
+async def publications_review_queue(assistant_id: uuid.UUID,
+        limit: int = Query(default=1000, ge=1, le=1000),
+        token: str | None = Cookie(default=None, alias="research_bee_admin_session")) -> dict:
+    from app.pipeline_service import list_review_queue
+    await require_workspace_scope(token, assistant_id)
+    rows = await list_review_queue(assistant_id=assistant_id, limit=limit)
+    return {"publications": rows, "count": len(rows)}
+
+
 @app.get("/publications/relevance-assessments")
 async def relevance_assessments(
     assistant_id: uuid.UUID,
     limit: int = Query(default=200, ge=1, le=200),
-    offset: int = Query(default=0, ge=0, le=500),
+    offset: int = Query(default=0, ge=0, le=100000),
     state: str | None = Query(default=None, pattern="^(selected|borderline|rejected|pending)$"),
     query: str | None = Query(default=None, max_length=200),
     token: str | None = Cookie(default=None, alias="research_bee_admin_session"),

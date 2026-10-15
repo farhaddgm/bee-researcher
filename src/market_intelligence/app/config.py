@@ -113,6 +113,10 @@ class Settings(BaseSettings):
     relevance_batch_size: int = Field(default=8, ge=1, le=20)
     relevance_max_requests_per_run: int = Field(default=10, ge=0, le=100)
     relevance_daily_request_cap: int = Field(default=100, ge=0, le=1000)
+    relevance_review_margin: float = Field(default=.10, ge=0, le=.25)
+    relevance_min_confidence: float = Field(default=.65, ge=.35, le=1)
+    relevance_min_score: float = Field(default=.10, ge=0, le=.5)
+    relevance_max_input_chars: int = Field(default=20000, ge=2000, le=64000)
 
     scheduler_enabled: bool = True
     # Enable for production and SQL acceptance. Synthetic unit tests can run

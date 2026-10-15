@@ -57,7 +57,7 @@ class CompilerTests(unittest.TestCase):
         with self.assertRaises(ContextError): compile_brief(fixture(),source="contenter",fact_ids=["f1","f1"])
         f=fixture();f["facts"]*=2
         with self.assertRaises(ContextError): compile_brief(f,source="contenter")
-        f=fixture();f["sections"][0]["content"]="long business information "*1500
+        f=fixture();f["sections"][0]["content"]="long business information "*3000
         with self.assertRaises(ContextError): compile_brief(f,source="contenter")
 
     def test_semantic_hash_ignores_style_health_time_and_pending_drafts(self):

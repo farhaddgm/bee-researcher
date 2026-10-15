@@ -15,9 +15,9 @@ from app.openai_client import sanitize_untrusted_source
 COMPILER_REVISION = "research-brief-v1"
 ASSESSOR_REVISION = "business-evidence-v1"
 RESEARCH_SECTIONS = ("OVERVIEW", "SERVICES", "TARGET_MARKET", "COMPETITORS", "GOALS", "VALUE_PROPOSITION", "PERSONAS", "FAQ")
-DEFAULT_SECTIONS = RESEARCH_SECTIONS[:5]
+DEFAULT_SECTIONS = RESEARCH_SECTIONS
 RELATIONS = ("direct", "competitor", "customer_supplier", "regulatory", "technology", "market", "indirect", "none", "unknown")
-MAX_BRIEF_CHARS = 16000
+MAX_BRIEF_CHARS = 64000
 MAX_ARTICLE_CHARS = 20000
 
 
@@ -118,7 +118,7 @@ def compile_brief(payload: dict, *, source: str, sections: list[str] | None = No
     if chosen_facts is not None and chosen_facts - seen:
         raise ContextError("unknown_business_fact")
     size = sum(len(row["text"]) for row in claims)
-    if size > MAX_BRIEF_CHARS or len(claims) > 50:
+    if size > MAX_BRIEF_CHARS or len(claims) > 100:
         raise ContextError("research_brief_too_large")
     brief = {"revision": COMPILER_REVISION, "source": source, "business_id": str(business.get("id", "")),
              "business_name": name.strip()[:160], "claims": claims, "warnings": warnings,
@@ -131,9 +131,15 @@ def compile_brief(payload: dict, *, source: str, sections: list[str] | None = No
 
 
 def local_export(profile: Any) -> dict:
-    mapping = {"OVERVIEW": profile.description, "SERVICES": profile.products_services,
+    overview = str(profile.description or "")
+    if getattr(profile, "revenue_model", ""):
+        overview += "\nRevenue model: " + str(profile.revenue_model)
+    goals = str(profile.strategic_goals or "")
+    if getattr(profile, "sensitivities", None):
+        goals += "\nSensitivities: " + "; ".join(str(x) for x in profile.sensitivities)
+    mapping = {"OVERVIEW": overview, "SERVICES": profile.products_services,
                "TARGET_MARKET": profile.markets + "\n" + profile.target_customers,
-               "COMPETITORS": "\n".join(str(x) for x in profile.competitors), "GOALS": profile.strategic_goals}
+               "COMPETITORS": "\n".join(str(x) for x in profile.competitors), "GOALS": goals}
     return {"business": {"id": str(profile.id), "name": profile.business_name},
             "sections": [{"key": k, "content": v, "source": "ADMIN"} for k, v in mapping.items()], "facts": []}
 

@@ -991,7 +991,7 @@ class MainTest(unittest.TestCase):
 
     def test_admin_ui_has_mi046_resilient_news_and_full_copy_translation(self):
         body = document_source(TestClient(app).get("/admin").text)
-        self.assertIn("safe('/publications?limit=80'", body)
+        self.assertIn("safe('/publications/review-queue?limit=1000'", body)
         self.assertIn("ارسال آنی یک خبر", body)
         self.assertIn("translateStaticCopy", body)
         self.assertIn("copyMap", body)
@@ -1424,7 +1424,8 @@ class MainTest(unittest.TestCase):
         self.assertIn('data-publication-column="3">منبع خبر', body)
         self.assertIn('News source', body)
         self.assertIn('class="publication-news-cell"', body)
-        self.assertIn("fmtDate(x.article_published_at||x.created_at)", body)
+        self.assertIn("fmtDate(x.article_published_at)", body)
+        self.assertNotIn("fmtDate(x.article_published_at||x.created_at)", body)
         self.assertIn('colspan="6"', body)
         # Legacy enhancements must be cleanup-only; they must not append
         # workflow/evidence cells to the review queue.

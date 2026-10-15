@@ -30,6 +30,15 @@
             try{response=await fetch('/admin/api/login',{method:'POST',credentials:'include',headers:{'Content-Type':'application/json'},body:JSON.stringify({username,password}),...(controller?{signal:controller.signal}:{})})}finally{if(timer)clearTimeout(timer)}
             let body={};try{body=await response.json()}catch(_){body={}};
             if(!response.ok){const detail=Array.isArray(body.detail)?body.detail.map(item=>item?.msg||item?.detail||String(item)).join('؛ '):String(body.detail||'');const disabled=/account[_ ]disabled/i.test(detail);throw Error(disabled?(fa?'حساب شما غیرفعال است. لطفاً با مدیر حساب‌ها ارتباط بگیرین.':'Your account is disabled. Please contact the account administrator.'):(fa?'ورود انجام نشد. لطفاً نام کاربری و رمز عبور را بررسی کنین.':'We could not sign you in. Please check your username and password.'))}
+            // Session bootstrap may have completed while the recovery POST
+            // was in flight. A late reload destroys the just-opened workspace
+            // and its pending requests. Reuse the installed controller.
+            if(window.__researchBeeState?.currentUser)return;
+            if(typeof window.showApp==='function'){
+              const current=await fetch('/admin/api/me',{credentials:'include'});
+              if(!current.ok)throw Error(fa?'نشست ورود تأیید نشد.':'Could not verify the sign-in session.');
+              window.showApp(await current.json());return;
+            }
             window.location.reload();
           }catch(error){message(error.message|| (fa?'ورود انجام نشد. لطفاً دوباره تلاش کنین.':'We could not sign you in. Please try again.'));button.disabled=false;button.removeAttribute('aria-busy');button.textContent=original;pending=false}
         };

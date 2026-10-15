@@ -57,7 +57,7 @@ def evidence_text(text: str) -> str:
 
 
 def article_digest(title: str, text: str, incomplete: bool) -> str:
-    return relevance_context_hash({"title": title, "text": text[:6000], "incomplete": incomplete})
+    return relevance_context_hash({"title": title, "text": text, "incomplete": incomplete})
 
 
 def assessment_metadata(explanation: str | None) -> dict:
@@ -75,7 +75,8 @@ def assessment_metadata(explanation: str | None) -> dict:
     return value
 
 
-def relevance_decision(rows: list[dict], *, topic_count: int, incomplete: bool = False) -> dict:
+def relevance_decision(rows: list[dict], *, topic_count: int, incomplete: bool = False,
+                       review_margin: float = .10, min_confidence: float = .65) -> dict:
     """One policy for UI, scheduling and delivery. Thresholds are NOT AI inputs."""
     assessed = [r for r in rows if r.get("valid")]
     pending = len(assessed) != topic_count or topic_count == 0
@@ -83,14 +84,14 @@ def relevance_decision(rows: list[dict], *, topic_count: int, incomplete: bool =
     for row in assessed:
         score, threshold = float(row["score"]), float(row["threshold"])
         margin = score - threshold
-        certain = float(row.get("confidence", 0)) >= .65 and not incomplete
-        if row.get("excluded") and certain:
+        certain = float(row.get("confidence", 0)) >= min_confidence and not incomplete
+        if row.get("excluded") or margin < -review_margin - 1e-9:
             state = "rejected"
         elif not certain:
             state = "borderline"
         elif margin >= -1e-9:
             state = "selected"
-        elif margin >= -.10 - 1e-9:
+        elif margin >= -review_margin - 1e-9:
             state = "borderline"
         else:
             state = "rejected"
@@ -106,7 +107,7 @@ def relevance_decision(rows: list[dict], *, topic_count: int, incomplete: bool =
             "review_only": state != "selected", "publishable": state == "selected",
             "can_approve": state == "borderline" and not incomplete and not row.get("excluded", False)
                            and float(row.get("confidence", 0)) >= .35
-                           and float(row.get("score", 0)) >= float(row.get("threshold", 1)) - .10 - 1e-9}
+                           and float(row.get("score", 0)) >= float(row.get("threshold", 1)) - review_margin - 1e-9}
 
 
 def relevance_context_hash(context: dict) -> str:

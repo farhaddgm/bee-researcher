@@ -566,7 +566,7 @@ async def run_source_probe(
         current_source = await session.get(Source, source_id)
 
     thresholds = [
-        max(float(topic.threshold), float(probe_settings.relevance_threshold))
+        float(topic.threshold)
         for topic in topics
     ]
     default_threshold = min(thresholds) if thresholds else float(probe_settings.relevance_threshold)
@@ -581,7 +581,7 @@ async def run_source_probe(
                 positive_terms=list(topic.positive_terms or []),
                 negative_terms=list(topic.negative_terms or []),
             )
-            threshold = max(float(topic.threshold), float(probe_settings.relevance_threshold))
+            threshold = float(topic.threshold)
             score = combine_topic_score(
                 lexical=lexical,
                 semantic=None,

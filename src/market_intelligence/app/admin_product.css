@@ -1,4 +1,14 @@
 /* Product diagnostics are isolated from legacy table and support rules. */
+#app .main #publicationPager{display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-block-start:16px}
+#app .main #publicationPager>.btn{order:0!important;flex:0 0 auto;width:auto;min-width:40px}
+#app .main #publicationPager>.btn[aria-current=page]{box-shadow:0 0 0 2px var(--surface,#fff),0 0 0 4px var(--primary,#2457d6)}
+#view-overview .timeline-row{display:grid;grid-template-columns:12px minmax(0,1fr);gap:10px 12px;align-items:start;padding-block:14px;border-block-end:1px solid var(--line)}
+#view-overview .timeline-row>.dot{margin-block-start:5px}
+#view-overview .timeline-row>div{display:grid;gap:6px;min-width:0}
+#view-overview .timeline-row b,#view-overview .timeline-row small{display:block;line-height:1.7}
+#view-overview .timeline-row>strong{grid-column:2;justify-self:start;max-width:100%;overflow-wrap:anywhere;border-radius:8px;padding:5px 10px;background:var(--soft,#f2f5fa);font-size:12px}
+#stepAnalyzeText{direction:ltr;unicode-bidi:isolate}
+.analyzer-policy .field{display:grid;gap:8px;align-content:start}.analyzer-policy .field>span{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.analyzer-policy .card-actions{margin-block-start:18px}
 .product-health{margin-block:0 18px;padding:18px;border:1px solid var(--line);border-inline-start:4px solid var(--primary,#2455df);border-radius:14px;background:var(--surface,#fff);min-width:0}
 .product-health.needs-attention{border-inline-start-color:#b77913}
 .product-health h3{margin:0 0 8px;font-size:15px}

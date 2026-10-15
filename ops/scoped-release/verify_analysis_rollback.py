@@ -16,8 +16,9 @@ def main():
     args = parser.parse_args()
     candidate = deploy.inspect(args.candidate)
     previous = deploy.inspect(args.previous)
-    if candidate['Config']['Labels'].get('org.opencontainers.image.version') != '3.53.0' or previous['Config']['Labels'].get('org.opencontainers.image.version') != '3.52.0':
-        raise RuntimeError('Explicit reviewed 3.53/3.52 images required')
+    version = candidate['Config']['Labels'].get('org.opencontainers.image.version')
+    if version not in {'3.53.0', '3.54.0'} or previous['Config']['Labels'].get('org.opencontainers.image.version') != '3.52.0':
+        raise RuntimeError('Explicit reviewed 3.53 or 3.54 candidate and 3.52 previous image required')
     suffix = uuid.uuid4().hex[:12]
     net = 'bee-news-chat-test-' + suffix
     pg = 'bee-news-chat-pg-' + suffix
@@ -75,7 +76,7 @@ def main():
         run('run', '--rm', '--entrypoint', 'python', *options(values), args.candidate,
             '-m', 'app.runtime_permissions')
         configuration = {'Image': args.previous, 'Config': previous['Config']}
-        command = deploy.rollback_service(configuration, {}, '3.53.0')['command']
+        command = deploy.rollback_service(configuration, {}, version)['command']
         run('run', '-d', '--name', old, '--entrypoint', command[0], *options(values),
             *startup_healthcheck_options(), args.previous, *command[1:], capture=True)
         containers.append(old)
