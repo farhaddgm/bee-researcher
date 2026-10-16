@@ -18,7 +18,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--image', required=True)
     parser.add_argument('--revision', required=True)
-    parser.add_argument('--version', default='3.53.0', choices=['3.53.0', '3.54.0'])
+    parser.add_argument('--version', default='3.53.0', choices=['3.53.0', '3.54.0', '3.54.1'])
     args = parser.parse_args()
     candidate(args.image, args.revision, args.version)
     values = migration_values(MIGRATOR)

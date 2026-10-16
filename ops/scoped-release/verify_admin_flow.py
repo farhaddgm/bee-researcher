@@ -19,8 +19,8 @@ def main():
     pg, redis, app = [network + '-' + kind for kind in ('pg', 'redis', 'app')]
     containers, created = [], False
     image = run('inspect', args.image, capture=True)
-    if json.loads(image.stdout)[0]['Config']['Labels'].get('org.opencontainers.image.version') != '3.54.0':
-        raise RuntimeError('The 3.54.0 candidate is required')
+    if json.loads(image.stdout)[0]['Config']['Labels'].get('org.opencontainers.image.version') not in {'3.54.0', '3.54.1'}:
+        raise RuntimeError('A 3.54.x candidate is required')
     try:
         run('network', 'create', '--internal', network, capture=True); created = True
         run('run', '-d', '--name', pg, '--network', network, '--tmpfs', '/var/lib/postgresql/data:rw,size=512m,mode=0700',
