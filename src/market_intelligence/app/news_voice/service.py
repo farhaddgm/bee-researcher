@@ -18,7 +18,7 @@ from app.news_chat import service as chat
 from app.news_chat.models import ChatGeneration
 from app.news_voice.models import VoiceAudio, VoiceDeletion, VoicePolicy, VoiceSaveJob, VoiceSegment, VoiceSession, VoiceUsage
 from app.news_voice.schemas import Policy, Voice
-from app.news_voice import providers, storage, preview
+from app.news_voice import providers, storage, preview, pricing
 
 now=chat.now
 hash_text=lambda value: hashlib.sha256(value.encode()).hexdigest()
@@ -585,6 +585,27 @@ async def close_ephemeral(s,cid):
         row.status='stopped';row.transcript='';row.config={};row.ticket_hash='';row.session_hash=''
 
 
+async def renew_price_review(s):
+    """Roll the seven-day price window forward while the saved rates equal the released card.
+
+    Fails closed: custom rates, a changed key or a disabled policy are never
+    renewed, so the owner must confirm them again.
+    """
+    row=await s.get(VoicePolicy,1,with_for_update=True)
+    if not row:return False
+    value=dict(row.config);revision=value.pop('_credential_revision',None)
+    try:p=Policy.model_validate(value)
+    except ValueError:return False
+    moment=now()
+    if not (p.enabled and p.price_auto_renew and p.price_expires_at and pricing.matches(p)):return False
+    from app.news_voice.credentials import managed
+    current=managed()
+    if current is not None and revision!=current['revision']:return False
+    if p.price_expires_at-moment>pricing.RENEW_WITHIN:return False
+    row.config={**row.config,'price_expires_at':pricing.window(moment).isoformat(),'price_renewed_at':moment.isoformat()}
+    return True
+
+
 async def maintenance_once():
     preview.sweep()
     async with SessionLocal() as s:
@@ -600,6 +621,7 @@ async def maintenance_once():
             a.status='failed';a.metadata_json={**a.metadata_json,'error_code':'voice_generation_unknown','_session_hash':''}
             preview.remove(a.id)
         for row in (await s.scalars(select(VoiceSession).where(VoiceSession.status=='running',VoiceSession.deadline<now()))).all():row.status='stopped';row.transcript=''
+        await renew_price_review(s)
         p=await policy(s)
         for a in (await s.scalars(select(VoiceAudio).where(VoiceAudio.deleted_at.is_(None),or_(
                 (VoiceAudio.saved_at.is_(None)) & (VoiceAudio.expires_at<now()),

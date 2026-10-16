@@ -17,7 +17,7 @@ def main():
     candidate = deploy.inspect(args.candidate)
     previous = deploy.inspect(args.previous)
     version = candidate['Config']['Labels'].get('org.opencontainers.image.version')
-    if version not in {'3.53.0', '3.54.0'} or previous['Config']['Labels'].get('org.opencontainers.image.version') != '3.52.0':
+    if version not in {'3.53.0', '3.54.0', '3.54.1'} or previous['Config']['Labels'].get('org.opencontainers.image.version') != '3.52.0':
         raise RuntimeError('Explicit reviewed 3.53 or 3.54 candidate and 3.52 previous image required')
     suffix = uuid.uuid4().hex[:12]
     net = 'bee-news-chat-test-' + suffix

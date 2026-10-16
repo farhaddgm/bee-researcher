@@ -80,6 +80,8 @@ class Policy(Strict):
     keyterms_multiplier: Decimal = Field(default=Decimal('1.2051282052'), ge=1, le=5)
     price_reference: str = Field(default='', max_length=240)
     price_expires_at: datetime | None = None
+    price_auto_renew: bool = True
+    price_renewed_at: datetime | None = None
     max_input_seconds: int = Field(default=120, ge=10, le=120)
     max_session_seconds: int = Field(default=600, ge=30, le=600)
     daily_stt_seconds: int = Field(default=1200, ge=10, le=7200)
