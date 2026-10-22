@@ -46,6 +46,20 @@ const initialLoad=window.loadAll();await Promise.resolve();actor='carol:default'
 resolve({__beeLifecycleScope:actor});await initialLoad;assert.equal(authorizedHook,1);
 
 const bootstrapSource=fs.readFileSync(new URL('../app/admin_workspace_bootstrap.js',import.meta.url),'utf8');
+// Slow unrelated metadata must not keep authorized, rendered controls inert.
+let releaseAuthorizedShell=0,finishMetadata;
+const firstPaintState={currentUser:{id:'alice'},assistantId:'one',language:'en'};
+const firstPaintContext=vm.createContext({state:firstPaintState,
+  window:{__researchBeeReleaseLocale:()=>releaseAuthorizedShell++},
+  req:path=>path==='/meta'?new Promise(resolve=>finishMetadata=resolve):Promise.resolve(
+    path==='/admin/api/assistants'?{assistants:[{id:'one',name:'Authorized project'}]}:{}),
+  localStorage:{getItem:()=>null},friendlyError:String,esc:String,
+  $:()=>({}),renderAssistants:()=>{assert.equal(firstPaintState.projectListReady,true)}});
+vm.runInContext(bootstrapSource,firstPaintContext);
+const firstPaint=vm.runInContext('loadAll()',firstPaintContext);
+await new Promise(setImmediate);
+assert.equal(releaseAuthorizedShell,1,'Authorized first paint waited for metadata to become clickable');
+firstPaintState.currentUser={id:'bob'};finishMetadata({});await firstPaint;
 async function staleBootstrap(change){
   const state={currentUser:{id:'alice'},assistantId:'one',language:'en'};let finish;
   const req=path=>path==='/admin/api/assistants'?new Promise(yes=>finish=yes):Promise.resolve({});
@@ -139,4 +153,6 @@ assert.equal(classes.has('locale-pending'),false,'Late bootstrap hid usable cont
 localeWindow.setLanguage('fa');localeWindow.__researchBeeReleaseLocale();flushLocale();
 assert.equal(classes.size,0,'Shell release stranded the language switch');
 assert.equal(localeRoot.lang,'fa');assert.equal(localeRoot.dir,'rtl');
+classes.add('locale-pending');localeWindow.__researchBeeReleaseLocale();
+assert.equal(classes.size,0,'Authorized shell release left a frame with pointer-inert controls');
 console.log('Atomic locale contracts passed: overlapping transactions release both classes; late hydration never re-hides controls.');

@@ -30,6 +30,10 @@ async function loadAll(){
       $('workspaceSelect').innerHTML=activeAssistants.map(x=>`<option value="${esc(x.id)}">${esc(x.name)}</option>`).join('');
       $('workspaceSelect').value=state.assistantId;
       renderAssistants();
+      // Authorization and the first localized render are complete. Do not
+      // keep visible controls pointer-inert while unrelated health/metrics
+      // requests hydrate: a real user can navigate before those requests end.
+      window.__researchBeeReleaseLocale?.();
       const authorized=state.assistantId;
       const [meta,health]=await Promise.all([metaPromise,healthPromise]);
       if(!sameActor()||authorized!==state.assistantId)return;
