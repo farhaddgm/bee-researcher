@@ -130,6 +130,18 @@ try {
   }
   await dialog.locator('[data-support-v4-dialog-close]').click();
   await dialog.waitFor({ state: 'hidden' });
+  await page.evaluate(()=>{
+    window.__supportScopeOwner=window.__researchBeeState.currentUser;
+    window.__researchBeeState.currentUser={...window.__supportScopeOwner,id:'synthetic-presentation-scope',is_owner:false};
+    window.applyRoleVisibility();
+  });
+  if(!(await page.locator('[data-support-v4-all-card]').isHidden()))throw Error('Owner inbox survived an actor/role change');
+  if((await dialog.locator('[data-support-v4-original]').textContent())?.trim())throw Error('Previous actor ticket body remained in the dialog');
+  await page.evaluate(()=>{
+    window.__researchBeeState.currentUser=window.__supportScopeOwner;delete window.__supportScopeOwner;
+    window.setView('support');
+  });
+  await ticket.waitFor({state:'visible'});
   await page.evaluate(() => window.setView?.('assistants'));
   const assistantCreateTrigger = page.locator('#newAssistantBtn');
   await assistantCreateTrigger.waitFor({ state: 'visible' });
