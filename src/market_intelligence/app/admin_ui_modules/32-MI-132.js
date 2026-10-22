@@ -29,9 +29,7 @@
       // the identity without rebuilding the whole header.
       window.__researchBeeRefreshSidebarAccount=ensureAccountMenu;
       const applySharedHeader=()=>{document.body.classList.toggle('assistant-header-reference',Boolean(state.currentUser));ensureAccountMenu()};
-      const existingSetView=window.setView;if(typeof existingSetView==='function')window.setView=function(name){const result=existingSetView(name);applySharedHeader();return result};
-      const existingSetLanguage=window.setLanguage;if(typeof existingSetLanguage==='function')window.setLanguage=function(language){const result=existingSetLanguage(language);applySharedHeader();return result};
-      const existingShowApp=window.showApp;if(typeof existingShowApp==='function')window.showApp=function(user){const result=existingShowApp(user);applySharedHeader();return result};
+      window.BeeAdminLifecycle.register('shared-header', ['setView','setLanguage','showApp'], {scoped:false,after:applySharedHeader});
       // The shared header is updated by the authenticated bootstrap, view and
       // language events above.  A 500ms repaint loop only recreated text
       // nodes and made locale normalization look like a digit flicker.

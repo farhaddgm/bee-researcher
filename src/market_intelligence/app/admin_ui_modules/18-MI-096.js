@@ -31,8 +31,9 @@
       // page is active; this removes an avoidable API request and a large DOM
       // insertion from the critical first paint.
       const queueTemplatePanel=()=>{removeTemplateButton();const active=document.getElementById('view-template-content')?.classList.contains('active');if(canEdit()&&active&&state.assistantId&&!$('templateBuilderPanel'))window.openTemplateBuilder()};
-      const oldLoadAll=loadAll;loadAll=async function(){const active=document.getElementById('view-template-content')?.classList.contains('active');if(!active)removeTemplatePanel();const result=await oldLoadAll();queueTemplatePanel();return result};
-      const oldLanguage=setLanguage;setLanguage=function(lang){oldLanguage(lang);removeTemplatePanel();queueTemplatePanel()};
+      window.BeeAdminLifecycle.register('template-panel', ['loadAll','setLanguage'], {
+        before:({name})=>{if(name==='setLanguage'||!document.getElementById('view-template-content')?.classList.contains('active'))removeTemplatePanel();},
+        after:queueTemplatePanel});
       // The template button is removed by the explicit workspace/render hooks
       // above.  Keep this observer scoped to the small modal root for legacy
       // cached shells; observing the whole document made every table repaint

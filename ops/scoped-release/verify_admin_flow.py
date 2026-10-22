@@ -19,7 +19,7 @@ def main():
     pg, redis, app = [network + '-' + kind for kind in ('pg', 'redis', 'app')]
     containers, created = [], False
     image = run('inspect', args.image, capture=True)
-    if json.loads(image.stdout)[0]['Config']['Labels'].get('org.opencontainers.image.version') not in {'3.54.0', '3.54.1'}:
+    if json.loads(image.stdout)[0]['Config']['Labels'].get('org.opencontainers.image.version') not in {'3.54.0', '3.54.1', '3.54.2'}:
         raise RuntimeError('A 3.54.x candidate is required')
     try:
         run('network', 'create', '--internal', network, capture=True); created = True
@@ -53,7 +53,9 @@ def main():
             if check.returncode == 0: break
             if attempt == 89: raise RuntimeError('Synthetic Admin did not become ready')
             time.sleep(.5)
-        for script in ('verify_news_table_browser.mjs', 'verify_research_context_browser.mjs'):
+        for script in ('verify_news_table_browser.mjs', 'verify_research_context_browser.mjs',
+                       'verify_admin_lifecycle_browser.mjs', 'verify_admin_support.mjs',
+                       'verify_ai_model_settings.mjs', 'verify_admin_locales.mjs'):
             run('run', '--rm', '--entrypoint', 'node', '--network', network, *browser_mounts(args.node_modules.resolve()),
                 '-e', 'MARKET_INTELLIGENCE_ENVIRONMENT=test', '-e', 'BEE_ADMIN_URL=http://' + app + ':8010/admin',
                 '-e', 'MARKET_INTELLIGENCE_ADMIN_BOOTSTRAP_USERNAME=admin-flow',

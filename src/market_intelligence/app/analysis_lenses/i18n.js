@@ -4,13 +4,13 @@
   const keys='title|scope|focused|contextual|lens|analyze|analyzePrompt|related|days|refresh|more|none|coverage|selection|help|branch|loading|error|expired|budget|owner|enabled|savePolicy|defaultLens|create|name|definition|objective|dimensions|questions|priority|required|add|remove|up|down|saveDraft|preview|publish|restore|archive|revoke|reason|source|model|approved|pending|complete|history|high|normal|low|limitations|changed|referenceLanguage|private|helpDefinition|summary|quality|inScope|outScope|output|copy'.split('|');
   const rows={
     fa:'تحلیل خبر|دامنهٔ تحلیل|نقطه‌ای|هاله‌ای|لنز|تحلیل|این خبر را با لنز و منابع انتخاب‌شده تحلیل کن.|خبرهای مرتبط|بازهٔ روزها|بازخوانی|خبرهای دیگر|در منابع بررسی‌شده خبر مکمل کافی پیدا نشد.|پوشش بررسی|خبر انتخاب‌شده|لنز زاویهٔ بررسی را تغییر می‌دهد، نه واقعیت‌های خبر را. منابع مکمل باید انتخاب شوند.|این تغییر گفتگوی تازه می‌سازد و گفتگوی ذخیره‌نشده را حذف می‌کند. برای نگهداری آن، ابتدا ذخیره کنید. ادامه می‌دهید؟|در حال بارگذاری|درخواست انجام نشد؛ تنظیمات و دسترسی را بررسی کنید.|نشست یا پیش‌نمایش منقضی شده است.|سهمیه یا ظرفیت مدل کافی نیست.|فقط مالک|فعال|ذخیرهٔ تنظیمات|لنز پیش‌فرض|ساخت لنز|نام|تعریف|هدف|ابعاد|پرسش‌ها؛ هر سطر یک پرسش|اولویت|اطلاعات موردنیاز؛ هر سطر یک مورد|افزودن|حذف|بالا|پایین|ذخیرهٔ پیش‌نویس|پیش‌نمایش با AI؛ هزینه‌دار|فعال‌سازی نسخه|بازگردانی به پیش‌نویس|بایگانی|لغو نسخه|دلیل|خبر منتشرشده|مدل|نتیجه را بررسی کردم و تأیید می‌کنم.|در صف یا در حال تحلیل|تکمیل شد|تاریخچهٔ نسخه‌ها|بالا|معمولی|کم|محدودیت‌ها|منبع یا نسخه تغییر کرده؛ بازخوانی و تأیید دوباره لازم است.|زبان تعریف مرجع|پیش‌نمایش خصوصی است و از سهمیهٔ AI استفاده می‌کند.|تعریف و ابعاد چارچوب تحلیل‌اند؛ قواعد دقت، استناد و مجوز قابل حذف نیستند.|توضیح کوتاه|معیارهای کیفیت؛ هر سطر یک مورد|داخل دامنه؛ هر سطر یک مورد|خارج از دامنه؛ هر سطر یک مورد|بخش‌های خروجی|کپی لنز',
-    en:'News analysis|Analysis scope|Focused|Contextual|Lens|Analyze|Analyze this news using the selected lens and sources.|Related reports|Window in days|Refresh|More reports|No sufficient related reports were found in the reviewed sources.|Coverage|Selected reports|A lens changes the questions, not the facts. Select any supplementary sources explicitly.|This starts a new conversation and deletes unsaved discussion. Save it first if you want to keep it. Continue?|Loading|Request failed; check settings and access.|Session or preview expired.|Insufficient quota or model capacity.|Owners only|Enabled|Save settings|Default lens|Create lens|Name|Definition|Objective|Dimensions|Questions; one per line|Priority|Required information; one per line|Add|Remove|Up|Down|Save draft|AI preview; uses budget|Publish revision|Restore as draft|Archive|Revoke revision|Reason|Published report|Model|I reviewed and approve this result.|Queued or analyzing|Completed|Revision history|High|Normal|Low|Limitations|Source or revision changed; refresh and confirm again.|Definition language|Preview is private and uses your AI budget.|Definitions guide analysis; accuracy, citations and access rules cannot be removed.|Short description|Quality criteria; one per line|In scope; one per line|Out of scope; one per line|Output sections|Copy lens',
-    tr:'Haber analizi|Analiz kapsamı|Odaklı|Bağlamsal|Bakış açısı|Analiz et|Bu haberi seçilen bakış açısı ve kaynaklarla analiz et.|İlgili haberler|Gün aralığı|Yenile|Diğer haberler|İncelenen kaynaklarda yeterli ilgili haber bulunamadı.|Kapsam|Seçilen haberler|Bakış açısı soruları değiştirir, gerçekleri değil. Ek kaynakları açıkça seçin.|Bu işlem yeni bir sohbet başlatır ve kaydedilmemiş konuşmayı siler. Saklamak için önce kaydedin. Devam edilsin mi?|Yükleniyor|İstek başarısız; ayarları ve erişimi kontrol edin.|Oturum veya önizleme süresi doldu.|Kota veya model kapasitesi yetersiz.|Yalnızca sahipler|Etkin|Ayarları kaydet|Varsayılan bakış açısı|Bakış açısı oluştur|Ad|Tanım|Amaç|Boyutlar|Sorular; her satıra bir tane|Öncelik|Gerekli bilgiler; her satıra bir tane|Ekle|Kaldır|Yukarı|Aşağı|Taslağı kaydet|AI önizleme; bütçe kullanır|Sürümü etkinleştir|Taslak olarak geri yükle|Arşivle|Sürümü iptal et|Gerekçe|Yayımlanmış haber|Model|Sonucu inceledim ve onaylıyorum.|Sırada veya analiz ediliyor|Tamamlandı|Sürüm geçmişi|Yüksek|Normal|Düşük|Sınırlamalar|Kaynak veya sürüm değişti; yenileyip tekrar onaylayın.|Tanım dili|Önizleme özeldir ve AI bütçenizi kullanır.|Tanımlar analize rehberlik eder; doğruluk, kaynak ve erişim kuralları kaldırılamaz.|Kısa açıklama|Kalite ölçütleri; her satıra bir tane|Kapsama dahil; her satıra bir tane|Kapsam dışı; her satıra bir tane|Çıktı bölümleri|Bakış açısını kopyala',
-    ar:'تحليل الخبر|نطاق التحليل|مركّز|سياقي|منظور التحليل|حلّل|حلّل هذا الخبر باستخدام المنظور والمصادر المختارة.|أخبار ذات صلة|الفترة بالأيام|تحديث|أخبار أخرى|لم يُعثر على أخبار مرتبطة كافية في المصادر المفحوصة.|التغطية|الأخبار المختارة|المنظور يغيّر الأسئلة لا الحقائق. اختر المصادر الإضافية صراحةً.|سيبدأ هذا محادثة جديدة ويحذف النقاش غير المحفوظ. احفظه أولاً إن أردت الاحتفاظ به. هل تريد المتابعة؟|جارٍ التحميل|فشل الطلب؛ تحقق من الإعدادات والصلاحيات.|انتهت الجلسة أو المعاينة.|الحصة أو سعة النموذج غير كافية.|للمالك فقط|مفعّل|حفظ الإعدادات|المنظور الافتراضي|إنشاء منظور|الاسم|التعريف|الهدف|الأبعاد|الأسئلة؛ سؤال في كل سطر|الأولوية|المعلومات المطلوبة؛ بند في كل سطر|إضافة|إزالة|أعلى|أسفل|حفظ المسودة|معاينة بالذكاء الاصطناعي؛ تستهلك الميزانية|تفعيل الإصدار|استعادة كمسودة|أرشفة|إلغاء الإصدار|السبب|خبر منشور|النموذج|راجعت النتيجة وأوافق عليها.|في الانتظار أو قيد التحليل|مكتمل|سجل الإصدارات|عالية|عادية|منخفضة|القيود|تغيّر المصدر أو الإصدار؛ حدّث وأكّد مجدداً.|لغة التعريف|المعاينة خاصة وتستهلك ميزانية الذكاء الاصطناعي.|التعريف يوجّه التحليل؛ لا يمكن حذف قواعد الدقة والاستشهاد والصلاحيات.|وصف مختصر|معايير الجودة؛ بند في كل سطر|ضمن النطاق؛ بند في كل سطر|خارج النطاق؛ بند في كل سطر|أقسام النتيجة|نسخ المنظور',
-    es:'Análisis de noticias|Alcance del análisis|Enfocado|Contextual|Perspectiva|Analizar|Analiza esta noticia con la perspectiva y las fuentes seleccionadas.|Noticias relacionadas|Periodo en días|Actualizar|Más noticias|No se encontraron suficientes noticias relacionadas en las fuentes revisadas.|Cobertura|Noticias seleccionadas|La perspectiva cambia las preguntas, no los hechos. Selecciona explícitamente las fuentes adicionales.|Esto inicia una conversación nueva y elimina la no guardada. Guárdala antes si deseas conservarla. ¿Continuar?|Cargando|La solicitud falló; revisa la configuración y el acceso.|La sesión o la vista previa ha caducado.|Cuota o capacidad del modelo insuficiente.|Solo propietarios|Activado|Guardar configuración|Perspectiva predeterminada|Crear perspectiva|Nombre|Definición|Objetivo|Dimensiones|Preguntas; una por línea|Prioridad|Información necesaria; una por línea|Añadir|Eliminar|Arriba|Abajo|Guardar borrador|Vista previa con IA; consume presupuesto|Activar versión|Restaurar como borrador|Archivar|Revocar versión|Motivo|Noticia publicada|Modelo|He revisado y apruebo este resultado.|En cola o analizando|Completado|Historial de versiones|Alta|Normal|Baja|Limitaciones|La fuente o versión cambió; actualiza y confirma de nuevo.|Idioma de la definición|La vista previa es privada y consume tu presupuesto de IA.|Las definiciones guían el análisis; no pueden eliminarse las reglas de precisión, citas y acceso.|Descripción breve|Criterios de calidad; uno por línea|Dentro del alcance; uno por línea|Fuera del alcance; uno por línea|Secciones del resultado|Copiar perspectiva',
-    it:'Analisi della notizia|Ambito dell’analisi|Mirata|Contestuale|Prospettiva|Analizza|Analizza questa notizia con la prospettiva e le fonti selezionate.|Notizie correlate|Periodo in giorni|Aggiorna|Altre notizie|Non sono state trovate notizie correlate sufficienti nelle fonti esaminate.|Copertura|Notizie selezionate|La prospettiva cambia le domande, non i fatti. Seleziona esplicitamente le fonti aggiuntive.|Avvia una nuova conversazione ed elimina quella non salvata. Salvala prima per conservarla. Continuare?|Caricamento|Richiesta non riuscita; controlla impostazioni e accesso.|Sessione o anteprima scaduta.|Quota o capacità del modello insufficiente.|Solo proprietari|Attivo|Salva impostazioni|Prospettiva predefinita|Crea prospettiva|Nome|Definizione|Obiettivo|Dimensioni|Domande; una per riga|Priorità|Informazioni necessarie; una per riga|Aggiungi|Rimuovi|Su|Giù|Salva bozza|Anteprima AI; usa il budget|Attiva versione|Ripristina come bozza|Archivia|Revoca versione|Motivo|Notizia pubblicata|Modello|Ho esaminato e approvo questo risultato.|In coda o in analisi|Completato|Cronologia delle versioni|Alta|Normale|Bassa|Limiti|Fonte o versione cambiata; aggiorna e conferma di nuovo.|Lingua della definizione|L’anteprima è privata e usa il budget AI.|Le definizioni guidano l’analisi; accuratezza, citazioni e accesso non possono essere rimossi.|Descrizione breve|Criteri di qualità; uno per riga|Nell’ambito; uno per riga|Fuori ambito; uno per riga|Sezioni del risultato|Copia prospettiva',
-    de:'Nachrichtenanalyse|Analyseumfang|Fokussiert|Kontextbezogen|Perspektive|Analysieren|Analysiere diese Nachricht mit der gewählten Perspektive und den Quellen.|Verwandte Nachrichten|Zeitraum in Tagen|Aktualisieren|Weitere Nachrichten|In den geprüften Quellen wurden nicht genügend verwandte Nachrichten gefunden.|Abdeckung|Ausgewählte Nachrichten|Die Perspektive verändert die Fragen, nicht die Fakten. Zusätzliche Quellen ausdrücklich auswählen.|Dies startet ein neues Gespräch und löscht den ungespeicherten Verlauf. Zum Behalten zuerst speichern. Fortfahren?|Wird geladen|Anfrage fehlgeschlagen; Einstellungen und Zugriff prüfen.|Sitzung oder Vorschau abgelaufen.|Kontingent oder Modellkapazität reicht nicht aus.|Nur Eigentümer|Aktiviert|Einstellungen speichern|Standardperspektive|Perspektive erstellen|Name|Definition|Ziel|Dimensionen|Fragen; eine pro Zeile|Priorität|Benötigte Informationen; eine pro Zeile|Hinzufügen|Entfernen|Nach oben|Nach unten|Entwurf speichern|KI-Vorschau; nutzt Budget|Version aktivieren|Als Entwurf wiederherstellen|Archivieren|Version widerrufen|Grund|Veröffentlichte Nachricht|Modell|Ich habe das Ergebnis geprüft und bestätige es.|In Warteschlange oder Analyse|Abgeschlossen|Versionsverlauf|Hoch|Normal|Niedrig|Einschränkungen|Quelle oder Version geändert; aktualisieren und erneut bestätigen.|Sprache der Definition|Die Vorschau ist privat und nutzt Ihr KI-Budget.|Definitionen leiten die Analyse; Genauigkeit, Belege und Zugriffsregeln bleiben verbindlich.|Kurzbeschreibung|Qualitätskriterien; eines pro Zeile|Im Umfang; eines pro Zeile|Außerhalb des Umfangs; eines pro Zeile|Ergebnisabschnitte|Perspektive kopieren',
-    fr:'Analyse de l’actualité|Périmètre d’analyse|Ciblée|Contextuelle|Perspective|Analyser|Analyse cette actualité avec la perspective et les sources choisies.|Actualités liées|Période en jours|Actualiser|Autres actualités|Aucune actualité liée suffisante n’a été trouvée dans les sources examinées.|Couverture|Actualités sélectionnées|La perspective change les questions, pas les faits. Sélectionnez explicitement les sources supplémentaires.|Cela démarre une nouvelle conversation et supprime l’échange non enregistré. Enregistrez-le d’abord pour le conserver. Continuer ?|Chargement|Échec de la demande ; vérifiez les paramètres et l’accès.|La session ou l’aperçu a expiré.|Quota ou capacité du modèle insuffisant.|Propriétaires uniquement|Activé|Enregistrer les paramètres|Perspective par défaut|Créer une perspective|Nom|Définition|Objectif|Dimensions|Questions ; une par ligne|Priorité|Informations nécessaires ; une par ligne|Ajouter|Supprimer|Monter|Descendre|Enregistrer le brouillon|Aperçu IA ; utilise le budget|Activer la version|Restaurer comme brouillon|Archiver|Révoquer la version|Motif|Actualité publiée|Modèle|J’ai examiné et j’approuve ce résultat.|En attente ou en cours d’analyse|Terminé|Historique des versions|Élevée|Normale|Faible|Limites|Source ou version modifiée ; actualisez et confirmez à nouveau.|Langue de la définition|L’aperçu est privé et utilise votre budget IA.|Les définitions guident l’analyse ; précision, citations et accès restent obligatoires.|Description courte|Critères de qualité ; un par ligne|Dans le périmètre ; un par ligne|Hors périmètre ; un par ligne|Sections du résultat|Copier la perspective'
+    en:'News analysis|Analysis scope|Focused|Contextual|Lens|Analyze|Analyze this news item using the selected lens and sources.|Related news|Window in days|Refresh|More reports|No sufficient related reports were found in the reviewed sources.|Coverage|Selected report|A lens changes the angle of analysis, not the facts of the news. Supplementary sources must be selected.|This starts a new conversation and deletes the unsaved one. Save it first if you want to keep it. Continue?|Loading|Request failed; check settings and access.|Session or preview expired.|Insufficient quota or model capacity.|Owner only|Enabled|Save settings|Default lens|Create lens|Name|Definition|Objective|Dimensions|Questions; one per line|Priority|Required information; one per line|Add|Remove|Up|Down|Save draft|AI preview; uses budget|Activate revision|Restore as draft|Archive|Revoke revision|Reason|Published report|Model|I reviewed and approve this result.|Queued or analyzing|Completed|Revision history|High|Normal|Low|Limitations|Source or revision changed; refresh and confirm again.|Reference definition language|Preview is private and uses your AI budget.|The definition and dimensions form the framework for analysis; rules on accuracy, citations, and permissions cannot be removed.|Short description|Quality criteria; one per line|In scope; one per line|Out of scope; one per line|Output sections|Copy lens',
+    tr:'Haber analizi|Analiz kapsamı|Odaklı|Bağlamsal|Bakış açısı|Analiz et|Bu haberi seçilen bakış açısı ve kaynaklarla analiz et.|İlgili haberler|Gün aralığı|Yenile|Diğer haberler|İncelenen kaynaklarda yeterli ilgili haber bulunamadı.|Kapsam|Seçilen haber|Mercek, inceleme açısını değiştirir; haberin gerçeklerini değil. Tamamlayıcı kaynaklar seçilmelidir.|Bu işlem yeni bir sohbet başlatır ve kaydedilmemiş konuşmayı siler. Saklamak için önce kaydedin. Devam edilsin mi?|Yükleniyor|İstek başarısız; ayarları ve erişimi kontrol edin.|Oturum veya önizleme süresi doldu.|Kota veya model kapasitesi yetersiz.|Yalnızca sahip|Etkin|Ayarları kaydet|Varsayılan bakış açısı|Bakış açısı oluştur|Ad|Tanım|Amaç|Boyutlar|Sorular; her satıra bir tane|Öncelik|Gerekli bilgiler; her satıra bir tane|Ekle|Kaldır|Yukarı|Aşağı|Taslağı kaydet|AI önizleme; bütçe kullanır|Sürümü etkinleştir|Taslak olarak geri yükle|Arşivle|Sürümü iptal et|Gerekçe|Yayımlanmış haber|Model|Sonucu inceledim ve onaylıyorum.|Sırada veya analiz ediliyor|Tamamlandı|Sürüm geçmişi|Yüksek|Normal|Düşük|Sınırlamalar|Kaynak veya sürüm değişti; yenileyip tekrar onaylayın.|Referans tanım dili|Önizleme özeldir ve AI bütçenizi kullanır.|Tanım ve boyutlar analiz çerçevesini oluşturur; doğruluk, atıf ve izin kuralları kaldırılamaz.|Kısa açıklama|Kalite ölçütleri; her satıra bir tane|Kapsama dahil; her satıra bir tane|Kapsam dışı; her satıra bir tane|Çıktı bölümleri|Bakış açısını kopyala',
+    ar:'تحليل الخبر|نطاق التحليل|مركّز|سياقي|منظور التحليل|حلّل|حلّل هذا الخبر باستخدام المنظور والمصادر المختارة.|أخبار ذات صلة|الفترة بالأيام|تحديث|أخبار أخرى|لم يُعثر على أخبار مرتبطة كافية في المصادر المفحوصة.|التغطية|الخبر المختار|تغيّر العدسة زاوية التحليل، لا حقائق الخبر. يجب اختيار مصادر تكميلية.|سيبدأ هذا محادثة جديدة ويحذف النقاش غير المحفوظ. احفظه أولاً إن أردت الاحتفاظ به. هل تريد المتابعة؟|جارٍ التحميل|فشل الطلب؛ تحقق من الإعدادات والصلاحيات.|انتهت الجلسة أو المعاينة.|الحصة أو سعة النموذج غير كافية.|للمالك فقط|مفعّل|حفظ الإعدادات|المنظور الافتراضي|إنشاء منظور|الاسم|التعريف|الهدف|الأبعاد|الأسئلة؛ سؤال في كل سطر|الأولوية|المعلومات المطلوبة؛ بند في كل سطر|إضافة|إزالة|أعلى|أسفل|حفظ المسودة|معاينة بالذكاء الاصطناعي؛ تستهلك الميزانية|تفعيل الإصدار|استعادة كمسودة|أرشفة|إلغاء الإصدار|السبب|خبر منشور|النموذج|راجعت النتيجة وأوافق عليها.|في الانتظار أو قيد التحليل|مكتمل|سجل الإصدارات|عالية|عادية|منخفضة|القيود|تغيّر المصدر أو الإصدار؛ حدّث وأكّد مجدداً.|لغة التعريف المرجعي|المعاينة خاصة وتستهلك ميزانية الذكاء الاصطناعي.|يشكّل التعريف والأبعاد إطار التحليل؛ ولا يمكن حذف قواعد الدقة والاستشهاد والأذونات.|وصف مختصر|معايير الجودة؛ بند في كل سطر|ضمن النطاق؛ بند في كل سطر|خارج النطاق؛ بند في كل سطر|أقسام النتيجة|نسخ المنظور',
+    es:'Análisis de noticias|Alcance del análisis|Enfocado|Contextual|Perspectiva|Analizar|Analiza esta noticia con la perspectiva y las fuentes seleccionadas.|Noticias relacionadas|Periodo en días|Actualizar|Más noticias|No se encontraron suficientes noticias relacionadas en las fuentes revisadas.|Cobertura|Noticia seleccionada|La perspectiva cambia el enfoque del análisis, no los hechos de la noticia. Deben seleccionarse fuentes complementarias.|Esto inicia una conversación nueva y elimina la conversación no guardada. Guárdala antes si deseas conservarla. ¿Continuar?|Cargando|La solicitud falló; revisa la configuración y el acceso.|La sesión o la vista previa ha caducado.|Cuota o capacidad del modelo insuficiente.|Solo el propietario|Activado|Guardar configuración|Perspectiva predeterminada|Crear perspectiva|Nombre|Definición|Objetivo|Dimensiones|Preguntas; una por línea|Prioridad|Información necesaria; una por línea|Añadir|Eliminar|Arriba|Abajo|Guardar borrador|Vista previa con IA; consume presupuesto|Activar versión|Restaurar como borrador|Archivar|Revocar versión|Motivo|Noticia publicada|Modelo|He revisado y apruebo este resultado.|En cola o en proceso de análisis|Completado|Historial de versiones|Alta|Normal|Baja|Limitaciones|La fuente o versión cambió; actualiza y confirma de nuevo.|Idioma de la definición de referencia|La vista previa es privada y consume tu presupuesto de IA.|La definición y las dimensiones conforman el marco del análisis; no se pueden eliminar las reglas de precisión, citas y permisos.|Descripción breve|Criterios de calidad; uno por línea|Dentro del alcance; uno por línea|Fuera del alcance; uno por línea|Secciones del resultado|Copiar perspectiva',
+    it:'Analisi della notizia|Ambito dell’analisi|Mirata|Contestuale|Prospettiva|Analizza|Analizza questa notizia con la prospettiva e le fonti selezionate.|Notizie correlate|Periodo in giorni|Aggiorna|Altre notizie|Non sono state trovate notizie correlate sufficienti nelle fonti esaminate.|Copertura|Notizia selezionata|La lente cambia l’angolo di analisi, non i fatti della notizia. È necessario selezionare fonti complementari.|Avvia una nuova conversazione ed elimina quella non salvata. Salvala prima per conservarla. Continuare?|Caricamento|Richiesta non riuscita; controlla impostazioni e accesso.|Sessione o anteprima scaduta.|Quota o capacità del modello insufficiente.|Solo il proprietario|Attivo|Salva impostazioni|Prospettiva predefinita|Crea prospettiva|Nome|Definizione|Obiettivo|Dimensioni|Domande; una per riga|Priorità|Informazioni necessarie; una per riga|Aggiungi|Rimuovi|Su|Giù|Salva bozza|Anteprima AI; usa il budget|Attiva versione|Ripristina come bozza|Archivia|Revoca versione|Motivo|Notizia pubblicata|Modello|Ho esaminato e approvo questo risultato.|In coda o in analisi|Completato|Cronologia delle versioni|Alta|Normale|Bassa|Limiti|Fonte o versione cambiata; aggiorna e conferma di nuovo.|Lingua della definizione di riferimento|L’anteprima è privata e usa il budget AI.|La definizione e le dimensioni costituiscono il quadro di analisi; le regole su accuratezza, citazioni e autorizzazioni non possono essere rimosse.|Descrizione breve|Criteri di qualità; uno per riga|Nell’ambito; uno per riga|Fuori ambito; uno per riga|Sezioni del risultato|Copia prospettiva',
+    de:'Nachrichtenanalyse|Analyseumfang|Fokussiert|Kontextbezogen|Perspektive|Analysieren|Analysiere diese Nachricht mit der gewählten Perspektive und den Quellen.|Verwandte Nachrichten|Zeitraum in Tagen|Aktualisieren|Weitere Nachrichten|In den geprüften Quellen wurden nicht genügend verwandte Nachrichten gefunden.|Abdeckung|Ausgewählte Nachricht|Eine Linse verändert den Blickwinkel der Analyse, nicht die Fakten der Nachricht. Ergänzende Quellen müssen ausgewählt werden.|Dies startet ein neues Gespräch und löscht den ungespeicherten Verlauf. Zum Behalten zuerst speichern. Fortfahren?|Wird geladen|Anfrage fehlgeschlagen; Einstellungen und Zugriff prüfen.|Sitzung oder Vorschau abgelaufen.|Kontingent oder Modellkapazität reicht nicht aus.|Nur der Eigentümer|Aktiviert|Einstellungen speichern|Standardperspektive|Perspektive erstellen|Name|Definition|Ziel|Dimensionen|Fragen; eine pro Zeile|Priorität|Benötigte Informationen; eine pro Zeile|Hinzufügen|Entfernen|Nach oben|Nach unten|Entwurf speichern|KI-Vorschau; nutzt Budget|Version aktivieren|Als Entwurf wiederherstellen|Archivieren|Version widerrufen|Grund|Veröffentlichte Nachricht|Modell|Ich habe das Ergebnis geprüft und bestätige es.|In Warteschlange oder Analyse|Abgeschlossen|Versionsverlauf|Hoch|Normal|Niedrig|Einschränkungen|Quelle oder Version geändert; aktualisieren und erneut bestätigen.|Sprache der Referenzdefinition|Die Vorschau ist privat und nutzt Ihr KI-Budget.|Definition und Dimensionen bilden den Rahmen der Analyse; Regeln zu Genauigkeit, Quellenangaben und Berechtigungen können nicht entfernt werden.|Kurzbeschreibung|Qualitätskriterien; eines pro Zeile|Im Umfang; eines pro Zeile|Außerhalb des Umfangs; eines pro Zeile|Ergebnisabschnitte|Perspektive kopieren',
+    fr:'Analyse de l’actualité|Périmètre d’analyse|Ciblée|Contextuelle|Perspective|Analyser|Analyse cette actualité avec la perspective et les sources choisies.|Actualités liées|Période en jours|Actualiser|Autres actualités|Aucune actualité liée suffisante n’a été trouvée dans les sources examinées.|Couverture|Actualité sélectionnée|La perspective modifie l’angle d’analyse, pas les faits de l’actualité. Des sources complémentaires doivent être sélectionnées.|Cela démarre une nouvelle conversation et supprime l’échange non enregistré. Enregistrez-le d’abord pour le conserver. Continuer ?|Chargement|Échec de la demande ; vérifiez les paramètres et l’accès.|La session ou l’aperçu a expiré.|Quota ou capacité du modèle insuffisants.|Propriétaire uniquement|Activé|Enregistrer les paramètres|Perspective par défaut|Créer une perspective|Nom|Définition|Objectif|Dimensions|Questions ; une par ligne|Priorité|Informations nécessaires ; une par ligne|Ajouter|Supprimer|Monter|Descendre|Enregistrer le brouillon|Aperçu IA ; utilise le budget|Activer la version|Restaurer comme brouillon|Archiver|Révoquer la version|Motif|Actualité publiée|Modèle|J’ai examiné et j’approuve ce résultat.|En attente ou en cours d’analyse|Terminé|Historique des versions|Élevée|Normale|Faible|Limites|Source ou version modifiée ; actualisez et confirmez à nouveau.|Langue de la définition de référence|L’aperçu est privé et utilise votre budget IA.|La définition et les dimensions constituent le cadre d’analyse ; les règles relatives à l’exactitude, aux citations et aux autorisations ne peuvent pas être supprimées.|Description courte|Critères de qualité ; un par ligne|Dans le périmètre ; un par ligne|Hors périmètre ; un par ligne|Sections du résultat|Copier la perspective'
   };
   const catalog=Object.fromEntries(Object.entries(rows).map(([language,text])=>{
     const values=text.split('|');if(values.length!==keys.length)throw new Error('Lens locale catalog mismatch: '+language);
@@ -53,20 +53,20 @@
     "Project",
     "Stop preview",
     "Draft",
-    "Published",
+    "Active",
     "Revoked",
     "Archived",
     "Replacement lens",
     "Examples",
     "Good example",
     "Bad example",
-    "Names and summaries in other languages",
+    "Names and descriptions in other languages",
     "Opportunities",
     "Risks",
     "Counterpoints",
     "Next questions",
     "Suggested checks",
-    "Report connections",
+    "News connections",
     "Shared entity",
     "Shared concept",
     "Shared phrase",
@@ -75,7 +75,7 @@
     "Information needed to reach a conclusion; its absence must be disclosed.",
     "At most three good/bad pairs, used for Owner review only, not sent to the model. Do not include confidential data.",
     "Optional. Translate the name and summary; review these translations whenever the definition changes meaning.",
-    "Choose a published report and model. Preview uses budget and does not activate a lens without Owner approval.",
+    "Choose a published news item and model. Preview uses budget and does not activate a lens without Owner approval.",
     "Focused uses the anchor only; contextual uses the anchor and up to four explicitly selected supplementary reports.",
     "Criteria you check when approving a preview; one per line.",
     "Questions for this dimension; at most five, one per line."
@@ -84,14 +84,14 @@
     "Proje",
     "Önizlemeyi durdur",
     "Taslak",
-    "Yayımlanmış",
+    "Etkin",
     "İptal edilmiş",
     "Arşivlenmiş",
     "Yerine kullanılacak bakış açısı",
     "Örnekler",
     "İyi örnek",
     "Kötü örnek",
-    "Diğer dillerde adlar ve özetler",
+    "Diğer dillerde adlar ve açıklamalar",
     "Fırsatlar",
     "Riskler",
     "Karşı görüşler",
@@ -103,7 +103,7 @@
     "Ortak ifade",
     "Kaynakların bağımsızlığı doğrulanmadı.",
     "Öncelik analizdeki dikkati belirler; yayın uygunluk puanını değiştirmez.",
-    "Sonuca varmak için gerekli bilgiler; eksiklikleri açıklanmalıdır.",
+    "Sonuca varmak için gerekli bilgiler; yokluğu belirtilmelidir.",
     "En fazla üç iyi/kötü örnek çifti; yalnızca sahibin incelemesi içindir, modele gönderilmez. Gizli veri eklemeyin.",
     "İsteğe bağlıdır. Adı ve özeti çevirin; tanımın anlamı değiştiğinde çevirileri gözden geçirin.",
     "Yayımlanmış bir haber ve model seçin. Önizleme bütçe kullanır ve sahibin onayı olmadan bakış açısını etkinleştirmez.",
@@ -115,14 +115,14 @@
     "المشروع",
     "إيقاف المعاينة",
     "مسودة",
-    "منشور",
+    "نشط",
     "ملغى",
     "مؤرشف",
     "منظور بديل",
     "الأمثلة",
     "مثال جيد",
     "مثال سيئ",
-    "الأسماء والملخصات بلغات أخرى",
+    "الأسماء والأوصاف بلغات أخرى",
     "الفرص",
     "المخاطر",
     "وجهات نظر معارضة",
@@ -146,14 +146,14 @@
     "Proyecto",
     "Detener vista previa",
     "Borrador",
-    "Publicado",
+    "Activo",
     "Revocado",
     "Archivado",
     "Perspectiva de reemplazo",
     "Ejemplos",
     "Buen ejemplo",
     "Mal ejemplo",
-    "Nombres y resúmenes en otros idiomas",
+    "Nombres y descripciones en otros idiomas",
     "Oportunidades",
     "Riesgos",
     "Contrapuntos",
@@ -177,12 +177,12 @@
     "Progetto",
     "Interrompi anteprima",
     "Bozza",
-    "Pubblicato",
+    "Attivo",
     "Revocato",
     "Archiviato",
     "Prospettiva sostitutiva",
     "Esempi",
-    "Esempio corretto",
+    "Esempio positivo",
     "Esempio scorretto",
     "Nomi e descrizioni in altre lingue",
     "Opportunità",
@@ -197,7 +197,7 @@
     "L’indipendenza delle fonti non è stata verificata.",
     "La priorità guida l’attenzione durante l’analisi, non il punteggio di rilevanza per la pubblicazione.",
     "Informazioni necessarie per una conclusione; la loro assenza deve essere dichiarata.",
-    "Al massimo tre coppie di esempi corretti/scorretti, solo per la revisione del proprietario; non inviate al modello. Non inserire dati riservati.",
+    "Al massimo tre coppie di esempi positivi/negativi, destinate solo alla revisione del proprietario; non vengono inviate al modello. Non inserire dati riservati.",
     "Facoltativo. Traduci nome e descrizione; rivedili quando cambia il significato della definizione.",
     "Scegli una notizia pubblicata e un modello. L’anteprima usa il budget e non attiva la prospettiva senza approvazione del proprietario.",
     "L’analisi mirata usa solo la notizia principale; quella contestuale aggiunge fino a quattro notizie selezionate esplicitamente.",
@@ -208,7 +208,7 @@
     "Projekt",
     "Vorschau stoppen",
     "Entwurf",
-    "Veröffentlicht",
+    "Aktiv",
     "Widerrufen",
     "Archiviert",
     "Ersatzperspektive",
@@ -228,7 +228,7 @@
     "Die Unabhängigkeit der Quellen wurde nicht überprüft.",
     "Die Priorität steuert die Aufmerksamkeit bei der Analyse, nicht den Relevanzwert für die Veröffentlichung.",
     "Für eine Schlussfolgerung benötigte Informationen; ihr Fehlen muss offengelegt werden.",
-    "Höchstens drei gute/schlechte Beispielpaare, nur zur Prüfung durch Eigentümer; sie werden nicht an das Modell gesendet. Keine vertraulichen Daten eingeben.",
+    "Höchstens drei Paare guter und schlechter Beispiele, nur zur Prüfung durch den Eigentümer; sie werden nicht an das Modell gesendet. Geben Sie keine vertraulichen Daten ein.",
     "Optional. Namen und Beschreibung übersetzen; bei inhaltlichen Änderungen der Definition erneut prüfen.",
     "Veröffentlichte Nachricht und Modell wählen. Die Vorschau nutzt Budget und aktiviert die Perspektive erst nach Freigabe durch Eigentümer.",
     "Fokussiert nutzt nur die Hauptnachricht; kontextbezogen ergänzt bis zu vier ausdrücklich gewählte Nachrichten.",
@@ -239,7 +239,7 @@
     "Projet",
     "Arrêter l’aperçu",
     "Brouillon",
-    "Publié",
+    "Actif",
     "Révoqué",
     "Archivé",
     "Perspective de remplacement",
@@ -419,31 +419,31 @@
   ],
   "en": [
     "Structured analysis output-token cap",
-    "Initial lens analysis only, including reasoning and answer tokens; it increases the spend envelope. Ordinary chat retains its existing cap. Default: 6,000."
+    "Only the initial lens analysis, including reasoning and answer tokens. Increasing this limit can increase cost. Ordinary chat keeps its existing cap. Default: 6,000."
   ],
   "tr": [
     "Yapılandırılmış analiz çıktı token sınırı",
-    "Yalnızca ilk bakış açısı analizi; akıl yürütme ve yanıt tokenlarını içerir, harcama üst sınırını artırır. Normal sohbetin sınırı değişmez. Varsayılan: 6.000."
+    "Yalnızca ilk lens analizi; akıl yürütme ve yanıt tokenlarını içerir, maliyeti artırır. Normal sohbetin sınırı değişmez. Varsayılan: 6.000."
   ],
   "ar": [
-    "حد رموز خرج التحليل المنظّم",
-    "للتحليل الأولي فقط، ويشمل رموز الاستدلال والإجابة ويزيد سقف التكلفة. يبقى حد المحادثة العادية دون تغيير. الافتراضي: ٦٠٠٠."
+    "الحد الأقصى لرموز إخراج التحليل المنظّم",
+    "للتحليل الأولي بالمنظور المختار فقط، ويشمل رموز الاستدلال والإجابة. قد يؤدي رفع هذا الحد إلى زيادة التكلفة. يبقى حد المحادثة العادية دون تغيير. الافتراضي: ٦٠٠٠."
   ],
   "es": [
     "Límite de tokens de salida del análisis estructurado",
-    "Solo el análisis inicial; incluye razonamiento y respuesta y aumenta el límite de gasto. El chat normal conserva su límite. Predeterminado: 6.000."
+    "Solo para el análisis inicial con la perspectiva elegida; incluye los tokens de razonamiento y respuesta. Un límite mayor puede aumentar el coste. El chat normal conserva su límite. Predeterminado: 6.000."
   ],
   "it": [
     "Limite token di uscita dell’analisi strutturata",
-    "Solo analisi iniziale; include ragionamento e risposta e aumenta il limite di spesa. Il limite del normale chat resta invariato. Predefinito: 6.000."
+    "Solo per l’analisi iniziale con la prospettiva scelta; include i token di ragionamento e risposta. Un limite maggiore può aumentare i costi. Il limite della chat normale resta invariato. Predefinito: 6.000."
   ],
   "de": [
     "Ausgabetoken-Limit für strukturierte Analysen",
-    "Nur die erste Analyse, einschließlich Denk- und Antworttokens; erhöht den Kostenrahmen. Das Limit normaler Chats bleibt unverändert. Standard: 6.000."
+    "Nur für die erste Analyse mit der gewählten Perspektive, einschließlich Denk- und Antworttokens. Ein höheres Limit kann die Kosten erhöhen. Für normale Chats gilt weiterhin das bisherige Limit. Standard: 6.000."
   ],
   "fr": [
     "Plafond de tokens de sortie de l’analyse structurée",
-    "Analyse initiale uniquement ; comprend raisonnement et réponse, et augmente le plafond de dépense. Le chat ordinaire conserve sa limite. Par défaut : 6 000."
+    "Uniquement pour l’analyse initiale selon la perspective choisie, y compris les jetons de raisonnement et de réponse. Une limite plus élevée peut augmenter le coût. La limite du chat ordinaire reste inchangée. Par défaut : 6 000."
   ]
 };
   for(const [language,values] of Object.entries(tokenRows))Object.assign(catalog[language],Object.fromEntries(tokenKeys.map((key,index)=>[key,values[index]])));
@@ -467,44 +467,44 @@
   ],
   "en": [
     "Input includes sources, framework and output schema. Oversized context is rejected without hidden truncation. Default: 48,000 characters, including follow-up conversations.",
-    "The selected context is too large. Select fewer sources or review the analysis cap with the Owner.",
+    "Sources or context are too large for this model. Select fewer sources or review the analysis cap with the Owner.",
     "The complete answer did not fit the model cap. Review the model or analysis cap with the Owner. No automatic retry occurred.",
     "The structured answer was invalid and was not displayed. No automatic retry occurred."
   ],
   "tr": [
     "Girdi kaynakları, çerçeveyi ve çıktı şemasını içerir. Aşırı bağlam gizlice kesilmeden reddedilir. Varsayılan: takip sohbetleri dahil 48.000 karakter.",
-    "Seçilen bağlam çok büyük. Daha az kaynak seçin veya analiz sınırını sahip ile inceleyin.",
-    "Tam yanıt model sınırına sığmadı. Modeli veya analiz sınırını sahip ile inceleyin. Otomatik yeniden deneme yapılmadı.",
+    "Seçilen bağlam bu model için çok büyük. Daha az kaynak seçin veya analiz sınırını hesap sahibiyle gözden geçirin.",
+    "Tam yanıt model sınırına sığmadı. Modeli veya analiz üst sınırını hesap sahibiyle gözden geçirin. Otomatik yeniden deneme yapılmadı.",
     "Yapılandırılmış yanıt geçersizdi ve gösterilmedi. Otomatik yeniden deneme yapılmadı."
   ],
   "ar": [
     "يشمل الإدخال المصادر والإطار ومخطط المخرجات. يُرفض السياق الكبير دون اختصار خفي. الافتراضي ٤٨٠٠٠ محرف ويُطبق أيضاً على متابعة المحادثة.",
-    "السياق المختار كبير جداً. اختر مصادر أقل أو راجع حد التحليل مع المالك.",
-    "لم تسع الإجابة الكاملة ضمن حد النموذج. راجع النموذج أو حد التحليل مع المالك. لم تحدث إعادة تلقائية.",
-    "الإجابة المنظّمة غير صالحة ولم تُعرض. لم تحدث إعادة تلقائية."
+    "المصادر أو السياق أكبر مما يستوعبه هذا النموذج. اختر مصادر أقل أو راجع حدّ التحليل مع المالك.",
+    "لم تتسع الإجابة الكاملة لحد النموذج. راجع النموذج أو حد التحليل مع المالك. لم تتم إعادة المحاولة تلقائيًا.",
+    "الإجابة المنظّمة غير صالحة ولم تُعرض. لم تتم إعادة المحاولة تلقائيًا."
   ],
   "es": [
-    "La entrada incluye fuentes, marco y esquema de salida. Un contexto excesivo se rechaza sin truncarlo. Predeterminado: 48.000 caracteres, incluidas las preguntas posteriores.",
-    "El contexto seleccionado es demasiado grande. Selecciona menos fuentes o revisa el límite con el propietario.",
-    "La respuesta completa no cabía en el límite del modelo. Revísalo con el propietario. No se reintentó automáticamente.",
+    "La entrada incluye fuentes, marco y esquema de salida. Un contexto excesivo se rechaza sin truncarlo. Predeterminado: 48.000 caracteres; el límite también se aplica a las conversaciones de seguimiento.",
+    "Las fuentes o el contexto son demasiado grandes para este modelo. Selecciona menos fuentes o consulta con el propietario el límite de análisis.",
+    "La respuesta completa no cabía en el límite del modelo. Revisa el modelo o el límite de análisis con el propietario. No se reintentó automáticamente.",
     "La respuesta estructurada no era válida y no se mostró. No se reintentó automáticamente."
   ],
   "it": [
-    "L’ingresso include fonti, quadro e schema di uscita. Un contesto eccessivo viene rifiutato senza tagli nascosti. Predefinito: 48.000 caratteri, anche per le domande successive.",
-    "Il contesto è troppo grande. Seleziona meno fonti o verifica il limite con il proprietario.",
-    "La risposta completa superava il limite del modello. Verifica modello o limite con il proprietario. Nessun tentativo automatico.",
-    "La risposta strutturata non era valida e non è stata mostrata. Nessun tentativo automatico."
+    "L’ingresso include fonti, quadro e schema di uscita. Un contesto eccessivo viene rifiutato senza tagli nascosti. Predefinito: 48.000 caratteri; il limite si applica anche alle conversazioni successive.",
+    "Le fonti o il contesto sono troppo voluminosi per questo modello. Seleziona meno fonti o verifica con il proprietario il limite di analisi.",
+    "La risposta completa non rientrava nel limite del modello. Verifica il modello o il limite di analisi con il proprietario. Non è stato effettuato alcun nuovo tentativo automatico.",
+    "La risposta strutturata non era valida e non è stata mostrata. Non è stato effettuato alcun nuovo tentativo automatico."
   ],
   "de": [
-    "Die Eingabe umfasst Quellen, Rahmen und Ausgabeschema. Zu großer Kontext wird ohne heimliche Kürzung abgelehnt. Standard: 48.000 Zeichen, auch für Folgefragen.",
-    "Der Kontext ist zu groß. Weniger Quellen wählen oder das Analyselimit mit dem Eigentümer prüfen.",
+    "Die Eingabe umfasst Quellen, Rahmen und Ausgabeschema. Zu großer Kontext wird ohne heimliche Kürzung abgelehnt. Standard: 48.000 Zeichen; das Limit gilt auch für Folgegespräche.",
+    "Die Quellen oder der Kontext sind für dieses Modell zu umfangreich. Wählen Sie weniger Quellen aus oder prüfen Sie das Analyselimit mit dem Eigentümer.",
     "Die vollständige Antwort passte nicht ins Modelllimit. Modell oder Analyselimit mit dem Eigentümer prüfen. Keine automatische Wiederholung.",
     "Die strukturierte Antwort war ungültig und wurde nicht angezeigt. Keine automatische Wiederholung."
   ],
   "fr": [
-    "L’entrée comprend sources, cadre et schéma de sortie. Un contexte trop grand est refusé sans coupe cachée. Par défaut : 48 000 caractères, y compris les questions suivantes.",
-    "Le contexte est trop grand. Choisissez moins de sources ou examinez le plafond avec le propriétaire.",
-    "La réponse complète dépassait le plafond du modèle. Examinez modèle ou plafond avec le propriétaire. Aucun nouvel essai automatique.",
+    "L’entrée comprend les sources, le cadre et le schéma de sortie. Un contexte trop volumineux est refusé sans troncature cachée. Par défaut : 48 000 caractères ; la limite s’applique aussi aux conversations de suivi.",
+    "Les sources ou le contexte sont trop volumineux pour ce modèle. Sélectionnez moins de sources ou vérifiez le plafond d’analyse avec le propriétaire.",
+    "La réponse complète dépassait le plafond du modèle. Examinez le modèle ou le plafond d’analyse avec le propriétaire. Aucune nouvelle tentative automatique n’a eu lieu.",
     "La réponse structurée était invalide et n’a pas été affichée. Aucun nouvel essai automatique."
   ]
 };

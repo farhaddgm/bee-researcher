@@ -2,13 +2,13 @@
     (function(){
       const texts={
         fa:['ارتباط‌سنجی خبر','حداقل امتیاز ارتباط پروژه','خبر باید هم به این آستانه و هم به آستانهٔ موضوع برسد. امتیاز هوش مصنوعی پیش از انتخاب خبر محاسبه می‌شود.','ذخیره','تحلیل هوش مصنوعی فعال است','تحلیل هوش مصنوعی پیکربندی نشده؛ خبرها خودکار منتشر نمی‌شوند'],
-        en:['News relevance','Minimum project relevance','News must meet both this threshold and the topic threshold. AI scores are computed before news selection.','Save','AI analysis is enabled','AI analysis is not configured; news will not be published automatically'],
+        en:['News relevance','Minimum project relevance score','News must meet both this threshold and the topic threshold. AI scores are computed before news selection.','Save','AI analysis is enabled','AI analysis is not configured; news will not be published automatically'],
         tr:['Haber ilgililiği','Proje için asgari ilgililik puanı','Haber hem bu eşiği hem de konu eşiğini karşılamalıdır. Yapay zekâ puanları haber seçilmeden önce hesaplanır.','Kaydet','Yapay zekâ analizi etkin','Yapay zekâ analizi yapılandırılmadı; haberler otomatik yayımlanmaz'],
         ar:['صلة الأخبار','الحد الأدنى لدرجة الصلة بالمشروع','يجب أن يبلغ الخبر هذا الحد وحد الموضوع معًا. تُحسب درجة الذكاء الاصطناعي قبل اختيار الخبر.','حفظ','تحليل الذكاء الاصطناعي مفعّل','تحليل الذكاء الاصطناعي غير مُعدّ؛ لن تُنشر الأخبار تلقائيًا'],
-        de:['Nachrichtenrelevanz','Mindest­relevanz für das Projekt','Nachrichten müssen diesen und den Themen-Schwellenwert erreichen. KI-Bewertungen erfolgen vor der Auswahl.','Speichern','KI-Analyse ist aktiviert','KI-Analyse ist nicht eingerichtet; Nachrichten werden nicht automatisch veröffentlicht'],
-        fr:['Pertinence des actualités','Seuil minimal du projet','Une actualité doit atteindre ce seuil et celui du sujet. Le score IA est calculé avant la sélection.','Enregistrer','Analyse IA activée','Analyse IA non configurée ; aucune publication automatique'],
-        es:['Relevancia de las noticias','Relevancia mínima del proyecto','La noticia debe alcanzar este umbral y el del tema. La IA calcula la puntuación antes de seleccionar noticias.','Guardar','Análisis con IA activado','La IA no está configurada; no se publicarán noticias automáticamente'],
-        it:['Pertinenza delle notizie','Pertinenza minima del progetto','Le notizie devono raggiungere questa soglia e quella dell’argomento. Il punteggio IA viene calcolato prima della selezione.','Salva','Analisi IA attiva','Analisi IA non configurata; nessuna pubblicazione automatica']
+        de:['Nachrichtenrelevanz','Mindestwert für die Projektrelevanz','Nachrichten müssen diesen und den Themen-Schwellenwert erreichen. KI-Bewertungen erfolgen vor der Auswahl.','Speichern','KI-Analyse ist aktiviert','KI-Analyse ist nicht eingerichtet; Nachrichten werden nicht automatisch veröffentlicht'],
+        fr:['Pertinence des actualités','Score minimal de pertinence du projet','Une actualité doit atteindre ce seuil et celui du sujet. Le score IA est calculé avant la sélection.','Enregistrer','Analyse IA activée','Analyse IA non configurée ; aucune publication automatique'],
+        es:['Relevancia de las noticias','Puntuación mínima de relevancia del proyecto','La noticia debe alcanzar este umbral y el del tema. La IA calcula la puntuación antes de seleccionar noticias.','Guardar','Análisis con IA activado','La IA no está configurada; no se publicarán noticias automáticamente'],
+        it:['Pertinenza delle notizie','Punteggio minimo di pertinenza del progetto','Le notizie devono raggiungere questa soglia e quella dell’argomento. Il punteggio IA viene calcolato prima della selezione.','Salva','Analisi IA attiva','Analisi IA non configurata; nessuna pubblicazione automatica']
       };
       function render(){
         const root=$('view-settings');if(!root)return;
@@ -36,6 +36,5 @@
         $('projectAIState').textContent=t[state.runtimeSettings?.ai_analysis_ready?4:5]+(Number.isFinite(state.metrics?.pending_ai_articles)?' · '+new Intl.NumberFormat(state.language||'en').format(state.metrics.pending_ai_articles)+' '+(queueLabels[state.language]||queueLabels.en):'');
         $('saveProjectRelevance').textContent=t[3];$('saveProjectRelevance').hidden=!['admin','assistant_admin','editor','owner'].includes(state.currentUser?.role)&&!state.currentUser?.is_owner;
       }
-      const baseLoad=loadAll;loadAll=async function(){await baseLoad.apply(this,arguments);render()};
-      const baseLanguage=setLanguage;setLanguage=function(){const value=baseLanguage.apply(this,arguments);render();return value};window.setLanguage=setLanguage;render();
+      window.BeeAdminLifecycle.register('relevance-settings', ['loadAll','setLanguage'], {after:render});render();
     })();

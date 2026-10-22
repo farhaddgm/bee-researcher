@@ -55,10 +55,12 @@ def main() -> int:
     parser.add_argument("--max-style", type=int, default=DEFAULT_MAX_STYLE)
     args = parser.parse_args()
 
+    shared = ['backoffice_ui.js','auth_portal.js','login_history.js','report_portal/admin.js',
+              'news_chat/admin.js','news_voice/admin.js','analysis_lenses/admin.js','token_quotas/quotas.js']
+    sources = {args.source, *(args.source.parent / 'admin_ui_modules').glob('*'),
+               *args.source.parent.glob('admin_*.js'), *(args.source.parent/name for name in shared)}
     counts = check_budget(
-        ''.join(path.read_text(encoding="utf-8") for path in
-                [args.source, *sorted((args.source.parent / 'admin_ui_modules').glob('*'))]
-                if path.is_file()),
+        ''.join(path.read_text(encoding="utf-8") for path in sorted(sources) if path.is_file()),
         max_onclick=args.max_onclick,
         max_style=args.max_style,
     )

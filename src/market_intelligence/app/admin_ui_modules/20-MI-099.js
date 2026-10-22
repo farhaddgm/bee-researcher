@@ -15,15 +15,10 @@
           button.disabled=false;button.removeAttribute('aria-busy');button.classList.remove('is-loading');
         }
       });
-      const underlyingLoadAll=loadAll;
-      let inFlight=null;
-      loadAll=async function(){
-        if(inFlight)return inFlight;
-        setBusy(true);
-        const promise=(async()=>{try{return await underlyingLoadAll()}finally{setBusy(false)}})();
-        inFlight=promise;
-        try{return await promise}finally{if(inFlight===promise)inFlight=null}
-      };
+      let activeRefreshes=0;
+      window.BeeAdminLifecycle.register('refresh-controls', ['loadAll'], {scoped:false,
+        before:()=>{activeRefreshes++;setBusy(true);},
+        settled:()=>{activeRefreshes=Math.max(0,activeRefreshes-1);setBusy(activeRefreshes>0);}});
       const runRefresh=event=>{event?.preventDefault();event?.stopPropagation();state.newsViewsLoadedFor=null;state.incidentsLoadedFor=null;return loadAll()};
       const refresh=document.getElementById('refreshBtn'),system=document.getElementById('systemRefreshBtn');
       if(refresh)refresh.onclick=runRefresh;

@@ -81,15 +81,13 @@
     $('modalSubmit')?.classList.remove('primary');
     $('modalRoot')?.querySelector('.modal-foot .btn:not(#modalSubmit)')?.remove();
   }
-  const originalView=window.setView;
-  window.setView=function(name){const value=originalView?.apply(this,arguments);if(['overview','operations'].includes(name)){paintHealth();loadHealth();}if(name==='content'){paintTriage();if($('productTriage')?.open)loadTriage();}return value;};
-  try {setView=window.setView;}catch(_){}
-  const originalLoad=window.loadAll;
-  window.loadAll=async function(){const value=await originalLoad?.apply(this,arguments);if(s()?.currentUser){paintHealth();loadHealth();paintTriage();if($('productTriage')?.open)loadTriage();}return value;};
-  try {loadAll=window.loadAll;}catch(_){}
-  const originalLanguage=window.setLanguage;
-  window.setLanguage=function(){const value=originalLanguage?.apply(this,arguments);paintHealth();paintTriage();return value;};
-  try {setLanguage=window.setLanguage;}catch(_){}
+  window.BeeAdminLifecycle.register('product', ['setView','loadAll','setLanguage'], {after: ({name,args}) => {
+    if(name==='setLanguage'){paintHealth();paintTriage();return;}
+    if(name==='setView'){
+      if(['overview','operations'].includes(args[0])){paintHealth();loadHealth();}
+      if(args[0]==='content'){paintTriage();if($('productTriage')?.open)loadTriage();}
+    }else if(s()?.currentUser){paintHealth();loadHealth();paintTriage();if($('productTriage')?.open)loadTriage();}
+  }});
   window.__beeProductRefresh=()=>{paintHealth();loadHealth();paintTriage();if($('productTriage')?.open)loadTriage();};
   paintTriage();paintHealth();
 })();

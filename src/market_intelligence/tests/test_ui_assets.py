@@ -5,6 +5,14 @@ from app.ui_assets import ASSETS, externalize_document
 
 
 class UIAssetsTest(unittest.TestCase):
+    def test_workspace_bootstrap_has_one_synchronous_implementation(self):
+        self.assertNotIn('__ADMIN_WORKSPACE_BOOTSTRAP__',ADMIN_HTML)
+        self.assertEqual(1,len(re.findall(r'async function loadAll\(',ADMIN_HTML)))
+        self.assertNotIn('const projectScopedLoadAll=loadAll',ADMIN_HTML)
+        self.assertNotIn('const underlyingLoadAll=loadAll',ADMIN_HTML)
+        for retired in ['support-v3-stabilizer','support-ticket-v4-ownership-guard']:
+            self.assertNotIn('id="'+retired+'"',ADMIN_HTML)
+
     def test_compiled_document_preserves_all_modules_and_their_order(self):
         body = externalize_document(ADMIN_HTML)
         source_blocks = re.findall(r'<script([^>]*)>([\s\S]*?)</script>', ADMIN_HTML)

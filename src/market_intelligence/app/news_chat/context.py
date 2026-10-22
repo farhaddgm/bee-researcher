@@ -85,7 +85,8 @@ def validate_citations(answer: str, context: dict) -> tuple[str, list, bool]:
 
 
 def prompt(context: dict, question: str, language: str, history: list, selected: str | None, max_chars: int, intent: str = "question", answer_length: AnswerLength | None = None) -> list:
-    source = "\n".join(f'[{s["id"]}] ' + (('(' + s.get('scope', '') + '; ' + str(s.get('publication_id') or s.get('memory_id') or '') + '; publication date: ' + str(s.get('published_at') or 'not supplied') + ') ') if context.get('scope') == 'selected_research' else '') + s['text'] for s in context['segments'])
+    source_metadata = context.get('scope') == 'selected_research' or any(s.get('scope') == 'selected_public_source_revision' for s in context['segments'])
+    source = "\n".join(f'[{s["id"]}] ' + (('(' + s.get('scope', '') + '; ' + str(s.get('publication_id') or s.get('memory_id') or '') + '; publication date: ' + str(s.get('published_at') or 'not supplied') + ') ') if source_metadata else '') + s['text'] for s in context['segments'])
     language_name = {'fa':'Persian (Farsi)','en':'English','tr':'Turkish','ar':'Modern Standard Arabic',
                      'es':'Spanish','it':'Italian','de':'German','fr':'French'}[language]
     system = (
@@ -121,7 +122,12 @@ def prompt(context: dict, question: str, language: str, history: list, selected:
         system += ' ' + instructions[intent]
     if any(seg.get('scope')=='selected_public_source_revision' for seg in context.get('segments', [])):
         system = system.replace('Use only the explicitly selected published reports', 'Use only the explicitly selected published reports and public-source revision excerpts')
+        system = system.replace('Use only the selected published report', 'Use only the supplied reports and public-source excerpts')
+        system = system.replace('It is an AI-produced report, NOT an independently verified full source article.',
+            'Published-report segments are AI-produced reports. Segments labelled selected_public_source_revision are publisher excerpts, not AI-produced reports. Neither is an independently verified full source article.')
         system += ' Explicit public-source revision excerpts are supplied with observation times. They are not independent fact-checks or guaranteed full articles. Cite each revision separately and disclose absent or truncated before/after text. Do not claim access to unselected source history.'
+        if all(seg.get('scope') == 'selected_public_source_revision' for seg in context['segments']):
+            system += ' All supplied segments here are public publisher excerpts. Do not describe them as AI-generated reports or say no public-source excerpt was supplied.'
     if any(seg.get('scope')=='selected_published_report_revision' for seg in context.get('segments', [])):
         system += ' Published-report revisions are prior/current AI-produced reader reports, not original-source captures; keep that distinction explicit.'
     if selected:

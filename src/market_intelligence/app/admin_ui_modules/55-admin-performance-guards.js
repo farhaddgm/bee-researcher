@@ -7,28 +7,27 @@
     (function(){
       const raw=window.req,cacheTtl=1200;
       if(typeof raw==='function'&&!raw.__adminReadCache){
-        const cache=new Map();
+        const cache=new Map();let generation=0,lastActor='';
         const cached=async function(path,opts={}){
-          const method=String(opts?.method||'GET').toUpperCase(),key=String(state.currentUser?.id||'')+':'+String(state.assistantId||'')+':'+String(path);
-          const cacheable=method==='GET'&&!/\/login|\/logout|\/csp-report/i.test(key);
+          const actor=String(state.currentUser?.id||'')+':'+String(state.assistantId||'');
+          if(actor!==lastActor){lastActor=actor;cache.clear();generation++;}
+          for(const [oldKey,item]of cache)if(item.expires<=Date.now())cache.delete(oldKey);
+          const method=String(opts?.method||'GET').toUpperCase(),key=actor+':'+String(path);
+          const cacheable=method==='GET'&&!/\/login|\/logout|\/csp-report|\/admin\/api\/me(?:\?|$)/i.test(String(path));
           // Explicit refreshes (coalesceGet:false) must bypass both layers of
           // request deduplication. Leaving the short read cache in front of
           // the request layer caused the Operations refresh button to return
           // stale incidents even though loadIncidents(true) opted out of GET
           // coalescing below.
-          if(method==='GET'&&opts?.coalesceGet===false){cache.delete(key);return raw(path,opts)}
-          if(!cacheable){cache.clear();return raw(path,opts)}
+          if(method==='GET'&&opts?.coalesceGet===false){cache.delete(key);generation++;return raw(path,opts)}
+          if(!cacheable){cache.clear();generation++;return raw(path,opts)}
           const hit=cache.get(key);if(hit&&hit.expires>Date.now())return hit.value;
-          const value=await raw(path,opts);cache.set(key,{value,expires:Date.now()+cacheTtl});return value
+          const version=generation,value=await raw(path,opts);
+          if(version===generation){if(cache.size>=64)cache.delete(cache.keys().next().value);cache.set(key,{value,expires:Date.now()+cacheTtl});}return value
         };
         cached.__adminReadCache=true;window.req=cached;try{req=cached}catch(_){ }
       }
-      const current=window.loadAll;
-      if(typeof current==='function'&&!current.__adminPerformanceSingleFlight){
-        let flight=null;
-        const guarded=function(){if(flight)return flight;flight=Promise.resolve().then(()=>current.apply(this,arguments)).finally(()=>{flight=null});return flight};
-        guarded.__adminPerformanceSingleFlight=true;window.loadAll=guarded;try{loadAll=guarded}catch(_){ }
-        ['refreshBtn','systemRefreshBtn'].forEach(id=>{const button=document.getElementById(id);if(button)button.onclick=window.__researchBeeRefreshBackoffice||guarded})
-      }
+      // Full-refresh deduplication belongs exclusively to BeeAdminLifecycle.
+      ['refreshBtn','systemRefreshBtn'].forEach(id=>{const button=document.getElementById(id);if(button)button.onclick=window.__researchBeeRefreshBackoffice||(()=>window.loadAll())});
       window.__researchBeePerformanceGuards={readCache:true,singleFlight:true,ttl:cacheTtl};
     })();

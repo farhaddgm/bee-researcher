@@ -14,7 +14,8 @@ publication. The source repository is public; application access is not.
 
 The service version is defined in `src/market_intelligence/VERSION`. Read the
 [service guide](src/market_intelligence/README.md) and
-[3.41.0 release notes](docs/RELEASE-v3.41.0-fa.md) before running it.
+[current status](docs/STATUS-20261022-fa.md) and
+[3.54.2 release notes](docs/RELEASE-v3.54.2-fa.md) before running it.
 
 ## Private company reports
 
@@ -41,7 +42,8 @@ The [analysis-lenses documentation](docs/analysis-lenses/README-fa.md) specifies
 focused/contextual news analysis and Owner-editable, versioned lens definitions.
 The implementation adds structured Owner editing/preview/version management,
 explicit same-project supplementary report selection, immutable conversation
-profiles and validated, cited outputs. The global flag starts disabled; it does
+profiles and validated, cited outputs. New installations start disabled; the
+existing production installation enabled this feature before 2026-10-22. It does
 not change publication relevance or grant access to other projects. See the
 [implementation and acceptance record](docs/analysis-lenses/IMPLEMENTATION-STATUS-fa.md)
 for the exact test/release status, quality scope and operating instructions.

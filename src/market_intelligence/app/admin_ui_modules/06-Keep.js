@@ -1,7 +1,7 @@
 
     // Keep the icon span inside the logout button when switching language.
     const preserveLogoutLabel=()=>{const button=document.getElementById('logoutBtn');const label=button?.querySelector('.btn-label');if(button&&label)label.textContent=state.language==='en'?'Sign out':'خروج'};
-    const previousSetLanguage=setLanguage;setLanguage=function(lang){previousSetLanguage(lang);preserveLogoutLabel()};
+    window.BeeAdminLifecycle.register('logout-label', ['setLanguage'], {after:preserveLogoutLabel});
     preserveLogoutLabel();
     const toggleSidebarShell=()=>{const shell=document.getElementById('app'),sidebar=document.getElementById('sidebar');if(!shell||!sidebar)return;const mobile=window.matchMedia('(max-width:780px)').matches;if(mobile){toggleSidebar();return}const collapsed=shell.classList.toggle('sidebar-collapsed');document.getElementById('mobileToggle')?.setAttribute('aria-expanded',String(!collapsed))};
     const menuButton=document.getElementById('mobileToggle');if(menuButton)menuButton.onclick=event=>{event.preventDefault();event.stopPropagation();toggleSidebarShell()};
@@ -27,9 +27,9 @@
       function applyLimitsVisibility(){ensureView();const visible=owner();document.querySelector('[data-view="settings"]')?.classList.toggle('hidden',!canUseSettings());document.getElementById('limitsCard')?.classList.toggle('hidden',!visible);document.querySelector('#view-settings .limits-grid')?.classList.toggle('hidden',!visible);document.getElementById('saveLimitsBtn')?.classList.toggle('hidden',!visible);if(!canUseSettings()&&document.getElementById('view-settings')?.classList.contains('active'))setView('overview')}
       const priorApply=applyRoleVisibility;applyRoleVisibility=function(){priorApply();applyLimitsVisibility()};
       const priorSetView=setView;setView=function(name){if(name==='settings'&&!canUseSettings())name='overview';priorSetView(name);if(name==='settings')loadLimits()};
-      const priorLoadAll=loadAll;loadAll=async function(){await priorLoadAll();if(document.getElementById('view-settings')?.classList.contains('active'))await loadLimits();applyLimitsVisibility()};
+      window.BeeAdminLifecycle.register('project-limits', ['loadAll'], {after:async()=>{if(document.getElementById('view-settings')?.classList.contains('active'))await loadLimits();applyLimitsVisibility();}});
       document.addEventListener('click',event=>{if(event.target?.id!=='saveLimitsBtn')return;(async()=>{try{const body={};Object.entries(fieldMap).forEach(([key,id])=>body[key]=Number(toLatinDigits($(id)?.value||'')));if(Object.values(body).some(value=>!Number.isFinite(value))){throw Error(state.language==='en'?'Enter valid numeric limits':'مقادیر سقف‌ها باید عدد معتبر باشند')}const response=await req('/admin/api/assistants/'+state.assistantId+'/limits',{method:'PUT',body:JSON.stringify(body)});Object.entries(fieldMap).forEach(([key,id])=>{if($(id)&&response.limits?.[key]!=null)$(id).value=state.language==='en'?String(response.limits[key]):toFaDigits(response.limits[key])});window.__researchBeeLocalizeSettingsNumbers?.();if($('limitsMsg')){$('limitsMsg').textContent=state.language==='en'?'Saved':'ذخیره شد';$('limitsMsg').className='success'}toast(state.language==='en'?'Project limits saved':'سقف‌های پروژه ذخیره شد')}catch(err){if($('limitsMsg')){$('limitsMsg').textContent=friendlyError(err.message);$('limitsMsg').className='error'}toast(friendlyError(err.message),true)}})()});
-      const priorLanguage=setLanguage;setLanguage=function(lang){priorLanguage(lang);ensureView();renderCopy();applyLimitsVisibility()};ensureView();renderCopy();applyLimitsVisibility();
+      window.BeeAdminLifecycle.register('limits-copy', ['setLanguage'], {after:()=>{ensureView();renderCopy();applyLimitsVisibility();}});ensureView();renderCopy();applyLimitsVisibility();
       window.__researchBeeLoadLimits=loadLimits;
     })();
     // Numeric rendering has one owner: the renderers call displayDigits() and
@@ -52,10 +52,6 @@
         });
       };
       window.__researchBeeNormalizeDigits=()=>normalizeMarkedNumbers(document.body);
-      const previousSetLanguage=window.setLanguage||setLanguage;
-      if(typeof previousSetLanguage==='function'){
-        const setLanguageWithDigits=function(lang){const result=previousSetLanguage.call(this,lang);normalizeMarkedNumbers(document.body);return result};
-        window.setLanguage=setLanguageWithDigits;setLanguage=setLanguageWithDigits;
-      }
+      window.BeeAdminLifecycle.register('marked-numbers', ['setLanguage'], {after:()=>normalizeMarkedNumbers(document.body)});
       normalizeMarkedNumbers(document.body);
     })();
