@@ -24,7 +24,7 @@
       if(!root()){const section=document.createElement('section');section.id='view-support';section.className='view';document.querySelector('.content')?.appendChild(section);}
       let model={my:[],all:[],summary:null,allSummary:null,canManage:false};let filters={search:'',priority:'',status:''},sort='newest',sequence=0,loading=false;
       let modelActor='';
-      const actor=()=>String(getState().currentUser?.id||'');
+      const actor=()=>{const user=getState().currentUser;return user?.id?String(user.id)+':'+String(Boolean(user.is_owner)):'';};
       const resetScope=()=>{
         if(modelActor!==actor()){
           modelActor=actor();sequence++;loading=false;

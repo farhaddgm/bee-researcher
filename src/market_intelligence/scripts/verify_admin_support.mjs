@@ -132,7 +132,7 @@ try {
   await dialog.waitFor({ state: 'hidden' });
   await page.evaluate(()=>{
     window.__supportScopeOwner=window.__researchBeeState.currentUser;
-    window.__researchBeeState.currentUser={...window.__supportScopeOwner,id:'synthetic-presentation-scope',is_owner:false};
+    window.__researchBeeState.currentUser={...window.__supportScopeOwner,is_owner:false};
     window.applyRoleVisibility();
   });
   if(!(await page.locator('[data-support-v4-all-card]').isHidden()))throw Error('Owner inbox survived an actor/role change');
