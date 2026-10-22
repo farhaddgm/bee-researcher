@@ -21,9 +21,13 @@ try{
   const initial=await page.evaluate(()=>window.BeeAdminLifecycle.diagnostics());
   for(const owner of expected)assert(initial.owners.includes(owner),`Missing lifecycle owner ${owner}`);
   const ownerCount=initial.owners.length;
+  await page.evaluate(()=>{window.__researchBeeReleaseLocale();window.setLanguage('en');});
+  await page.waitForFunction(()=>!document.documentElement.classList.contains('locale-pending')&&!document.documentElement.classList.contains('locale-switching'));
+  assert.equal(await page.evaluate(()=>{window.__researchBeeReleaseLocale();return document.documentElement.classList.contains('locale-pending');}),false,'Late hydration re-hid the visible shell');
   for(const language of ['fa','en','tr','ar','es','it','de','fr']){
     await page.evaluate(language=>window.setLanguage(language),language);
     await page.waitForFunction(language=>document.documentElement.lang===language,language);
+    await page.waitForFunction(()=>!document.documentElement.classList.contains('locale-pending')&&!document.documentElement.classList.contains('locale-switching'));
     for(const view of ['assistants','sources','topics','support','settings','businesses','content']){
       await page.evaluate(view=>window.setView(view),view);
       await page.locator('#view-'+view+'.active').waitFor();

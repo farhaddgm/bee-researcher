@@ -84,3 +84,31 @@ assert.equal(readerWindow.__beeUiPresentation,true);
 assert.equal(typeof readerWindow.__beeShowToast,'function');
 assert.equal(readerWindow.BeeAdminLifecycle,undefined);
 console.log('Shared reader presentation passed without an admin lifecycle dependency.');
+
+// Competing first-paint/language transactions must never strand either
+// visibility class. Late data hydration must not hide an exposed shell.
+const classes=new Set(),timers=new Map(),frames=[];let timerId=0;
+const localeWindow={setLanguage:language=>language},localeRoot={classList:{
+  add:(...names)=>names.forEach(name=>classes.add(name)),
+  remove:(...names)=>names.forEach(name=>classes.delete(name))}};
+const localeContext=vm.createContext({window:localeWindow,state:{language:'en'},
+  setLanguage:localeWindow.setLanguage,document:{documentElement:localeRoot,querySelectorAll:()=>[]},
+  localStorage:{setItem(){},getItem:()=>null},console,
+  setTimeout:fn=>{timers.set(++timerId,fn);return timerId;},clearTimeout:id=>timers.delete(id),
+  requestAnimationFrame:fn=>frames.push(fn)});
+vm.runInContext(fs.readFileSync(new URL('../app/admin_ui_modules/48-MI-LOCALE-ATOMIC.js',import.meta.url),'utf8'),localeContext);
+function flushLocale(){
+  for(let i=0;timers.size||frames.length;i++){
+    assert(i<20,'Locale release did not settle');
+    const pending=[...timers.values()];timers.clear();for(const fn of pending)fn();
+    const animation=frames.splice(0);for(const fn of animation)fn();
+  }
+}
+localeWindow.__researchBeeReleaseLocale();localeWindow.setLanguage('tr');flushLocale();
+assert.equal(classes.size,0,'Language switch stranded the pending shell');
+localeWindow.__researchBeeReleaseLocale();
+assert.equal(classes.has('locale-pending'),false,'Late bootstrap hid usable controls');flushLocale();
+localeWindow.setLanguage('fa');localeWindow.__researchBeeReleaseLocale();flushLocale();
+assert.equal(classes.size,0,'Shell release stranded the language switch');
+assert.equal(localeRoot.lang,'fa');assert.equal(localeRoot.dir,'rtl');
+console.log('Atomic locale contracts passed: overlapping transactions release both classes; late hydration never re-hides controls.');
