@@ -77,6 +77,11 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('#sourceSuggestionsRows .channel-card').length === 9);
   assert(!rows.some(row => row.id === 'candidate-1-0'));
 
+  // The next section replaces server data with a deterministic AI fixture.
+  // Await real bootstrap completion first: health becomes available earlier
+  // than publication hydration, which must not overwrite the test fixture.
+  await page.waitForFunction(()=>window.__researchBeeMainLoaded===true&&
+    window.BeeAdminLifecycle?.diagnostics().active_refreshes===0);
   await page.evaluate(() => {
     closeModal(); window.setView('publications');
     state.publications = ['selected','borderline','rejected','pending'].map((s,n)=>({id:'decision-'+n,status:'preview',message_text:'Original report for '+s,source_name:'Fixture',relevance_state:s,review_only:s!=='selected',publishable:s==='selected',can_approve:s==='borderline',analysis_ready:true,relevance_score:s==='pending'?null:.7,relevance_threshold:.75,relevance_topic:'AI',relevance_reason:'Original classification evidence',relevance_evidence:['Exact original quote']}));
@@ -87,7 +92,8 @@ try {
   for(const locale of ['fa','en','tr','ar','es','it','de','fr']){
     await page.evaluate(locale=>{window.setLanguage(locale);renderPublications();openPublication('decision-3')},locale);
     assert.equal(await page.locator('#articleDetail button').count(),0,'Pending AI exposed a publish action');
-    assert((await page.locator('#articleDetail').innerText()).includes('Exact original quote'),'UX localization mutated AI source evidence');
+    const detail=await page.locator('#articleDetail').innerText();
+    assert(detail.includes('Exact original quote'),`UX localization mutated AI source evidence in ${locale}: ${detail}`);
     await page.locator('#closeDrawer').click();
   }
   await page.evaluate(()=>{window.setLanguage('en');openPublication('decision-1')});
