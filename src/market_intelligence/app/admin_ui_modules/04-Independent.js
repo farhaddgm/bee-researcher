@@ -304,6 +304,10 @@
       /* Authenticated endpoints must not be touched until /me has committed
          the current user; otherwise an early 401 could invalidate bootstrap. */
       if(!state.currentUser&&p!=='/admin/api/login'&&p!=='/admin/api/me')throw Error('authentication bootstrap pending');
+      // A read begun before OR during a mutation cannot be shared with a
+      // subsequent refresh. Keep old callers alive, but detach their flights.
+      if(!isGet)pendingGetRequests.clear();
+      else if(!coalesceGet)pendingGetRequests.delete(p);
       if(isGet&&coalesceGet&&pendingGetRequests.has(p))return pendingGetRequests.get(p);
       const request=(async()=>{
         const r=await fetchWithTimeout(p,{credentials:'include',...requestOptions,headers:requestHeaders(requestOptions)},timeoutMs);
@@ -313,7 +317,8 @@
         if(!r.ok){const detail=Array.isArray(body.detail)?body.detail.map(item=>item?.msg||item?.detail||String(item)).join('؛ '):body.detail;throw Error(friendlyError(detail||'درخواست ناموفق بود'))}
         return body
       })();
-      if(!isGet||!coalesceGet)return request;
+      if(!isGet){try{return await request}finally{pendingGetRequests.clear()}}
+      if(!coalesceGet)return request;
       pendingGetRequests.set(p,request);try{return await request}finally{if(pendingGetRequests.get(p)===request)pendingGetRequests.delete(p)}
     }
     // Authentication must have a bounded wait. A stalled proxy or network

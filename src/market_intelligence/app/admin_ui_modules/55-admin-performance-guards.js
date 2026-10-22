@@ -20,7 +20,7 @@
           // stale incidents even though loadIncidents(true) opted out of GET
           // coalescing below.
           if(method==='GET'&&opts?.coalesceGet===false){cache.delete(key);generation++;return raw(path,opts)}
-          if(!cacheable){cache.clear();generation++;return raw(path,opts)}
+          if(!cacheable){cache.clear();generation++;try{return await raw(path,opts)}finally{cache.clear();generation++}}
           const hit=cache.get(key);if(hit&&hit.expires>Date.now())return hit.value;
           const version=generation,value=await raw(path,opts);
           if(version===generation){if(cache.size>=64)cache.delete(cache.keys().next().value);cache.set(key,{value,expires:Date.now()+cacheTtl});}return value

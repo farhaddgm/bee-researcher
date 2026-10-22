@@ -72,6 +72,34 @@ await cacheWindow.req('/admin/api/me');await cacheWindow.req('/admin/api/me');as
 await cacheWindow.req('/items');await cacheWindow.req('/items',{coalesceGet:false});assert.equal(requests,10);
 console.log('Admin read-cache contracts passed: mutation race, actor isolation, authentication freshness and explicit refresh.');
 
+const pendingHttp=[];
+const requestContext=vm.createContext({window:{},state:{currentUser:{id:'alice'}},authTransition:0,
+  performance,AbortController:undefined,scoped:path=>path,requestHeaders:()=>({}),friendlyError:String,
+  fetch:(path,options)=>new Promise(resolve=>pendingHttp.push({path,options,resolve}))});
+const coreSource=fs.readFileSync(new URL('../app/admin_ui_modules/04-Independent.js',import.meta.url),'utf8');
+vm.runInContext(coreSource.slice(coreSource.indexOf('const pendingGetRequests=new Map();'),coreSource.indexOf('// Authentication must have a bounded wait.')),requestContext);
+const oldRead=vm.runInContext("req('/admin/api/support/tickets?limit=200')",requestContext);
+const writing=vm.runInContext("req('/admin/api/support/tickets/one/messages',{method:'POST'})",requestContext);
+const duringWrite=vm.runInContext("req('/admin/api/support/tickets?limit=200')",requestContext);
+assert.equal(pendingHttp.length,3,'A mutation reused its pre-write GET');
+const respond=(index,value)=>pendingHttp[index].resolve({status:200,ok:true,text:async()=>JSON.stringify(value)});
+respond(1,{saved:true});await writing;
+const afterWrite=vm.runInContext("req('/admin/api/support/tickets?limit=200')",requestContext);
+assert.equal(pendingHttp.length,4,'Post-write refresh joined an in-flight pre-commit GET');
+respond(0,{old:true});respond(2,{during:true});respond(3,{reply:'persisted'});
+await oldRead;await duringWrite;assert.equal((await afterWrite).reply,'persisted');
+console.log('Request coalescer contracts passed: writes detach both pre-write and during-write GET flights.');
+
+let cacheWriteDone,readCount=0;
+const commitWindow={req:async(path,options={})=>{
+  if(options.method==='POST')return new Promise(resolve=>cacheWriteDone=resolve);
+  readCount++;return {readCount};}};
+vm.runInContext(fs.readFileSync(new URL('../app/admin_ui_modules/55-admin-performance-guards.js',import.meta.url),'utf8'),
+  vm.createContext({window:commitWindow,state:cacheState,document:{getElementById:()=>null}}));
+const commitWrite=commitWindow.req('/write',{method:'POST'});
+await commitWindow.req('/read-during-write');cacheWriteDone({saved:true});await commitWrite;
+await commitWindow.req('/read-during-write');assert.equal(readCount,2,'Cache retained a snapshot read before commit');
+
 // /user uses the shared tooltip/toast presentation, not the admin registry.
 // Executing the real controller must work without any admin globals.
 const readerWindow={addEventListener(){}},readerDocument={
