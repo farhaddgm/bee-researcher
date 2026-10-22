@@ -13,6 +13,11 @@ try{
  await page.locator('#loginUser').fill(username);await page.locator('#loginPass').fill(password);await page.locator('#loginSubmit').click();
  await page.waitForFunction(()=>window.__researchBeeState?.currentUser);
  await page.locator('#app:not(.hidden)').waitFor();await page.waitForFunction(()=>window.__researchBeeState?.projectListReady);
+ // Authorization now paints before the rest of bootstrap finishes. Geometry
+ // requires settled loading and the intended view, not just authorized data.
+ await page.waitForFunction(()=>window.BeeAdminLifecycle.diagnostics().active_refreshes===0);
+ await page.evaluate(()=>window.setView('assistants'));
+ await page.locator('#assistantGrid>.assistant-card').first().waitFor({state:'visible'});
  // Long recovery lists must never stretch active cards or duplicate deleted
  // projects into the active grid. Fixture is client-side and never persisted.
  await page.evaluate(()=>{
