@@ -21,6 +21,14 @@ const page = await context.newPage();
 page.setDefaultTimeout(15000);
 const pageErrors = [];
 page.on('pageerror', error => pageErrors.push(String(error)));
+// Hold unrelated metadata until both Add controls have worked. This recreates
+// a fast authorized first paint with slow background hydration, not a sleep
+// that merely hopes the shell finishes before the user's first click.
+let releaseMetadata,heldMetadata=0;
+const metadataGate=new Promise(resolve=>releaseMetadata=resolve);
+await page.route(url=>url.pathname==='/meta',async route=>{
+  heldMetadata++;await metadataGate;await route.continue();
+});
 
 async function waitForWorkspace() {
   await page.locator('#app:not(.hidden)').waitFor({ state: 'visible' });
@@ -59,7 +67,6 @@ async function openWithPhysicalClick(view, buttonId, fieldId, viewport) {
   await page.locator(`.nav-btn[data-view="${view}"]`).click();
   const button = page.locator(`#${buttonId}`);
   await button.waitFor({ state: 'visible' });
-  await page.waitForTimeout(120);
   const diagnostic = await hitTest(buttonId);
   if (diagnostic.missing || !diagnostic.visible || diagnostic.disabled) {
     throw new Error(`${viewport.width}px ${buttonId} unavailable: ${JSON.stringify(diagnostic)}`);
@@ -88,6 +95,10 @@ for (const width of widths) {
   const viewport = { width, height: 980 };
   results.push(await openWithPhysicalClick('sources', 'addSourceBtn', 'mediaDraftName', viewport));
   results.push(await openWithPhysicalClick('topics', 'addTopicBtn', 'draftTopicName', viewport));
+  if(width===widths[0]){
+    if(!heldMetadata)throw new Error('Slow metadata regression was not exercised');
+    releaseMetadata();
+  }
 }
 
 await browser.close();
