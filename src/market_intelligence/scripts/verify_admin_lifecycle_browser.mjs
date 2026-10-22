@@ -21,6 +21,10 @@ try{
   const initial=await page.evaluate(()=>window.BeeAdminLifecycle.diagnostics());
   for(const owner of expected)assert(initial.owners.includes(owner),`Missing lifecycle owner ${owner}`);
   const ownerCount=initial.owners.length;
+  assert.equal(await page.evaluate(()=>{
+    const list=document.querySelector('[data-support-v4-my-list]'),first=list?.firstElementChild;
+    window.applyRoleVisibility();return !first||first===list.firstElementChild;
+  }),true,'An unchanged role rebuilt the hidden ticket inbox');
   await page.evaluate(()=>{window.__researchBeeReleaseLocale();window.setLanguage('en');});
   await page.waitForFunction(()=>!document.documentElement.classList.contains('locale-pending')&&!document.documentElement.classList.contains('locale-switching'));
   assert.equal(await page.evaluate(()=>{window.__researchBeeReleaseLocale();return document.documentElement.classList.contains('locale-pending');}),false,'Late hydration re-hid the visible shell');

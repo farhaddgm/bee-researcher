@@ -63,7 +63,7 @@
       const changeStatus=async(ticket,status,dialog)=>{try{await request('/admin/api/support/tickets/'+encodeURIComponent(ticket.id),{method:'PATCH',body:JSON.stringify({status})});notify(status==='closed'?t('closed'):t('updated'));closeDialog({refreshing:true});await load();focusTicket(ticket.id)}catch(error){notify((typeof friendlyError==='function'?friendlyError(error.message):error.message),true)}};
       const boot=()=>{const r=root();if(r&&!r.dataset.supportV4Shell)render()};boot();
       window.BeeAdminLifecycle.register('support', ['setView','setLanguage','loadAll','showApp','applyRoleVisibility'], {before:()=>{if(resetScope())render();},after: ({name,args}) => {
-        if(name==='showApp'||name==='applyRoleVisibility'){if(resetScope())render();else renderLists();return;}
+        if(name==='showApp'||name==='applyRoleVisibility'){if(resetScope())render();return;}
         if(name==='setLanguage'){closeDialog();render();return;}
         if((name==='setView'&&args[0]==='support')||(name==='loadAll'&&root()?.classList.contains('active'))){boot();return load();}
       }});
