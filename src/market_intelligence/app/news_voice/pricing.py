@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 SOURCE = 'https://elevenlabs.io/pricing/api'
-RATE_CARD_REVIEWED_AT = datetime(2026, 10, 13, tzinfo=timezone.utc)
+RATE_CARD_REVIEWED_AT = datetime(2026, 10, 22, tzinfo=timezone.utc)
 REVIEW_DAYS = 7
 RENEW_WITHIN = timedelta(days=1)
 STT_PER_MINUTE = Decimal('0.39') / 60

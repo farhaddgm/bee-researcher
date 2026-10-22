@@ -13,8 +13,7 @@
       };
       const copy=()=>{ensure();const en=state.language==='en';const label=$('serviceTimezoneLabel'),help=$('serviceTimezoneHelp');if(label)label.textContent=en?'Service timezone':'منطقهٔ زمانی سرویس';if(help)help.textContent=en?'Publishing and processing hours use this timezone.':'ساعت‌های پردازش و انتشار با این منطقهٔ زمانی محاسبه می‌شوند.'};
       const load=async()=>{copy();if(!state.assistantId||!$('serviceTimezone'))return;const active=document.getElementById('view-settings')?.classList.contains('active')||document.getElementById('view-schedule')?.classList.contains('active');if(!active)return;try{const runtime=state.runtimeSettings||await req('/admin/api/assistants/'+state.assistantId+'/runtime-settings');$('serviceTimezone').value=runtime.timezone||'Europe/Berlin'}catch{ $('serviceTimezone').value='Europe/Berlin' }};
-      const previousLoadAll=loadAll;loadAll=async function(){const result=await previousLoadAll();await load();return result};
-      const previousSetLanguage=setLanguage;setLanguage=function(lang){previousSetLanguage(lang);copy()};
+      window.BeeAdminLifecycle.register('service-timezone', ['loadAll','setLanguage'], {after:({name})=>name==='loadAll'?load():copy()});
       document.addEventListener('click',async event=>{if(event.target?.id!=='saveLimitsBtn'||!$('serviceTimezone')||!state.assistantId)return;try{await req('/admin/api/assistants/'+state.assistantId+'/runtime-settings',{method:'PUT',body:JSON.stringify({timezone:$('serviceTimezone').value})});if($('limitsMsg')){$('limitsMsg').textContent=state.language==='en'?'Settings saved':'تنظیمات ذخیره شد';$('limitsMsg').className='success'}}catch(err){if($('limitsMsg')){$('limitsMsg').textContent=friendlyError(err.message);$('limitsMsg').className='error'}toast(friendlyError(err.message),true)}});
       copy();
     })();

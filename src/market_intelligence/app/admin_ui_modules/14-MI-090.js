@@ -14,8 +14,7 @@
         labels.forEach((label,index)=>{const th=document.createElement('th');th.dataset.publicationColumn=String(index);th.textContent=label;header.appendChild(th)});
       };
       syncPublicationHeaders();
-      const priorLanguage=setLanguage;
-      setLanguage=function(lang){priorLanguage(lang);syncPublicationHeaders()};
+      window.BeeAdminLifecycle.register('publication-headers', ['setLanguage'], {after:syncPublicationHeaders});
       const version=document.getElementById('sidebarVersion');
       if(version&&version.textContent.includes('در حال بارگذاری'))version.textContent='v3.30.1';
     })();

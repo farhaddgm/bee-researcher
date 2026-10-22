@@ -9,10 +9,10 @@
       const selectors=['#login','#sidebar','.topbar','.content','#modalRoot'];
       const ignored='[data-dynamic-copy],[data-latin="true"],.article-body,.news-title-cell,.assistant-card h3,.assistant-card p,.assistant-card .assistant-meta b,#sourceRows td:first-child b,#topicRows td:first-child b,#feedbackActorRows .feedback-user b,#channelGrid b[data-latin="true"],#channelGrid code.channel-id,[data-user-content="true"]';
       const pluralLabels={
-        users:{fa:'کاربر',en:'users',tr:'kullanıcı',ar:'مستخدمون',it:'utenti',es:'usuarios',de:'Benutzer',fr:'utilisateurs'},
-        media:{fa:'رسانه',en:'media',tr:'medya',ar:'مصدر',it:'media',es:'medios',de:'Medien',fr:'médias'},
-        topics:{fa:'موضوع',en:'topics',tr:'konu',ar:'موضوعًا',it:'argomenti',es:'temas',de:'Themen',fr:'sujets'},
-        items:{fa:'مورد',en:'items',tr:'öğe',ar:'عنصر',it:'elementi',es:'elementos',de:'Elemente',fr:'éléments'}
+        users:{fa:'کاربر',en:'user',tr:'kullanıcı',ar:'مستخدم',it:'utenti',es:'usuarios',de:'Benutzer',fr:'utilisateurs'},
+        media:{fa:'رسانه',en:'media',tr:'medya',ar:'الوسائط',it:'media',es:'medios',de:'Medien',fr:'médias'},
+        topics:{fa:'موضوع',en:'topic',tr:'konu',ar:'موضوع',it:'argomento',es:'tema',de:'Thema',fr:'sujet'},
+        items:{fa:'مورد',en:'item',tr:'öğe',ar:'عنصر',it:'elemento',es:'elemento',de:'Element',fr:'élément'}
       };
       let aliasCache={language:'',entries:[]};
       const preserve=(raw,next)=>{const left=raw.match(/^\s*/)?.[0]||'',right=raw.match(/\s*$/)?.[0]||'';return left+next+right};
@@ -89,9 +89,7 @@
         settleQueued=true;
         queueMicrotask(()=>{settleQueued=false;settle()});
       };
-      const setters={setView:f=>{if(typeof setView==='function')setView=f},setLanguage:f=>{setLanguage=f},loadAll:f=>{loadAll=f},renderDashboard:f=>{renderDashboard=f},renderQualityReport:f=>{renderQualityReport=f},renderAssistants:f=>{renderAssistants=f},renderSources:f=>{renderSources=f},renderTopics:f=>{renderTopics=f},renderPublications:f=>{renderPublications=f},renderTelegram:f=>{renderTelegram=f},renderOperations:f=>{renderOperations=f},renderScheduleGrid:f=>{renderScheduleGrid=f},renderChannels:f=>{renderChannels=f}};
-      const wrap=name=>{const original=window[name]||({setView,setLanguage,loadAll,renderDashboard,renderQualityReport,renderAssistants,renderSources,renderTopics,renderPublications,renderTelegram,renderOperations,renderScheduleGrid,renderChannels}[name]);if(typeof original!=='function'||original.__localeReconciled)return;const wrapped=function(){const result=original.apply(this,arguments);if(result&&typeof result.then==='function')return result.finally(schedule);schedule();return result};wrapped.__localeReconciled=true;window[name]=wrapped;setters[name]?.(wrapped)};
-      ['setView','setLanguage','loadAll','renderDashboard','renderQualityReport','renderAssistants','renderSources','renderTopics','renderPublications','renderTelegram','renderOperations','renderScheduleGrid','renderChannels'].forEach(wrap);
+      window.BeeAdminLifecycle.register('locale-reconcile', ['setView','setLanguage','loadAll','renderDashboard','renderQualityReport','renderAssistants','renderSources','renderTopics','renderPublications','renderTelegram','renderOperations','renderScheduleGrid','renderChannels'], {settled:schedule});
       document.addEventListener('click',event=>{if(event.target?.closest?.('.nav-btn,[data-language-select],#refreshBtn,#systemRefreshBtn'))schedule()},{capture:true});
       settle();
     })();

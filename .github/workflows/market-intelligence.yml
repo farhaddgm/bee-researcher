@@ -122,6 +122,11 @@ jobs:
       - name: Install pinned browser harness
         working-directory: src/market_intelligence
         run: npm ci --ignore-scripts
+      - name: Required lifecycle and all-catalog contracts
+        working-directory: src/market_intelligence
+        run: |
+          node scripts/verify_admin_lifecycle.mjs
+          node scripts/export_locale_review.mjs --summary
       - name: Install Chromium
         working-directory: src/market_intelligence
         run: npx playwright install --with-deps chromium

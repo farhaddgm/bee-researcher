@@ -21,7 +21,6 @@
       // Notifications are secondary data. Fetch them when the user opens the
       // inbox instead of blocking every page refresh on an extra endpoint.
       if($('notificationBtn'))$('notificationBtn').onclick=async()=>{await loadNotifications();openNotifications()};
-      const priorLoadAll=loadAll;loadAll=async function(){return priorLoadAll()};
       const limitsButton=$('saveLimitsBtn');if(limitsButton){limitsButton.textContent=state.language==='en'?'Save':'ثبت';limitsButton.style.marginTop='12px'}
-      const priorLanguage=setLanguage;setLanguage=function(lang){priorLanguage(lang);const button=$('saveLimitsBtn');if(button){button.textContent=state.language==='en'?'Save':'ثبت';button.style.marginTop='12px'}};
+      window.BeeAdminLifecycle.register('limit-save-label', ['setLanguage'], {after:()=>{const button=$('saveLimitsBtn');if(button){button.textContent=state.language==='en'?'Save':'ثبت';button.style.marginTop='12px';}}});
     })();

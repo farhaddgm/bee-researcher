@@ -70,10 +70,9 @@
     });
     document.querySelectorAll('#sidebarUserAvatar img,.sidebar-user-avatar img,.sidebar-account-avatar img').forEach(avatarFallback);
   }
-  for(const name of ['renderPublications','renderSources','renderTopics','renderAssistants','renderScheduleGrid','renderCollectionScheduleGrid','modal','setView','setLanguage']){
-    const original=window[name];if(typeof original!=='function')continue;
-    window[name]=function(){if(name==='setView'||name==='setLanguage')hideTip();const result=original.apply(this,arguments);enhanceTables();return result;};
-  }
-  const load=window.loadAll;if(typeof load==='function')window.loadAll=async function(){const result=await load.apply(this,arguments);enhanceTables();return result;};
+  // This controller is shared with /user, which deliberately does not load
+  // the admin extension registry. Keep shared presentation independent.
+  window.BeeAdminLifecycle?.register('backoffice', ['renderPublications','renderSources','renderTopics','renderAssistants','renderScheduleGrid','renderCollectionScheduleGrid','modal','setView','setLanguage','loadAll'], {
+    before: ({name}) => {if(name==='setView'||name==='setLanguage')hideTip();}, after: enhanceTables});
   enhanceTables();
 })();

@@ -16,10 +16,6 @@
         });
         try{translateStaticCopy()}catch(_){}
       }
-      const legacy=window.setLanguage;
-      if(typeof legacy==='function'){
-        window.setLanguage=function(language){const result=legacy.call(this,language);applyCatalogLabels();return result};
-        setLanguage=window.setLanguage;
-      }
+      window.BeeAdminLifecycle.register('catalog-labels', ['setLanguage'], {after:applyCatalogLabels});
       applyCatalogLabels();
     })();

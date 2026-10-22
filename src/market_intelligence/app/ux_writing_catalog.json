@@ -4,7 +4,7 @@
     "en": "Leave blank to keep the current password",
     "tr": "Şifre boş bırakılırsa, şifre değişmeyecektir.",
     "ar": "إذا تُركت كلمة المرور فارغة، فلن تتغير.",
-    "it": "Se lasciato vuoto, il campo della password non verrà modificato.",
+    "it": "Se lasciata vuota, la password non verrà modificata.",
     "es": "Si se deja en blanco, la contraseña no cambiará.",
     "de": "Wenn dieses Feld leer bleibt, ändert sich das Passwort nicht.",
     "fr": "Si ce champ est laissé vide, le mot de passe ne changera pas."
@@ -34,19 +34,19 @@
     "tr": "Hesap ayarları",
     "ar": "إعدادات الحساب",
     "it": "Impostazioni dell'account",
-    "es": "Configuraciones de la cuenta",
+    "es": "Configuración de la cuenta",
     "de": "Kontoeinstellungen",
     "fr": "Paramètres du compte"
   },
   "بازخورد به تفکیک کاربر": {
     "fa": "بازخورد به تفکیک کاربر",
     "en": "Feedback by user",
-    "tr": "Kullanıcıdan gelen geri bildirim",
-    "ar": "تعليقات المستخدمين",
-    "it": "Feedback dell'utente",
-    "es": "Comentarios del usuario",
-    "de": "Feedback vom Nutzer",
-    "fr": "Commentaires des utilisateurs"
+    "tr": "Kullanıcıya göre geri bildirim",
+    "ar": "الملاحظات حسب المستخدم",
+    "it": "Feedback per utente",
+    "es": "Comentarios por usuario",
+    "de": "Feedback nach Nutzer",
+    "fr": "Retours par utilisateur"
   },
   "تنظیمات ظاهری حساب مالک": {
     "fa": "تنظیمات ظاهری حساب مالک",
@@ -56,7 +56,7 @@
     "it": "Impostazioni di aspetto dell'account del proprietario",
     "es": "Configuración de apariencia de la cuenta del propietario",
     "de": "Darstellungseinstellungen des Kontoinhabers",
-    "fr": "Paramètres d'apparence du compte propriétaire"
+    "fr": "Paramètres d’apparence du compte du propriétaire"
   },
   "تکرار رمز جدید": {
     "fa": "تکرار رمز جدید",
@@ -73,7 +73,7 @@
     "en": "Team and security",
     "tr": "Ekip ve güvenlik",
     "ar": "الفريق والأمن",
-    "it": "Squadra e sicurezza",
+    "it": "Team e sicurezza",
     "es": "Equipo y seguridad",
     "de": "Team und Sicherheit",
     "fr": "Équipe et sécurité"
@@ -164,7 +164,7 @@
     "tr": "Kullanıcı adı",
     "ar": "اسم المستخدم",
     "it": "Nome utente",
-    "es": "Usuario",
+    "es": "Nombre de usuario",
     "de": "Benutzername",
     "fr": "Nom d’utilisateur"
   },
@@ -174,19 +174,19 @@
     "tr": "Rol",
     "ar": "دور",
     "it": "Ruolo",
-    "es": "Role",
+    "es": "Rol",
     "de": "Rolle",
     "fr": "Rôle"
   },
   "هنوز اجرایی ثبت نشده است.   \n            بازخورد و کیفیت  بازخورد کاربران را به سیگنال قابل بررسی برای بهبود relevance تبدیل کنید.": {
     "fa": "هنوز اجرایی ثبت نشده است.   \n            بازخورد و کیفیت  بازخورد کاربران را به سیگنال قابل بررسی برای بهبود relevance تبدیل کنید.",
-    "en": "No implementation has been recorded yet. Turn user feedback and quality into actionable relevance signals.",
-    "tr": "Henüz hiçbir uygulama kaydedilmedi.\n\nKullanıcı geri bildirimlerini ve geri bildirim kalitesini, alaka düzeyini artırmak için eyleme dönüştürülebilir sinyallere dönüştürün.",
-    "ar": "لم تُسجّل أيّة تطبيقات حتى الآن.\n\nحوّل ملاحظات المستخدمين وجودتها إلى مؤشرات قابلة للتنفيذ لتحسين الملاءمة.",
-    "it": "Non sono state ancora registrate implementazioni.\nTrasforma il feedback degli utenti e la sua qualità in segnali concreti per migliorare la pertinenza.",
-    "es": "Aún no se han registrado implementaciones.\nConvierta los comentarios de los usuarios y su calidad en señales útiles para mejorar la relevancia.",
-    "de": "Bisher wurden keine Implementierungen erfasst. Nutzen Sie Nutzerfeedback und dessen Qualität, um daraus konkrete Handlungsempfehlungen abzuleiten und so die Relevanz zu verbessern.",
-    "fr": "Aucune mise en œuvre n'a encore été enregistrée.\n\nTransformez les commentaires des utilisateurs et leur qualité en signaux exploitables pour améliorer la pertinence."
+    "en": "No executions have been recorded yet. Turn user feedback and quality into actionable relevance signals.",
+    "tr": "Henüz hiç çalıştırma kaydedilmedi.\n\nKullanıcı geri bildirimlerini ve geri bildirim kalitesini, alaka düzeyini artırmak için eyleme dönüştürülebilir sinyallere dönüştürün.",
+    "ar": "لم تُسجّل أي عمليات تنفيذ حتى الآن.\n\nحوّل ملاحظات المستخدمين وجودتها إلى مؤشرات قابلة للتنفيذ لتحسين الملاءمة.",
+    "it": "Non è stata ancora registrata alcuna esecuzione.\nTrasforma il feedback degli utenti e la sua qualità in segnali concreti per migliorare la pertinenza.",
+    "es": "Aún no se ha registrado ninguna ejecución.\nConvierta los comentarios de los usuarios y su calidad en señales útiles para mejorar la relevancia.",
+    "de": "Bisher wurde keine Ausführung erfasst. Nutzen Sie Nutzerfeedback und dessen Qualität, um daraus konkrete Handlungssignale zur Verbesserung der Relevanz abzuleiten.",
+    "fr": "Aucune exécution n’a encore été enregistrée.\n\nTransformez les commentaires des utilisateurs et leur qualité en signaux exploitables pour améliorer la pertinence."
   },
   "کاربر": {
     "fa": "کاربر",
@@ -211,12 +211,12 @@
   "کاربران مجاز فیدبک (username با کاما)": {
     "fa": "کاربران مجاز فیدبک (username با کاما)",
     "en": "Allowed feedback users (comma-separated usernames)",
-    "tr": "İzin verilen geri bildirim kullanıcıları (virgülle ayrılmış kullanıcı adı)",
-    "ar": "المستخدمون المسموح لهم بتقديم الملاحظات (اسم المستخدم مفصول بفواصل)",
-    "it": "Utenti autorizzati a fornire feedback (nome utente separato da virgole)",
-    "es": "Usuarios autorizados para enviar comentarios (nombre de usuario separado por comas)",
-    "de": "Zulässige Feedback-Benutzer (durch Komma getrennter Benutzername)",
-    "fr": "Utilisateurs autorisés à donner leur avis (nom d'utilisateur séparé par des virgules)"
+    "tr": "Geri bildirim göndermesine izin verilen kullanıcılar (virgülle ayrılmış kullanıcı adları)",
+    "ar": "المستخدمون المسموح لهم بإرسال الملاحظات (أسماء المستخدمين مفصولة بفواصل)",
+    "it": "Utenti autorizzati a inviare feedback (nomi utente separati da virgole)",
+    "es": "Usuarios autorizados a enviar comentarios (nombres de usuario separados por comas)",
+    "de": "Nutzer, die Feedback geben dürfen (durch Kommas getrennte Benutzernamen)",
+    "fr": "Utilisateurs autorisés à envoyer des retours (noms d’utilisateur séparés par des virgules)"
   },
   "کاربران، نقش‌ها و نشست‌های فعال را مدیریت کنید.": {
     "fa": "کاربران، نقش‌ها و نشست‌های فعال را مدیریت کنید.",
@@ -270,12 +270,12 @@
   "بازخوانی گزارش ۳۰ روزه": {
     "fa": "بازخوانی گزارش ۳۰ روزه",
     "en": "Refresh 30-day report",
-    "tr": "30 günlük raporun incelenmesi",
-    "ar": "مراجعة التقرير الذي يغطي 30 يومًا",
-    "it": "Revisione del rapporto dei 30 giorni",
-    "es": "Revisión del informe de 30 días",
-    "de": "Überprüfung des 30-Tage-Berichts",
-    "fr": "Examen du rapport de 30 jours"
+    "tr": "30 günlük raporu yenile",
+    "ar": "حدّث تقرير الثلاثين يومًا",
+    "it": "Aggiorna il report degli ultimi 30 giorni",
+    "es": "Actualizar el informe de los últimos 30 días",
+    "de": "30-Tage-Bericht aktualisieren",
+    "fr": "Actualiser le rapport des 30 derniers jours"
   },
   "بازخورد": {
     "fa": "بازخورد",
@@ -309,13 +309,13 @@
   },
   "بررسی سلامت همه": {
     "fa": "بررسی سلامت همه",
-    "en": "Check all health",
-    "tr": "Herkesin sağlık durumunu kontrol etmek",
-    "ar": "فحص صحة الجميع",
-    "it": "Controllare lo stato di salute di tutti",
-    "es": "Revisar el estado de salud de todos",
-    "de": "Überprüfung des Gesundheitszustands aller",
-    "fr": "Vérifier l'état de santé de chacun"
+    "en": "Check all health statuses",
+    "tr": "Tüm öğelerin sağlık durumunu kontrol edin",
+    "ar": "تحقّق من الحالة الصحية لجميع العناصر",
+    "it": "Verifica lo stato di salute di tutti gli elementi",
+    "es": "Compruebe el estado de salud de todos los elementos",
+    "de": "Gesundheitsstatus aller Elemente prüfen",
+    "fr": "Vérifier l’état de santé de tous les éléments"
   },
   "تعداد سیگنال": {
     "fa": "تعداد سیگنال",
@@ -342,10 +342,10 @@
     "en": "Reason for another review (optional)",
     "tr": "Yeniden inceleme için açıklama (isteğe bağlı)",
     "ar": "شرح لإعادة المراجعة (اختياري)",
-    "it": "Spiegazione per la revisione (facoltativa)",
-    "es": "Explicación para la revisión (opcional)",
+    "it": "Spiegazione per una nuova revisione (facoltativa)",
+    "es": "Explicación para una nueva revisión (opcional)",
     "de": "Erläuterung zur erneuten Überprüfung (optional)",
-    "fr": "Explication pour la révision (facultatif)"
+    "fr": "Explication pour un nouvel examen (facultative)"
   },
   "روند زمانی": {
     "fa": "روند زمانی",
@@ -360,12 +360,12 @@
   "صف بررسی": {
     "fa": "صف بررسی",
     "en": "Review queue",
-    "tr": "Kontrol kuyruğu",
-    "ar": "قائمة التحقق",
-    "it": "Controlla la coda",
+    "tr": "İnceleme kuyruğu",
+    "ar": "قائمة انتظار المراجعة",
+    "it": "Coda di revisione",
     "es": "Cola de comprobación",
-    "de": "Warteschlange prüfen",
-    "fr": "Vérifier la file d'attente"
+    "de": "Warteschlange zur Überprüfung",
+    "fr": "File de révision"
   },
   "صف بررسی خبر": {
     "fa": "صف بررسی خبر",
@@ -375,7 +375,7 @@
     "it": "coda di revisione delle notizie",
     "es": "Cola de revisión de noticias",
     "de": "Nachrichten-Überprüfungswarteschlange",
-    "fr": "file d'attente pour la revue de presse"
+    "fr": "File de révision des actualités"
   },
   "قبل از انتشار، خلاصه و ارتباط هر خبر را بررسی و تأیید کنید.": {
     "fa": "قبل از انتشار، خلاصه و ارتباط هر خبر را بررسی و تأیید کنید.",
@@ -391,11 +391,11 @@
     "fa": "مرتبط",
     "en": "Relevant",
     "tr": "İlgili",
-    "ar": "متعلق ب",
-    "it": "Imparentato",
+    "ar": "ذو صلة",
+    "it": "Rilevante",
     "es": "Relacionado",
-    "de": "Verwandt",
-    "fr": "En rapport"
+    "de": "Relevant",
+    "fr": "Pertinent"
   },
   "مرکز یادگیری بازخورد": {
     "fa": "مرکز یادگیری بازخورد",
@@ -414,14 +414,14 @@
     "ar": "غير ذي صلة",
     "it": "Non correlato",
     "es": "No relacionado",
-    "de": "Unabhängig davon",
+    "de": "Nicht relevant",
     "fr": "Sans rapport"
   },
   "کل بازخورد": {
     "fa": "کل بازخورد",
     "en": "Total feedback",
     "tr": "Toplam geri bildirim",
-    "ar": "التقييم الكامل",
+    "ar": "إجمالي الملاحظات",
     "it": "Feedback totale",
     "es": "Comentarios totales",
     "de": "Gesamtes Feedback",
@@ -431,11 +431,11 @@
     "fa": "حداکثر پنجره تازگی (روز)",
     "en": "Maximum freshness window (days)",
     "tr": "Maksimum tazelik süresi (gün)",
-    "ar": "أقصى فترة صلاحية (بالأيام)",
+    "ar": "الحد الأقصى لنافذة حداثة المحتوى (بالأيام)",
     "it": "Periodo massimo di freschezza (giorni)",
     "es": "Periodo máximo de frescura (días)",
     "de": "Maximales Frischefenster (Tage)",
-    "fr": "Durée de conservation maximale (jours)"
+    "fr": "Durée maximale de fraîcheur (jours)"
   },
   "ذخیره سقف‌ها": {
     "fa": "ذخیره سقف‌ها",
@@ -444,7 +444,7 @@
     "ar": "حفظ الحدود",
     "it": "Salva limiti",
     "es": "Guardar límites",
-    "de": "Limits speichern",
+    "de": "Grenzwerte speichern",
     "fr": "Enregistrer les limites"
   },
   "Command palette": {
@@ -464,42 +464,6 @@
     "es": "Vista guardada",
     "de": "Gespeicherte Ansicht",
     "fr": "Vue enregistrée"
-  },
-  "'+label('این نما پیش‌فرض باشد','Make this the default view')+'": {
-    "fa": "'+label('این نما پیش‌فرض باشد','Make this the default view')+'",
-    "tr": "'+label('Bunu varsayılan görünüm yap','Bunu varsayılan görünüm yap')+'",
-    "ar": "'+label('اجعل هذا العرض الافتراضي','اجعل هذا العرض الافتراضي')+'",
-    "it": "'+label('Imposta questa come vista predefinita','Imposta questa come vista predefinita')+'",
-    "es": "'+label('Establecer esta como vista predeterminada','Establecer esta como vista predeterminada')+'",
-    "de": "'+label('Dies als Standardansicht festlegen','Dies als Standardansicht festlegen')+'",
-    "fr": "'+label('Définir comme vue par défaut','Définir comme vue par défaut')+'"
-  },
-  "'+label('بازخوانی','Refresh')+'": {
-    "fa": "'+label('بازخوانی','Refresh')+'",
-    "tr": "'+etiket('Yenile','Yenile')+'",
-    "ar": "'+label('تحديث','تحديث')+'",
-    "it": "'+label('Aggiorna','Aggiorna')+'",
-    "es": "'+etiqueta('Actualizar','Actualizar')+'",
-    "de": "'+label('Aktualisieren','Aktualisieren')+'",
-    "fr": "'+label('Actualiser','Actualiser')+'"
-  },
-  "'+label('صندوق رخداد و هشدار','Incident inbox')+'": {
-    "fa": "'+label('صندوق رخداد و هشدار','Incident inbox')+'",
-    "tr": "'+label('Olay ve Uyarı Gelen Kutusu','Olay gelen kutusu')+'",
-    "ar": "'+label('صندوق الوارد للحوادث والتنبيهات','صندوق وارد الحوادث')+'",
-    "it": "'+label('Posta in arrivo incidenti e avvisi','Posta in arrivo incidenti')+'",
-    "es": "'+label('Bandeja de entrada de incidentes y alertas','Bandeja de entrada de incidentes')+'",
-    "de": "'+label('Eingang für Vorfälle und Benachrichtigungen','Eingang für Vorfälle')+'",
-    "fr": "'+label('Boîte de réception des incidents et des alertes','Boîte de réception des incidents')+'"
-  },
-  "'+label('نام نما','View name')+'": {
-    "fa": "'+label('نام نما','View name')+'",
-    "tr": "'+label('Görünüm adı','Görünüm adı')+'",
-    "ar": "'+label('اسم العرض','اسم العرض')+'",
-    "it": "'+label('Nome vista','Nome vista')+'",
-    "es": "'+label('Nombre de la vista','Nombre de la vista')+'",
-    "de": "'+label('Ansichtsname','Ansichtsname')+'",
-    "fr": "'+label('Nom de la vue','Nom de la vue')+'"
   },
   "ویرایش UX Writing": {
     "fa": "ویرایش UX Writing",
@@ -532,11 +496,11 @@
   "هدف این دستیار و محدوده کاری آن": {
     "fa": "هدف این دستیار و محدوده کاری آن",
     "en": "This assistant’s goal and scope",
-    "tr": "Bu yardımcı programın amacı ve çalışma kapsamı",
+    "tr": "Bu asistanın amacı ve çalışma kapsamı",
     "ar": "الغرض من هذا المساعد ونطاق عمله",
     "it": "Scopo di questo assistente e ambito di lavoro",
     "es": "El propósito de este asistente y su ámbito de trabajo.",
-    "de": "Zweck und Aufgabenbereich dieser Assistenzkraft",
+    "de": "Zweck und Aufgabenbereich dieses Assistenten",
     "fr": "Objectif et champ d'application de cet assistant"
   },
   "Select assistant": {
@@ -561,12 +525,12 @@
   "مرکز کار": {
     "fa": "مرکز کار",
     "en": "Workspace",
-    "tr": "Çalışma merkezi",
-    "ar": "مركز العمل",
-    "it": "Centro di lavoro",
-    "es": "Centro de trabajo",
-    "de": "Arbeitsplatz",
-    "fr": "centre de travail"
+    "tr": "Çalışma alanı",
+    "ar": "مساحة العمل",
+    "it": "Spazio di lavoro",
+    "es": "Espacio de trabajo",
+    "de": "Arbeitsbereich",
+    "fr": "Espace de travail"
   },
   "برای هر دستیار چند پروفایل کسب‌وکار بسازید و یکی را برای تحلیل فعال کنید.": {
     "fa": "برای هر دستیار چند پروفایل کسب‌وکار بسازید و یکی را برای تحلیل فعال کنید.",
@@ -591,10 +555,10 @@
   "ربات و کانال‌های مقصد پروژه": {
     "fa": "ربات و کانال‌های مقصد پروژه",
     "en": "Project bot and destination channels",
-    "tr": "Robot ve proje hedef kanalları",
-    "ar": "قنوات وجهة الروبوت والمشروع",
+    "tr": "Bot ve projenin hedef kanalları",
+    "ar": "روبوت المشروع وقنواته الوجهة",
     "it": "Canali di destinazione del robot e del progetto",
-    "es": "Canales de destino de robots y proyectos",
+    "es": "Bot del proyecto y canales de destino",
     "de": "Roboter- und Projektzielkanäle",
     "fr": "Chaînes de destination des robots et des projets"
   },
@@ -621,7 +585,7 @@
   "سقف‌های قابل تنظیم برای پروژهٔ انتخاب‌شده؛ فقط مالک می‌تواند آن‌ها را تغییر دهد.": {
     "fa": "سقف‌های قابل تنظیم برای پروژهٔ انتخاب‌شده؛ فقط مالک می‌تواند آن‌ها را تغییر دهد.",
     "en": "Adjustable limits for the selected project; only the owner can change them.",
-    "tr": "Seçilen projenin limitleri yalnızca sahibi tarafından değiştirilebilir.",
+    "tr": "Seçilen proje için ayarlanabilir limitler; yalnızca sahibi değiştirebilir.",
     "ar": "حدود قابلة للتعديل للمشروع المحدد؛ يمكن للمالك فقط تغييرها.",
     "it": "Limiti configurabili per il progetto selezionato; solo il proprietario può modificarli.",
     "es": "Límites configurables para el proyecto seleccionado; solo el propietario puede modificarlos.",
@@ -680,12 +644,12 @@
   "⚡ ساخت سریع با توضیح کوتاه": {
     "fa": "⚡ ساخت سریع با توضیح کوتاه",
     "en": "⚡ Quick setup from a short description",
-    "tr": "⚡ Kısa açıklamalı hızlı kurulum",
-    "ar": "⚡ بناء سريع مع شرح موجز",
-    "it": "⚡ Costruzione rapida con breve spiegazione",
-    "es": "⚡ Construcción rápida con breve explicación",
-    "de": "⚡ Schneller Aufbau mit kurzer Erklärung",
-    "fr": "⚡ Construction rapide avec une brève explication"
+    "tr": "⚡ Kısa bir açıklamadan hızlı oluşturma",
+    "ar": "⚡ إنشاء سريع استنادًا إلى وصف موجز",
+    "it": "⚡ Creazione rapida a partire da una breve descrizione",
+    "es": "⚡ Creación rápida a partir de una breve descripción",
+    "de": "⚡ Schnelle Erstellung anhand einer kurzen Beschreibung",
+    "fr": "⚡ Création rapide à partir d'une brève description"
   },
   "＋ ساخت دستیار": {
     "fa": "＋ ساخت دستیار",
@@ -738,18 +702,18 @@
   "RSS / ورودی دریافت": {
     "fa": "RSS / ورودی دریافت",
     "en": "RSS / ingestion URL",
-    "tr": "RSS / Giriş Al",
-    "ar": "RSS / استقبال المدخلات",
-    "it": "RSS / Ricezione input",
-    "es": "RSS / Recibir entrada",
-    "de": "RSS / Empfangseingang",
-    "fr": "Flux RSS / Réception d'entrées"
+    "tr": "RSS / içe aktarma URL'si",
+    "ar": "RSS / رابط الاستيراد",
+    "it": "RSS / URL di acquisizione",
+    "es": "RSS / URL de ingesta",
+    "de": "RSS-/Import-URL",
+    "fr": "RSS / URL d’ingestion"
   },
   "آخرین موفقیت": {
     "fa": "آخرین موفقیت",
     "en": "Last success",
     "tr": "Son başarı",
-    "ar": "أحدث النجاحات",
+    "ar": "آخر نجاح",
     "it": "Ultimo successo",
     "es": "Último éxito",
     "de": "Jüngster Erfolg",
@@ -778,22 +742,22 @@
   "بررسی سلامت رسانه‌ها": {
     "fa": "بررسی سلامت رسانه‌ها",
     "en": "Check media health",
-    "tr": "Medya sağlık kontrolü",
-    "ar": "تقييم الوضع الإعلامي",
-    "it": "Controllo dello stato di salute dei media",
-    "es": "Control de salud de los medios",
-    "de": "Medien-Gesundheitscheck",
-    "fr": "Bilan de santé des médias"
+    "tr": "Medya sağlığını kontrol et",
+    "ar": "تحقق من حالة الوسائط",
+    "it": "Controlla lo stato dei media",
+    "es": "Comprueba el estado de los medios",
+    "de": "Medienstatus prüfen",
+    "fr": "Vérifier l’état des médias"
   },
   "جمع‌آوری از رسانه‌های انتخاب‌شده": {
     "fa": "جمع‌آوری از رسانه‌های انتخاب‌شده",
     "en": "Collect from selected media",
-    "tr": "Seçilmiş medyadan derleme",
-    "ar": "مجموعة مختارة من وسائل الإعلام",
-    "it": "Raccolta da media selezionati",
-    "es": "Colección de medios seleccionados",
-    "de": "Sammlung aus ausgewählten Medien",
-    "fr": "Collection de médias sélectionnés"
+    "tr": "Seçilen medyalardan topla",
+    "ar": "اجمع من الوسائط المحددة",
+    "it": "Raccogli dai media selezionati",
+    "es": "Recopila de los medios seleccionados",
+    "de": "Aus ausgewählten Medien sammeln",
+    "fr": "Collecter à partir des médias sélectionnés"
   },
   "حداکثر رسانه": {
     "fa": "حداکثر رسانه",
@@ -848,12 +812,12 @@
   "پیشنهاد رسانه": {
     "fa": "پیشنهاد رسانه",
     "en": "Suggest media",
-    "tr": "Medya teklifi",
-    "ar": "عرض إعلامي",
-    "it": "Offerta mediatica",
-    "es": "Oferta de medios",
-    "de": "Medienangebot",
-    "fr": "Offre média"
+    "tr": "Medya öner",
+    "ar": "اقترح مصدرًا إعلاميًا",
+    "it": "Suggerisci una fonte",
+    "es": "Sugiere un medio",
+    "de": "Medium vorschlagen",
+    "fr": "Suggérer un média"
   },
   "پیشنهادهای رسانه": {
     "fa": "پیشنهادهای رسانه",
@@ -870,8 +834,8 @@
     "en": "＋ Add media",
     "tr": "+ Medya ekle",
     "ar": "+ إضافة وسائط",
-    "it": "+ Aggiungi contenuti multimediali",
-    "es": "+ Agregar contenido multimedia",
+    "it": "＋ Aggiungi una fonte",
+    "es": "＋ Añadir un medio",
     "de": "+ Medien hinzufügen",
     "fr": "+ Ajouter un média"
   },
@@ -958,12 +922,12 @@
   "مثلاً Bee Researcher داتین": {
     "fa": "مثلاً Bee Researcher داتین",
     "en": "For example, Bee Researcher – Dotin",
-    "tr": "Örneğin, Arı Araştırmacısı Verileri",
-    "ar": "على سبيل المثال، بيانات باحث النحل",
-    "it": "Ad esempio, i dati del ricercatore di api",
-    "es": "Por ejemplo, el investigador de abejas Datain",
-    "de": "Zum Beispiel: Bienenforscherdaten",
-    "fr": "Par exemple, les données des chercheurs sur les abeilles"
+    "tr": "Örneğin: Bee Researcher – Dotin",
+    "ar": "على سبيل المثال: Bee Researcher – Dotin",
+    "it": "Ad esempio: Bee Researcher – Dotin",
+    "es": "Por ejemplo: Bee Researcher – Dotin",
+    "de": "Zum Beispiel: Bee Researcher – Dotin",
+    "fr": "Par exemple : Bee Researcher – Dotin"
   },
   "مثلاً اخبار فین‌تک اروپا و اثر آن بر پرداخت دیجیتال را هر روز پایش کن.": {
     "fa": "مثلاً اخبار فین‌تک اروپا و اثر آن بر پرداخت دیجیتال را هر روز پایش کن.",
@@ -994,6 +958,7 @@
     "fr": "ResearchBeeBot"
   },
   "Username": {
+    "fa": "نام کاربری",
     "en": "Username",
     "tr": "Kullanıcı adı",
     "ar": "اسم المستخدم",
@@ -1001,15 +966,6 @@
     "es": "Nombre de usuario",
     "de": "Benutzername",
     "fr": "Nom d'utilisateur"
-  },
-  "dotin-research": {
-    "en": "dotin-research",
-    "tr": "dotin-research",
-    "ar": "dotin-research",
-    "it": "dotin-research",
-    "es": "dotin-research",
-    "de": "dotin-research",
-    "fr": "dotin-research"
   },
   "Language": {
     "en": "Language",
@@ -1040,7 +996,7 @@
   },
   "English  فارسی  Türkçe  العربية  Español  Italiano  Deutsch": {
     "fa": "English  فارسی  Türkçe  العربية  Español  Italiano  Deutsch",
-    "en": "English · فارسی · Türkçe · العربية · Español · Italiano · Deutsch · Français",
+    "en": "English · فارسی · Türkçe · العربية · Español · Italiano · Deutsch",
     "tr": "İngilizce فارسی Türkçe العربية Español Italiano Deutsch",
     "ar": "الإنجليزية فارسی Türkçe العربية Español Italiano Deutsch",
     "it": "Inglese فارسی Türkçe العربية Español Italiano Deutsch",
@@ -1061,12 +1017,12 @@
   "آستانه ارتباط": {
     "fa": "آستانه ارتباط",
     "en": "Relevance threshold",
-    "tr": "İletişim eşiği",
-    "ar": "عتبة التواصل",
-    "it": "Soglia di comunicazione",
-    "es": "Umbral de comunicación",
-    "de": "Kommunikationsschwelle",
-    "fr": "Seuil de communication"
+    "tr": "Alaka düzeyi eşiği",
+    "ar": "عتبة الصلة",
+    "it": "Soglia di rilevanza",
+    "es": "Umbral de relevancia",
+    "de": "Relevanzschwelle",
+    "fr": "Seuil de pertinence"
   },
   "آستانه ارتباط (۰ تا ۱)": {
     "fa": "آستانه ارتباط (۰ تا ۱)",
@@ -1083,10 +1039,10 @@
     "en": "Cancel",
     "tr": "İptal",
     "ar": "إلغاء",
-    "it": "Cancellazione",
-    "es": "Cancelación",
-    "de": "Stornierung",
-    "fr": "Annulation"
+    "it": "Annulla",
+    "es": "Cancelar",
+    "de": "Abbrechen",
+    "fr": "Annuler"
   },
   "انقضا": {
     "fa": "انقضا",
@@ -1183,10 +1139,10 @@
     "en": "Description",
     "tr": "Açıklama",
     "ar": "توضيح",
-    "it": "Spiegazione",
-    "es": "Explicación",
-    "de": "Erläuterung",
-    "fr": "Explication"
+    "it": "Descrizione",
+    "es": "Descripción",
+    "de": "Beschreibung",
+    "fr": "Description"
   },
   "توضیح یا زاویهٔ موردنظر (اختیاری)": {
     "fa": "توضیح یا زاویهٔ موردنظر (اختیاری)",
@@ -1231,22 +1187,22 @@
   "خروجی داده": {
     "fa": "خروجی داده",
     "en": "Data export",
-    "tr": "Veri çıktısı",
-    "ar": "مخرجات البيانات",
-    "it": "Uscita dati",
-    "es": "Salida de datos",
-    "de": "Datenausgabe",
-    "fr": "Sortie de données"
+    "tr": "Veri dışa aktarımı",
+    "ar": "تصدير البيانات",
+    "it": "Esportazione dei dati",
+    "es": "Exportación de datos",
+    "de": "Datenexport",
+    "fr": "Exportation des données"
   },
   "خروجی داده مجاز باشد": {
     "fa": "خروجی داده مجاز باشد",
     "en": "Allow data export",
-    "tr": "Veri çıktısına izin verilmektedir.",
-    "ar": "يُسمح بإخراج البيانات.",
-    "it": "L'output dei dati è consentito.",
-    "es": "Se permite la salida de datos.",
-    "de": "Die Datenausgabe ist zulässig.",
-    "fr": "La sortie de données est autorisée."
+    "tr": "Veri dışa aktarımına izin ver",
+    "ar": "اسمح بتصدير البيانات",
+    "it": "Consenti l'esportazione dei dati",
+    "es": "Permitir la exportación de datos",
+    "de": "Datenexport erlauben",
+    "fr": "Autoriser l’exportation des données"
   },
   "ذخیره": {
     "fa": "ذخیره",
@@ -1270,13 +1226,13 @@
   },
   "شروع": {
     "fa": "شروع",
-    "en": "Started",
-    "tr": "Başlangıç",
-    "ar": "يبدأ",
-    "it": "Inizio",
-    "es": "Comenzar",
-    "de": "Start",
-    "fr": "Commencer"
+    "en": "Start",
+    "tr": "Başlat",
+    "ar": "ابدأ",
+    "it": "Avvia",
+    "es": "Iniciar",
+    "de": "Starten",
+    "fr": "Démarrer"
   },
   "صفحه اصلی": {
     "fa": "صفحه اصلی",
@@ -1301,12 +1257,12 @@
   "فعال‌سازی": {
     "fa": "فعال‌سازی",
     "en": "Activate",
-    "tr": "Aktivasyon",
-    "ar": "التفعيل",
-    "it": "Attivazione",
-    "es": "Activación",
-    "de": "Aktivierung",
-    "fr": "Activation"
+    "tr": "Etkinleştir",
+    "ar": "فعّل",
+    "it": "Attiva",
+    "es": "Activar",
+    "de": "Aktivieren",
+    "fr": "Activer"
   },
   "لغو": {
     "fa": "لغو",
@@ -1340,10 +1296,10 @@
   },
   "مزیت‌ها": {
     "fa": "مزیت‌ها",
-    "en": "Differentiators",
+    "en": "Advantages",
     "tr": "Avantajlar",
     "ar": "المزايا",
-    "it": "Dettagli",
+    "it": "Vantaggi",
     "es": "Ventajas",
     "de": "Vorteile",
     "fr": "Avantages"
@@ -1381,22 +1337,22 @@
   "منطقه داده": {
     "fa": "منطقه داده",
     "en": "Data region",
-    "tr": "Veri alanı",
+    "tr": "Veri bölgesi",
     "ar": "منطقة البيانات",
-    "it": "Area dati",
-    "es": "Área de datos",
-    "de": "Datenbereich",
-    "fr": "Zone de données"
+    "it": "Regione dei dati",
+    "es": "Región de datos",
+    "de": "Datenregion",
+    "fr": "Région des données"
   },
   "نشست‌های فعال": {
     "fa": "نشست‌های فعال",
     "en": "Active sessions",
-    "tr": "Aktif toplantılar",
-    "ar": "اجتماعات فعّالة",
-    "it": "Riunioni attive",
-    "es": "Reuniones activas",
-    "de": "Aktive Treffen",
-    "fr": "Réunions actives"
+    "tr": "Aktif oturumlar",
+    "ar": "الجلسات النشطة",
+    "it": "Sessioni attive",
+    "es": "Sesiones activas",
+    "de": "Aktive Sitzungen",
+    "fr": "Sessions actives"
   },
   "نمای کلی": {
     "fa": "نمای کلی",
@@ -1443,10 +1399,10 @@
     "en": "Open workspace",
     "tr": "Çalışma alanını aç",
     "ar": "فتح مساحة العمل",
-    "it": "Apri workspace",
-    "es": "Abrir espacio",
+    "it": "Apri l’area di lavoro",
+    "es": "Abrir el espacio de trabajo",
     "de": "Arbeitsbereich öffnen",
-    "fr": "Ouvrir l’espace"
+    "fr": "Ouvrir l’espace de travail"
   },
   "وضعیت": {
     "fa": "وضعیت",
@@ -1471,12 +1427,12 @@
   "ویرایش دانش": {
     "fa": "ویرایش دانش",
     "en": "Edit knowledge",
-    "tr": "Bilgi düzenleme",
-    "ar": "تحرير المعرفة",
-    "it": "Modifica della conoscenza",
-    "es": "Edición del conocimiento",
-    "de": "Wissensbearbeitung",
-    "fr": "édition des connaissances"
+    "tr": "Bilgiyi düzenle",
+    "ar": "حرّر المعرفة",
+    "it": "Modifica le conoscenze",
+    "es": "Editar conocimiento",
+    "de": "Wissen bearbeiten",
+    "fr": "Modifier les connaissances"
   },
   "یادداشت دسترسی": {
     "fa": "یادداشت دسترسی",
@@ -1558,22 +1514,22 @@
   "امتیاز ارتباط": {
     "fa": "امتیاز ارتباط",
     "en": "Relevance score",
-    "tr": "İletişim puanı",
-    "ar": "درجة التواصل",
-    "it": "punteggio di comunicazione",
-    "es": "Puntuación de comunicación",
-    "de": "Kommunikationsbewertung",
-    "fr": "Score de communication"
+    "tr": "Alaka düzeyi puanı",
+    "ar": "درجة الصلة",
+    "it": "Punteggio di pertinenza",
+    "es": "Puntuación de relevancia",
+    "de": "Relevanzbewertung",
+    "fr": "Score de pertinence"
   },
   "بازسازی پیش‌نمایش‌ها": {
     "fa": "بازسازی پیش‌نمایش‌ها",
-    "en": "Refresh previews",
+    "en": "Rebuild previews",
     "tr": "Önizlemelerin yeniden oluşturulması",
-    "ar": "معاينات إعادة البناء",
-    "it": "Anteprime della ricostruzione",
-    "es": "Vistas previas de reconstrucción",
+    "ar": "إعادة إنشاء المعاينات",
+    "it": "Rigenera le anteprime",
+    "es": "Volver a generar las vistas previas",
     "de": "Vorschau neu erstellen",
-    "fr": "Aperçus de reconstruction"
+    "fr": "Régénérer les aperçus"
   },
   "تاریخ خبر": {
     "fa": "تاریخ خبر",
@@ -1592,7 +1548,7 @@
     "ar": "تفاصيل الخبر",
     "it": "Dettagli della notizia",
     "es": "Detalles de la noticia",
-    "de": "Neuigkeiten",
+    "de": "Nachrichtendetails",
     "fr": "Détails de l'actualité"
   },
   "خبر": {
@@ -1608,12 +1564,12 @@
   "فقط خبرهای منتشرشده در این تعداد روز اخیر برای تحلیل و انتشار معتبر در نظر گرفته می‌شوند.": {
     "fa": "فقط خبرهای منتشرشده در این تعداد روز اخیر برای تحلیل و انتشار معتبر در نظر گرفته می‌شوند.",
     "en": "Only news published within this many recent days is considered valid for analysis and publishing.",
-    "tr": "Analiz ve yayın için yalnızca son birkaç gün içinde yayınlanan haberler geçerli kabul edilir.",
-    "ar": "لا تُعتبر الأخبار صالحة للتحليل والنشر إلا إذا نُشرت خلال الأيام القليلة الماضية.",
-    "it": "Ai fini dell'analisi e della pubblicazione, vengono considerate valide solo le notizie pubblicate negli ultimi giorni.",
-    "es": "Solo se consideran válidas para su análisis y publicación las noticias publicadas en los últimos días.",
-    "de": "Für die Analyse und Veröffentlichung werden nur Nachrichten berücksichtigt, die innerhalb der letzten Tage veröffentlicht wurden.",
-    "fr": "Seules les informations publiées au cours des derniers jours sont considérées comme valables pour l'analyse et la publication."
+    "tr": "Analiz ve yayımlama için yalnızca belirtilen gün sayısı içinde yayımlanan haberler geçerli kabul edilir.",
+    "ar": "تُعدّ الأخبار المنشورة خلال عدد الأيام المحدد فقط صالحة للتحليل والنشر.",
+    "it": "Ai fini dell'analisi e della pubblicazione, sono considerate valide solo le notizie pubblicate entro il numero di giorni indicato.",
+    "es": "Solo se consideran válidas para el análisis y la publicación las noticias publicadas dentro del número de días indicado.",
+    "de": "Für Analyse und Veröffentlichung werden nur Nachrichten berücksichtigt, die innerhalb der angegebenen Anzahl von Tagen veröffentlicht wurden.",
+    "fr": "Seules les informations publiées au cours du nombre de jours indiqué sont considérées comme valables pour l'analyse et la publication."
   },
   "منبع": {
     "fa": "منبع",
@@ -1639,8 +1595,8 @@
     "fa": "وضعیت انتشار",
     "en": "Publication status",
     "tr": "Yayın durumu",
-    "ar": "حالة الإصدار",
-    "it": "Stato di rilascio",
+    "ar": "حالة النشر",
+    "it": "Stato di pubblicazione",
     "es": "Estado de publicación",
     "de": "Veröffentlichungsstatus",
     "fr": "État de la publication"
@@ -1699,7 +1655,7 @@
     "fa": "موضوع",
     "en": "Topic",
     "tr": "Konu",
-    "ar": "الموضوعات",
+    "ar": "الموضوع",
     "it": "Argomento",
     "es": "Tema",
     "de": "Thema",
@@ -1760,9 +1716,9 @@
     "en": "Topic name",
     "tr": "Konu adı",
     "ar": "اسم الموضوع",
-    "it": "Nome del soggetto",
-    "es": "Nombre del sujeto",
-    "de": "Betreffname",
+    "it": "Nome dell'argomento",
+    "es": "Nombre del tema",
+    "de": "Themenname",
     "fr": "Nom du sujet"
   },
   "＋ افزودن موضوع": {
@@ -1800,7 +1756,7 @@
     "en": "What needs your attention today?",
     "tr": "Bugün dikkatinizi neye vermeniz gerekiyor?",
     "ar": "ما الذي يحتاج إلى اهتمامك اليوم؟",
-    "it": "Di cosa hai bisogno oggi?",
+    "it": "Che cosa richiede la tua attenzione oggi?",
     "es": "¿Qué requiere tu atención hoy?",
     "de": "Was erfordert heute Ihre Aufmerksamkeit?",
     "fr": "De quoi avez-vous besoin aujourd'hui ?"
@@ -1808,12 +1764,12 @@
   "جریان امروز": {
     "fa": "جریان امروز",
     "en": "Today’s flow",
-    "tr": "Bugünkü haberler",
-    "ar": "أخبار اليوم",
-    "it": "Notizie di oggi",
-    "es": "Noticias de hoy",
-    "de": "Heutige Nachrichten",
-    "fr": "Actualités du jour"
+    "tr": "Bugünün akışı",
+    "ar": "تدفّق اليوم",
+    "it": "Flusso di oggi",
+    "es": "Flujo de hoy",
+    "de": "Heutiger Feed",
+    "fr": "Flux du jour"
   },
   "زمان": {
     "fa": "زمان",
@@ -1835,60 +1791,6 @@
     "de": "Alle anzeigen",
     "fr": "Afficher tout"
   },
-  "'+esc(c.save)+'": {
-    "en": "'+esc(c.save)+'",
-    "tr": "'+esc(c.save)+'",
-    "ar": "'+esc(c.save)+'",
-    "it": "'+esc(c.save)+'",
-    "es": "'+esc(c.save)+'",
-    "de": "'+esc(c.save)+'",
-    "fr": "'+esc(c.save)+'"
-  },
-  "'+esc(t.body)+'": {
-    "en": "'+esc(t.body)+'",
-    "tr": "'+esc(t.body)+'",
-    "ar": "'+esc(t.body)+'",
-    "it": "'+esc(t.body)+'",
-    "es": "'+esc(t.body)+'",
-    "de": "'+esc(t.body)+'",
-    "fr": "'+esc(t.body)+'"
-  },
-  "'+esc(t.creator||'—')+' · '+esc(fmtDate(t.created_at))+' · '+esc(c[t.priority]||t.priority)+'": {
-    "en": "'+esc(t.creator||'—')+' · '+esc(fmtDate(t.created_at))+' · '+esc(c[t.priority]||t.priority)+'",
-    "tr": "'+esc(t.creator||'—')+' · '+esc(fmtDate(t.created_at))+' · '+esc(c[t.priority]||t.priority)+'",
-    "ar": "'+esc(t.creator||'—')+' · '+esc(fmtDate(t.created_at))+' · '+esc(c[t.priority]||t.priority)+'",
-    "it": "'+esc(t.creator||'—')+' · '+esc(fmtDate(t.created_at))+' · '+esc(c[t.priority]||t.priority)+'",
-    "es": "'+esc(t.creator||'—')+' · '+esc(fmtDate(t.created_at))+' · '+esc(c[t.priority]||t.priority)+'",
-    "de": "'+esc(t.creator||'—')+' · '+esc(fmtDate(t.created_at))+' · '+esc(c[t.priority]||t.priority)+'",
-    "fr": "'+esc(t.creator||'—')+' · '+esc(fmtDate(t.created_at))+' · '+esc(c[t.priority]||t.priority)+'"
-  },
-  "'+esc(t.owner_reply)+'": {
-    "en": "'+esc(t.owner_reply)+'",
-    "tr": "'+esc(t.owner_reply)+'",
-    "ar": "'+esc(t.owner_reply)+'",
-    "it": "'+esc(t.owner_reply)+'",
-    "es": "'+esc(t.owner_reply)+'",
-    "de": "'+esc(t.owner_reply)+'",
-    "fr": "'+esc(t.owner_reply)+'"
-  },
-  "'+id+'": {
-    "en": "'+id+'",
-    "tr": "'+id+'",
-    "ar": "'+id+'",
-    "it": "'+id+'",
-    "es": "'+id+'",
-    "de": "'+id+'",
-    "fr": "'+id+'"
-  },
-  "'+x+'": {
-    "en": "'+x+'",
-    "tr": "'+x+'",
-    "ar": "'+x+'",
-    "it": "'+x+'",
-    "es": "'+x+'",
-    "de": "'+x+'",
-    "fr": "'+x+'"
-  },
   "Access policy": {
     "en": "Access policy",
     "tr": "Erişim politikası",
@@ -1907,74 +1809,65 @@
     "de": "Referenz der Anmeldeinformationen (kein Geheimnis)",
     "fr": "Référence d'identification (pas de secret)"
   },
-  "farhaad": {
-    "en": "farhaad",
-    "tr": "Farhaad",
-    "ar": "فرهاد",
-    "it": "farhaad",
-    "es": "Farhaad",
-    "de": "Farhad",
-    "fr": "Farhaad"
-  },
   "جدول ۷ روز و ۲۴ ساعت": {
     "fa": "جدول ۷ روز و ۲۴ ساعت",
     "en": "7-day, 24-hour schedule grid",
-    "tr": "7 gün 24 saat çalışma programı",
+    "tr": "7 gün × 24 saatlik zamanlama tablosu",
     "ar": "جدول زمني لمدة 7 أيام و24 ساعة",
-    "it": "Orario di 7 giorni e 24 ore",
-    "es": "Horario de 7 días y 24 horas",
-    "de": "7-Tage- und 24-Stunden-Plan",
-    "fr": "Horaires sur 7 jours et 24 heures"
+    "it": "Griglia di programmazione di 7 giorni e 24 ore",
+    "es": "Cuadrícula de programación de 7 días y 24 horas",
+    "de": "7-Tage-/24-Stunden-Zeitplanraster",
+    "fr": "Grille de programmation sur 7 jours et 24 heures"
   },
   "کانال": {
     "fa": "کانال",
-    "en": "Channels",
-    "tr": "Kanallar",
-    "ar": "القنوات",
-    "it": "Canali",
-    "es": "Canales",
-    "de": "Kanäle",
-    "fr": "Canaux"
+    "en": "Channel",
+    "tr": "Kanal",
+    "ar": "القناة",
+    "it": "Canale",
+    "es": "Canal",
+    "de": "Kanal",
+    "fr": "Canal"
   },
   "آمادگی انتشار تلگرام": {
     "fa": "آمادگی انتشار تلگرام",
     "en": "Telegram publishing readiness",
-    "tr": "Telegram sürümünün yayınlanmasına hazırlık",
-    "ar": "الاستعدادات لإطلاق تطبيق تيليجرام",
-    "it": "Preparazione del rilascio del Telegramma",
-    "es": "Preparación del comunicado de Telegram",
-    "de": "Vorbereitung der Telegrammveröffentlichung",
-    "fr": "Préparation du lancement de Telegram"
+    "tr": "Telegram'da yayın hazırlığı",
+    "ar": "الاستعداد للنشر على تيليجرام",
+    "it": "Preparazione alla pubblicazione su Telegram",
+    "es": "Preparación para publicar en Telegram",
+    "de": "Vorbereitung der Veröffentlichung auf Telegram",
+    "fr": "Préparation de la publication sur Telegram"
   },
   "اجرای pipeline": {
     "fa": "اجرای pipeline",
     "en": "Run pipeline",
-    "tr": "İşlem hattının yürütülmesi",
-    "ar": "تنفيذ خط الأنابيب",
-    "it": "Esecuzione della pipeline",
-    "es": "Ejecución de canalización",
-    "de": "Pipeline-Ausführung",
-    "fr": "Exécution du pipeline"
+    "tr": "Pipeline'ı çalıştır",
+    "ar": "شغّل خط الأنابيب",
+    "it": "Esegui la pipeline",
+    "es": "Ejecutar la canalización",
+    "de": "Pipeline ausführen",
+    "fr": "Exécuter le pipeline"
   },
   "اجرای تست pipeline": {
     "fa": "اجرای تست pipeline",
     "en": "Run pipeline test",
     "tr": "İşlem hattı testini çalıştırın.",
-    "ar": "إجراء اختبارات خط الأنابيب",
-    "it": "Eseguire i test della pipeline",
-    "es": "Ejecutar pruebas de canalización",
-    "de": "Pipeline-Tests ausführen",
-    "fr": "Exécuter les tests du pipeline"
+    "ar": "تشغيل اختبار خط الأنابيب",
+    "it": "Eseguire il test della pipeline",
+    "es": "Ejecutar la prueba de la canalización",
+    "de": "Pipeline-Test ausführen",
+    "fr": "Exécuter le test du pipeline"
   },
   "اعلان تلگرام": {
     "fa": "اعلان تلگرام",
     "en": "Telegram notifications",
-    "tr": "Telegram duyurusu",
-    "ar": "إعلان على تيليجرام",
-    "it": "Annuncio tramite Telegramma",
-    "es": "Anuncio de Telegram",
-    "de": "Telegram-Ankündigung",
-    "fr": "Annonce Telegram"
+    "tr": "Telegram bildirimleri",
+    "ar": "إشعارات تيليجرام",
+    "it": "Notifiche Telegram",
+    "es": "Notificaciones de Telegram",
+    "de": "Telegram-Benachrichtigungen",
+    "fr": "Notifications Telegram"
   },
   "انتشار در تلگرام": {
     "fa": "انتشار در تلگرام",
@@ -1999,12 +1892,12 @@
   "حداکثر انتشار در هر نوبت": {
     "fa": "حداکثر انتشار در هر نوبت",
     "en": "Maximum publications per run",
-    "tr": "Tur başına maksimum salınım",
-    "ar": "أقصى إطلاق لكل دور",
-    "it": "Rilascio massimo per turno",
-    "es": "Liberación máxima por turno",
-    "de": "Maximale Freigabe pro Drehung",
-    "fr": "Libération maximale par tour"
+    "tr": "Çalıştırma başına maksimum yayın sayısı",
+    "ar": "الحد الأقصى لعدد المنشورات في كل تشغيل",
+    "it": "Numero massimo di pubblicazioni per esecuzione",
+    "es": "Número máximo de publicaciones por ejecución",
+    "de": "Maximale Anzahl an Veröffentlichungen pro Ausführung",
+    "fr": "Nombre maximal de publications par exécution"
   },
   "ذخیره زمان‌بندی و تنظیمات": {
     "fa": "ذخیره زمان‌بندی و تنظیمات",
@@ -2018,33 +1911,33 @@
   },
   "زمان‌بندی و کانال": {
     "fa": "زمان‌بندی و کانال",
-    "en": "Schedule and channels",
+    "en": "Schedule and channel",
     "tr": "Zamanlama ve kanal",
-    "ar": "التوقيت والقناة",
-    "it": "Tempi e canale",
-    "es": "Sincronización y canal",
-    "de": "Timing und Kanal",
+    "ar": "الجدول والقناة",
+    "it": "Programmazione e canale",
+    "es": "Programación y canal",
+    "de": "Zeitplan und Kanal",
     "fr": "Horaire et canal"
   },
   "سقف انتشار در هر نوبت": {
     "fa": "سقف انتشار در هر نوبت",
     "en": "Publication limit per run",
-    "tr": "Dönüş başına emisyon limiti",
-    "ar": "حد الانبعاثات لكل دورة",
-    "it": "Limite di emissioni per turno",
-    "es": "Límite de emisiones por turno",
-    "de": "Emissionsgrenzwert pro Umdrehung",
-    "fr": "Limite d'émission par tour"
+    "tr": "Çalıştırma başına yayın sınırı",
+    "ar": "حد النشر لكل تشغيل",
+    "it": "Limite di pubblicazioni per esecuzione",
+    "es": "Límite de publicaciones por ejecución",
+    "de": "Veröffentlichungslimit pro Ausführung",
+    "fr": "Limite de publications par exécution"
   },
   "صف تأیید و کانال تلگرام": {
     "fa": "صف تأیید و کانال تلگرام",
     "en": "Approval queue and Telegram channel",
-    "tr": "Doğrulama kuyruğu ve Telegram kanalı",
-    "ar": "قائمة التحقق وقناة تيليجرام",
-    "it": "Coda di verifica e canale Telegram",
-    "es": "Cola de verificación y canal de Telegram",
-    "de": "Verifizierungswarteschlange und Telegram-Kanal",
-    "fr": "File d'attente de vérification et chaîne Telegram"
+    "tr": "Onay kuyruğu ve Telegram kanalı",
+    "ar": "قائمة انتظار الموافقة وقناة تيليجرام",
+    "it": "Coda di approvazione e canale Telegram",
+    "es": "Cola de aprobación y canal de Telegram",
+    "de": "Genehmigungswarteschlange und Telegram-Kanal",
+    "fr": "File d’attente d’approbation et chaîne Telegram"
   },
   "مدل تحلیل OpenAI": {
     "fa": "مدل تحلیل OpenAI",
@@ -2061,10 +1954,10 @@
     "en": "All 24 hours and 7 days are shown together. Select a whole day by clicking its name, or an hour across all days by clicking the header.",
     "tr": "Haftanın 7 günü ve 24 saatin tamamı aynı anda görüntülenir. Tüm günü seçmek için gün adına, tüm günlerin saatini seçmek için ise tablonun üzerindeki saate tıklayın.",
     "ar": "يتم عرض جميع ساعات اليوم وأيام الأسبوع السبعة دفعة واحدة. انقر على اسم اليوم لتحديد اليوم بأكمله، أو على الساعة أعلى الجدول لتحديد الوقت في جميع الأيام.",
-    "it": "Vengono visualizzate contemporaneamente tutte le 24 ore e i 7 giorni della settimana. Clicca sul nome del giorno per selezionarlo, oppure sull'orologio sopra la tabella per selezionare l'ora di tutti i giorni.",
-    "es": "Se muestran las 24 horas del día, los 7 días de la semana. Haga clic en el nombre del día para seleccionar el día completo o en el reloj situado encima de la tabla para seleccionar la hora de todos los días.",
-    "de": "Alle 24 Stunden und 7 Wochentage werden gleichzeitig angezeigt. Klicken Sie auf den Tagesnamen, um den gesamten Tag auszuwählen, oder auf die Uhr über der Tabelle, um die Uhrzeit für alle Tage auszuwählen.",
-    "fr": "Les 24 heures et les 7 jours de la semaine sont affichés simultanément. Cliquez sur le nom du jour pour sélectionner la journée entière, ou sur l'horloge au-dessus du tableau pour sélectionner l'heure de tous les jours."
+    "it": "Vengono visualizzate contemporaneamente tutte le 24 ore e i 7 giorni della settimana. Clicca sul nome del giorno per selezionare l’intera giornata, oppure sull’ora in cima alla tabella per selezionare quell’ora in tutti i giorni.",
+    "es": "Se muestran las 24 horas del día y los 7 días de la semana. Haga clic en el nombre del día para seleccionar el día completo o en la hora situada encima de la tabla para seleccionar esa hora en todos los días.",
+    "de": "Alle 24 Stunden und 7 Wochentage werden gleichzeitig angezeigt. Klicken Sie auf den Tagesnamen, um den ganzen Tag auszuwählen, oder auf die Stunde über der Tabelle, um diese Stunde für alle Tage auszuwählen.",
+    "fr": "Les 24 heures et les 7 jours de la semaine sont affichés simultanément. Cliquez sur le nom du jour pour sélectionner la journée entière, ou sur l’heure au-dessus du tableau pour sélectionner cette heure pour tous les jours."
   },
   "وضعیت سرویس‌ها و پارامترهای اجرای pipeline.": {
     "fa": "وضعیت سرویس‌ها و پارامترهای اجرای pipeline.",
@@ -2092,8 +1985,8 @@
     "tr": "Örneğin, İran pazarı üzerindeki etkisine odaklanmak.",
     "ar": "على سبيل المثال، التركيز على تأثيره على السوق الإيرانية",
     "it": "Ad esempio, concentrandosi sul suo impatto sul mercato iraniano",
-    "es": "Por ejemplo, centrándonos en su impacto en el mercado iraní.",
-    "de": "Zum Beispiel die Auswirkungen auf den iranischen Markt.",
+    "es": "Por ejemplo, centrarse en su impacto en el mercado iraní",
+    "de": "Zum Beispiel den Fokus auf die Auswirkungen auf den iranischen Markt legen",
     "fr": "Par exemple, en se concentrant sur son impact sur le marché iranien"
   },
   "نام بیزینس": {
@@ -2141,47 +2034,47 @@
     "en": "Businesses",
     "tr": "İşletmeler",
     "ar": "الشركات",
-    "it": "Filiali",
+    "it": "Aziende",
     "es": "Empresas",
     "de": "Unternehmen",
     "fr": "Entreprises"
   },
   "تفکیک واقعیت، خلاصه و ارتباط با بیزینس": {
     "fa": "تفکیک واقعیت، خلاصه و ارتباط با بیزینس",
-    "en": "Separate facts, summary and business impact",
-    "tr": "Gerçeklikten Ayrışma, Özet ve İş Bağlantısı",
-    "ar": "الفصل بين الواقع والملخص والربط التجاري",
-    "it": "Separazione della realtà, riepilogo e connessione aziendale",
-    "es": "Separación de la realidad, resumen y conexión empresarial",
-    "de": "Realitätstrennung, Zusammenfassung und Geschäftsverbindung",
-    "fr": "Séparation de la réalité, résumé et lien commercial"
+    "en": "Distinguish facts, the summary, and relevance to the business",
+    "tr": "Gerçekleri, özeti ve işletmeyle ilgisini birbirinden ayırma",
+    "ar": "التمييز بين الحقائق والملخص ومدى صلتها بالأعمال",
+    "it": "Distinzione tra fatti, riepilogo e rilevanza per l’azienda",
+    "es": "Distinción entre los hechos, el resumen y su relevancia para la empresa",
+    "de": "Unterscheidung zwischen Fakten, Zusammenfassung und Relevanz für das Unternehmen",
+    "fr": "Distinction entre les faits, le résumé et leur pertinence pour l’entreprise"
   },
   "توضیح بیزینس": {
     "fa": "توضیح بیزینس",
     "en": "Business description",
     "tr": "İşletme açıklaması",
     "ar": "شرح الأعمال",
-    "it": "Spiegazione aziendale",
+    "it": "Descrizione dell’azienda",
     "es": "Explicación del negocio",
-    "de": "Geschäftserklärung",
-    "fr": "Explication commerciale"
+    "de": "Unternehmensbeschreibung",
+    "fr": "Description de l’entreprise"
   },
   "حداکثر بیزینس": {
     "fa": "حداکثر بیزینس",
     "en": "Maximum businesses",
-    "tr": "Maksimum İşletme",
-    "ar": "أقصى قدر من الأعمال",
-    "it": "Massima attività",
-    "es": "Máximo éxito empresarial",
-    "de": "Maximum Business",
-    "fr": "Entreprise maximale"
+    "tr": "Maksimum işletme sayısı",
+    "ar": "الحد الأقصى لعدد الأنشطة التجارية",
+    "it": "Numero massimo di aziende",
+    "es": "Número máximo de empresas",
+    "de": "Maximale Anzahl an Unternehmen",
+    "fr": "Nombre maximal d’entreprises"
   },
   "محصولات": {
     "fa": "محصولات",
     "en": "Products",
     "tr": "Ürünler",
     "ar": "منتجات",
-    "it": "Libri",
+    "it": "Prodotti",
     "es": "Productos",
     "de": "Produkte",
     "fr": "Produits"
@@ -2199,12 +2092,12 @@
   "موضوعات هدف و آستانه ارتباط با بیزینس را تنظیم کنید.": {
     "fa": "موضوعات هدف و آستانه ارتباط با بیزینس را تنظیم کنید.",
     "en": "Configure target topics and business relevance thresholds.",
-    "tr": "İş birimiyle iletişim kurmak için hedef konuları ve eşikleri belirleyin.",
-    "ar": "حدد المواضيع المستهدفة والحدود القصوى للتواصل مع الشركة.",
-    "it": "Definisci argomenti e soglie prioritarie per la comunicazione con l'azienda.",
-    "es": "Defina los temas objetivo y los umbrales para la comunicación con la empresa.",
-    "de": "Legen Sie Zielthemen und Schwellenwerte für die Kommunikation mit dem Unternehmen fest.",
-    "fr": "Définir des sujets cibles et des seuils pour la communication avec l'entreprise."
+    "tr": "Hedef konuları ve işletmeyle ilgililik eşiklerini yapılandırın.",
+    "ar": "اضبط المواضيع المستهدفة وعتبات الصلة بالأعمال.",
+    "it": "Configura gli argomenti target e le soglie di rilevanza per l’azienda.",
+    "es": "Configure los temas objetivo y los umbrales de relevancia para la empresa.",
+    "de": "Legen Sie Zielthemen und Schwellenwerte für die Relevanz für das Unternehmen fest.",
+    "fr": "Définissez les sujets cibles et les seuils de pertinence pour l’entreprise."
   },
   "کتابخانه دانش کسب‌وکار": {
     "fa": "کتابخانه دانش کسب‌وکار",
@@ -2213,7 +2106,7 @@
     "ar": "مكتبة المعرفة التجارية",
     "it": "Biblioteca di conoscenze aziendali",
     "es": "Biblioteca de conocimientos empresariales",
-    "de": "Business-Wissensbibliothek",
+    "de": "Wissensbibliothek des Unternehmens",
     "fr": "Bibliothèque de connaissances commerciales"
   },
   "＋ افزودن بیزینس": {
@@ -2249,12 +2142,12 @@
   "آخرین بازخوانی:": {
     "fa": "آخرین بازخوانی:",
     "en": "Last refreshed:",
-    "tr": "Son okuma:",
-    "ar": "آخر قراءة:",
-    "it": "Ultima lettura:",
-    "es": "Última lectura:",
-    "de": "Zuletzt gelesen:",
-    "fr": "Dernière lecture :"
+    "tr": "Son yenileme:",
+    "ar": "آخر تحديث:",
+    "it": "Ultimo aggiornamento:",
+    "es": "Última actualización:",
+    "de": "Zuletzt aktualisiert:",
+    "fr": "Dernière actualisation :"
   },
   "آخرین تغییر رتبه‌بندی بازگردانی شود؟": {
     "fa": "آخرین تغییر رتبه‌بندی بازگردانی شود؟",
@@ -2269,12 +2162,12 @@
   "آخرین عملیات گروهی بازگردانی شود؟": {
     "fa": "آخرین عملیات گروهی بازگردانی شود؟",
     "en": "Restore the latest bulk action?",
-    "tr": "Son grup işlemi geri alınabilir mi?",
-    "ar": "هل يمكن التراجع عن عملية المجموعة الأخيرة؟",
-    "it": "È possibile annullare l'ultima operazione di gruppo?",
-    "es": "¿Se puede deshacer la última operación de grupo?",
-    "de": "Kann die letzte Gruppenoperation rückgängig gemacht werden?",
-    "fr": "Est-il possible d'annuler la dernière opération de groupe ?"
+    "tr": "Son toplu işlem geri alınsın mı?",
+    "ar": "هل تريد التراجع عن آخر عملية جماعية؟",
+    "it": "Annullare l’ultima operazione in blocco?",
+    "es": "¿Deshacer la última operación en bloque?",
+    "de": "Letzte Sammelaktion rückgängig machen?",
+    "fr": "Annuler la dernière opération groupée ?"
   },
   "ابتدا یک دستیار را انتخاب کنین": {
     "fa": "ابتدا یک دستیار را انتخاب کنین",
@@ -2329,12 +2222,12 @@
   "اعلان جدیدی برای نمایش ندارین.": {
     "fa": "اعلان جدیدی برای نمایش ندارین.",
     "en": "There are no new notifications.",
-    "tr": "Gösterilecek yeni duyurunuz yok.",
-    "ar": "ليس لديك أي إعلانات جديدة لعرضها.",
-    "it": "Non hai nuovi annunci da visualizzare.",
-    "es": "No tienes anuncios nuevos para mostrar.",
-    "de": "Es sind keine neuen Ankündigungen verfügbar.",
-    "fr": "Vous n'avez aucune nouvelle annonce à afficher."
+    "tr": "Gösterilecek yeni bildiriminiz yok.",
+    "ar": "لا توجد إشعارات جديدة لعرضها.",
+    "it": "Non hai nuove notifiche da visualizzare.",
+    "es": "No tienes notificaciones nuevas para mostrar.",
+    "de": "Es gibt keine neuen Benachrichtigungen anzuzeigen.",
+    "fr": "Vous n’avez aucune nouvelle notification à afficher."
   },
   "افزودن کاربر": {
     "fa": "افزودن کاربر",
@@ -2379,12 +2272,12 @@
   "انتشار برآوردی روزانه": {
     "fa": "انتشار برآوردی روزانه",
     "en": "Estimated daily publications",
-    "tr": "Günlük Tahmini Yayın",
-    "ar": "الإصدار اليومي المتوقع",
-    "it": "Rilascio giornaliero stimato",
-    "es": "Fecha estimada de lanzamiento diario",
-    "de": "Tägliche geschätzte Freisetzung",
-    "fr": "Débit journalier estimé"
+    "tr": "Tahmini günlük yayın sayısı",
+    "ar": "عدد المنشورات اليومي التقديري",
+    "it": "Numero stimato di pubblicazioni giornaliere",
+    "es": "Número estimado de publicaciones diarias",
+    "de": "Geschätzte tägliche Anzahl der Veröffentlichungen",
+    "fr": "Nombre estimé de publications par jour"
   },
   "انتشار گروهی عمداً غیرفعال است": {
     "fa": "انتشار گروهی عمداً غیرفعال است",
@@ -2403,7 +2296,7 @@
     "ar": "هل يجب حذف هذا النشاط التجاري؟",
     "it": "Questa attività commerciale dovrebbe essere eliminata?",
     "es": "¿Debería eliminarse este negocio?",
-    "de": "Soll dieser Eintrag gelöscht werden?",
+    "de": "Soll dieses Unternehmen gelöscht werden?",
     "fr": "Faut-il supprimer cette entreprise ?"
   },
   "این بیزینس غیرفعال شود؟": {
@@ -2411,7 +2304,7 @@
     "en": "Disable this business?",
     "tr": "Bu işletme devre dışı bırakılmalı mı?",
     "ar": "هل ينبغي إيقاف هذا النشاط التجاري؟",
-    "it": "Questa attività dovrebbe essere chiusa?",
+    "it": "Disattivare questa azienda?",
     "es": "¿Debería desactivarse este negocio?",
     "de": "Soll dieser Betrieb deaktiviert werden?",
     "fr": "Cette entreprise devrait-elle être désactivée ?"
@@ -2431,7 +2324,7 @@
     "en": "Delete this media and dependent records?",
     "tr": "Bu medya dosyaları ve ilgili kayıtlar silinmeli mi?",
     "ar": "هل ينبغي حذف هذه الوسائط والسجلات المرتبطة بها؟",
-    "it": "Questo supporto multimediale e i relativi file devono essere eliminati?",
+    "it": "Eliminare questo contenuto multimediale e i record associati?",
     "es": "¿Deberían eliminarse estos archivos multimedia y los registros asociados?",
     "de": "Sollen diese Medien und die zugehörigen Datensätze gelöscht werden?",
     "fr": "Faut-il supprimer ce support et les enregistrements associés ?"
@@ -2459,22 +2352,22 @@
   "این نشست لغو شود؟": {
     "fa": "این نشست لغو شود؟",
     "en": "Revoke this session?",
-    "tr": "Bu toplantı iptal edilmeli mi?",
-    "ar": "هل ينبغي إلغاء هذا الاجتماع؟",
-    "it": "Questa riunione dovrebbe essere annullata?",
-    "es": "¿Debería cancelarse esta reunión?",
-    "de": "Sollte dieses Treffen abgesagt werden?",
-    "fr": "Cette réunion devrait-elle être annulée ?"
+    "tr": "Bu oturum iptal edilsin mi?",
+    "ar": "هل تريد إبطال هذه الجلسة؟",
+    "it": "Revocare questa sessione?",
+    "es": "¿Revocar esta sesión?",
+    "de": "Diese Sitzung widerrufen?",
+    "fr": "Révoquer cette session ?"
   },
   "این نما پیش‌فرض باشد": {
     "fa": "این نما پیش‌فرض باشد",
     "en": "Make this the default view",
-    "tr": "Bu görünüm varsayılan görünümdür.",
-    "ar": "هذا العرض هو الوضع الافتراضي.",
-    "it": "Questa visualizzazione è quella predefinita.",
-    "es": "Esta vista es la predeterminada.",
-    "de": "Dies ist die Standardansicht.",
-    "fr": "Cette vue est celle par défaut."
+    "tr": "Bu görünümü varsayılan yapın",
+    "ar": "اجعل هذا العرض افتراضيًا",
+    "it": "Imposta questa visualizzazione come predefinita",
+    "es": "Establecer esta vista como predeterminada",
+    "de": "Diese Ansicht als Standard festlegen",
+    "fr": "Définir cette vue par défaut"
   },
   "این نمای ذخیره‌شده حذف شود؟": {
     "fa": "این نمای ذخیره‌شده حذف شود؟",
@@ -2489,12 +2382,12 @@
   "بازگردانی": {
     "fa": "بازگردانی",
     "en": "Restore",
-    "tr": "Geri dönmek",
-    "ar": "يعود",
-    "it": "Ritorno",
-    "es": "Devolver",
-    "de": "Zurückkehren",
-    "fr": "Retour"
+    "tr": "Geri yükle",
+    "ar": "استعادة",
+    "it": "Ripristina",
+    "es": "Restaurar",
+    "de": "Wiederherstellen",
+    "fr": "Restaurer"
   },
   "بازگردانی انجام شد:": {
     "fa": "بازگردانی انجام شد:",
@@ -2508,7 +2401,7 @@
   },
   "بایگانی": {
     "fa": "بایگانی",
-    "en": "Archived",
+    "en": "Archive",
     "tr": "Arşiv",
     "ar": "أرشيف",
     "it": "Archivio",
@@ -2544,47 +2437,47 @@
     "it": "Prontezza dell’assistente",
     "es": "Preparación del asistente",
     "de": "Bereitschaft des Assistenten",
-    "fr": "Prête pour l’assistant"
+    "fr": "État de préparation de l’assistant"
   },
   "بررسی خبرها": {
     "fa": "بررسی خبرها",
     "en": "Review news",
     "tr": "Haberleri kontrol edin",
-    "ar": "تابع الأخبار",
+    "ar": "راجع الأخبار",
     "it": "Controlla le notizie",
     "es": "Consulta las noticias",
-    "de": "Informieren Sie sich über die Nachrichten.",
+    "de": "Nachrichten überprüfen",
     "fr": "Consultez les actualités"
   },
   "بررسی سلامت": {
     "fa": "بررسی سلامت",
     "en": "Health check",
-    "tr": "Sağlık kontrolü",
-    "ar": "فحص طبي",
-    "it": "Controllo sanitario",
-    "es": "chequeo médico",
-    "de": "Gesundheitscheck",
-    "fr": "bilan de santé"
+    "tr": "Sistem durumu kontrolü",
+    "ar": "فحص حالة النظام",
+    "it": "Controllo dello stato del sistema",
+    "es": "Comprobación del estado del sistema",
+    "de": "Systemstatusprüfung",
+    "fr": "Vérification de l’état du système"
   },
   "بررسی سلامت انجام شد": {
     "fa": "بررسی سلامت انجام شد",
     "en": "Health check completed",
-    "tr": "Sağlık kontrolü yapıldı",
-    "ar": "تم إجراء الفحص الطبي",
-    "it": "Visita medica di controllo effettuata",
-    "es": "Chequeo médico realizado",
-    "de": "Gesundheitscheck durchgeführt",
-    "fr": "Bilan de santé effectué"
+    "tr": "Sistem durumu kontrolü tamamlandı",
+    "ar": "اكتمل فحص حالة النظام",
+    "it": "Controllo dello stato del sistema completato",
+    "es": "Comprobación del estado del sistema completada",
+    "de": "Systemstatusprüfung abgeschlossen",
+    "fr": "Vérification de l’état du système terminée"
   },
   "بررسی سلامت در حال اجراست…": {
     "fa": "بررسی سلامت در حال اجراست…",
     "en": "Running health check…",
-    "tr": "Sağlık kontrolü devam ediyor…",
-    "ar": "الفحص الطبي جارٍ...",
-    "it": "È in corso un controllo medico…",
-    "es": "Se está realizando un chequeo médico…",
-    "de": "Die Gesundheitsuntersuchung läuft…",
-    "fr": "Un bilan de santé est en cours…"
+    "tr": "Sistem durumu kontrol ediliyor…",
+    "ar": "جارٍ فحص حالة النظام...",
+    "it": "Controllo dello stato del sistema in corso…",
+    "es": "Comprobando el estado del sistema…",
+    "de": "Systemstatus wird geprüft…",
+    "fr": "Vérification de l’état du système en cours…"
   },
   "بررسی و افزودن": {
     "fa": "بررسی و افزودن",
@@ -2599,7 +2492,7 @@
   "بررسی و افزودن بیزینس": {
     "fa": "بررسی و افزودن بیزینس",
     "en": "Review and add business",
-    "tr": "İşletmeleri inceleyin ve ekleyin.",
+    "tr": "İşletmeyi inceleyin ve ekleyin",
     "ar": "مراجعة وإضافة الأعمال",
     "it": "Rivedi e aggiungi attività commerciali",
     "es": "Revisar y añadir negocios",
@@ -2611,7 +2504,7 @@
     "en": "Apply the label to the selected news?",
     "tr": "Bu etiket seçilmiş haberlere mi uygulanmalı?",
     "ar": "هل ينبغي تطبيق هذا التصنيف على أخبار مختارة؟",
-    "it": "L'etichetta dovrebbe essere applicata solo ad alcune notizie?",
+    "it": "L'etichetta va applicata alle notizie selezionate?",
     "es": "¿Debería aplicarse la etiqueta a noticias seleccionadas?",
     "de": "Soll das Label auf ausgewählte Nachrichten angewendet werden?",
     "fr": "Faut-il apposer cette étiquette à certaines actualités ?"
@@ -2631,16 +2524,16 @@
     "en": "Business updated",
     "tr": "İşletme bilgileri güncellendi.",
     "ar": "تم تحديث بيانات العمل.",
-    "it": "Aggiornamento aziendale.",
+    "it": "Attività commerciale aggiornata",
     "es": "Negocio actualizado.",
     "de": "Geschäftsinformationen aktualisiert.",
-    "fr": "Mise à jour de l'entreprise."
+    "fr": "Entreprise mise à jour"
   },
   "بیزینس ثبت شد": {
     "fa": "بیزینس ثبت شد",
     "en": "Business registered",
-    "tr": "Kayıtlı işletme",
-    "ar": "شركة مسجلة",
+    "tr": "İşletme kaydedildi",
+    "ar": "تم تسجيل النشاط التجاري",
     "it": "Attività registrata",
     "es": "Empresa registrada",
     "de": "Gewerbe registriert",
@@ -2670,7 +2563,7 @@
     "fa": "بیزینس فعال شد",
     "en": "Business activated",
     "tr": "İşletme aktif hale getirildi.",
-    "ar": "تم تفعيل الأعمال",
+    "ar": "تم تفعيل النشاط التجاري",
     "it": "Attività commerciale attivata",
     "es": "Negocio activado",
     "de": "Geschäft aktiviert",
@@ -2679,12 +2572,12 @@
   "بین بلاک‌ها حداکثر یک خط فاصله نگه داشته می‌شود.": {
     "fa": "بین بلاک‌ها حداکثر یک خط فاصله نگه داشته می‌شود.",
     "en": "Keep at most one blank line between blocks.",
-    "tr": "Bloklar arasında en fazla bir boşluk bırakılır.",
-    "ar": "يتم الحفاظ على مسافة واحدة كحد أقصى بين الكتل.",
-    "it": "Tra i blocchi viene mantenuto al massimo uno spazio.",
-    "es": "Se deja un máximo de un espacio entre bloques.",
-    "de": "Zwischen den Blöcken darf maximal ein Leerzeichen frei bleiben.",
-    "fr": "Un espace maximum est maintenu entre les blocs."
+    "tr": "Bloklar arasında en fazla bir boş satır bırakılır.",
+    "ar": "يُترك سطر فارغ واحد كحد أقصى بين الكتل.",
+    "it": "Tra i blocchi viene lasciata al massimo una riga vuota.",
+    "es": "Se deja como máximo una línea en blanco entre bloques.",
+    "de": "Zwischen den Blöcken bleibt höchstens eine Leerzeile.",
+    "fr": "Une seule ligne vide au maximum est conservée entre les blocs."
   },
   "تأیید نهایی": {
     "fa": "تأیید نهایی",
@@ -2759,12 +2652,12 @@
   "تنظیمات موضوع": {
     "fa": "تنظیمات موضوع",
     "en": "Topic settings",
-    "tr": "Tema ayarları",
-    "ar": "إعدادات المظهر",
-    "it": "Impostazioni del tema",
+    "tr": "Konu ayarları",
+    "ar": "إعدادات الموضوع",
+    "it": "Impostazioni dell'argomento",
     "es": "Configuración del tema",
-    "de": "Designeinstellungen",
-    "fr": "Paramètres du thème"
+    "de": "Themeneinstellungen",
+    "fr": "Paramètres du sujet"
   },
   "توکن فقط همین‌بار نمایش داده شد.": {
     "fa": "توکن فقط همین‌بار نمایش داده شد.",
@@ -2803,7 +2696,7 @@
     "ar": "أرشفة الأخبار المختارة؟",
     "it": "Archiviare le notizie selezionate?",
     "es": "¿Archivar noticias seleccionadas?",
-    "de": "Archivierte Nachrichten?",
+    "de": "Ausgewählte Nachrichten archivieren?",
     "fr": "Archiver les actualités sélectionnées ?"
   },
   "خبرهای انتخاب‌شده رد شوند؟": {
@@ -2819,20 +2712,20 @@
   "خروجی داده آماده شد": {
     "fa": "خروجی داده آماده شد",
     "en": "Data export is ready",
-    "tr": "Veri çıktısı hazır.",
-    "ar": "مخرجات البيانات جاهزة.",
-    "it": "L'output dei dati è pronto.",
-    "es": "La salida de datos está lista.",
-    "de": "Die Datenausgabe ist abgeschlossen.",
-    "fr": "Les données de sortie sont prêtes."
+    "tr": "Veri dışa aktarımı hazır.",
+    "ar": "تصدير البيانات جاهز.",
+    "it": "L'esportazione dei dati è pronta.",
+    "es": "La exportación de datos está lista.",
+    "de": "Der Datenexport ist bereit.",
+    "fr": "L’exportation des données est prête."
   },
   "در حال اجرا…": {
     "fa": "در حال اجرا…",
     "en": "Running…",
-    "tr": "Koşma…",
-    "ar": "جري…",
-    "it": "Corsa…",
-    "es": "Correr…",
+    "tr": "Çalışıyor…",
+    "ar": "جارٍ التنفيذ…",
+    "it": "In esecuzione…",
+    "es": "En ejecución…",
     "de": "Läuft…",
     "fr": "En cours d'exécution…"
   },
@@ -2842,29 +2735,29 @@
     "tr": "Kontrol ediliyor…",
     "ar": "جارٍ التحقق…",
     "it": "Controllo in corso…",
-    "es": "De cheques…",
+    "es": "Comprobando…",
     "de": "Überprüfung…",
     "fr": "Vérification…"
   },
   "در حال دریافت رخدادها…": {
     "fa": "در حال دریافت رخدادها…",
     "en": "Loading incidents…",
-    "tr": "Olayları almak…",
-    "ar": "استقبال الأحداث...",
-    "it": "Ricezione degli eventi…",
-    "es": "Recibiendo eventos…",
-    "de": "Empfang von Ereignissen…",
-    "fr": "Réception d'événements…"
+    "tr": "Olaylar yükleniyor…",
+    "ar": "جارٍ تحميل الحوادث...",
+    "it": "Caricamento degli incidenti…",
+    "es": "Cargando incidentes…",
+    "de": "Vorfälle werden geladen…",
+    "fr": "Chargement des incidents…"
   },
   "دستیار ذخیره شد": {
     "fa": "دستیار ذخیره شد",
     "en": "Assistant saved",
-    "tr": "Yardımcı kurtarıldı.",
-    "ar": "تم حفظ المساعدة.",
+    "tr": "Asistan kaydedildi.",
+    "ar": "تم حفظ المساعد.",
     "it": "Assistente salvato.",
-    "es": "Asistente salvado.",
+    "es": "Asistente guardado.",
     "de": "Assistent gespeichert.",
-    "fr": "Assistant sauvé."
+    "fr": "Assistant enregistré."
   },
   "دستیار فعال شد": {
     "fa": "دستیار فعال شد",
@@ -2894,17 +2787,17 @@
     "it": "Salva visualizzazione notizie",
     "es": "Guardar vista de noticias",
     "de": "Nachrichtenansicht speichern",
-    "fr": "Enregistrer les actualités"
+    "fr": "Enregistrer la vue des actualités"
   },
   "راهنمای فیلد": {
     "fa": "راهنمای فیلد",
     "en": "Field guide",
-    "tr": "Saha Rehberi",
-    "ar": "دليل ميداني",
-    "it": "Guida sul campo",
-    "es": "Guía de campo",
-    "de": "Feldhandbuch",
-    "fr": "Guide de terrain"
+    "tr": "Alan kılavuzu",
+    "ar": "دليل الحقول",
+    "it": "Guida ai campi",
+    "es": "Guía de campos",
+    "de": "Feldhilfe",
+    "fr": "Guide des champs"
   },
   "رخداد بازی برای نمایش نیست.": {
     "fa": "رخداد بازی وجود ندارد.",
@@ -2941,8 +2834,8 @@
     "en": "Media and topics are copied; destinations and secrets are not transferred, and real publishing is blocked.",
     "tr": "Medya ve konu kopyalanır ancak hedef ve sır aktarılmaz; asıl yayın engellenir.",
     "ar": "يتم نسخ الوسائط والموضوع، لكن الوجهة والسر لا يتم نقلهما؛ ويتم حظر النشر الفعلي.",
-    "it": "Il contenuto e il mezzo di comunicazione vengono copiati, ma la destinazione e il segreto non vengono trasferiti; la pubblicazione vera e propria viene bloccata.",
-    "es": "Se copian el contenido y el material, pero no se transmite el destino ni el secreto; la publicación real está bloqueada.",
+    "it": "I media e gli argomenti vengono copiati, ma la destinazione e i segreti non vengono trasferiti; la pubblicazione effettiva è bloccata.",
+    "es": "Se copian los medios y los temas, pero no se transfieren el destino ni los secretos; la publicación real está bloqueada.",
     "de": "Medien und Thema werden kopiert, Ziel und Geheimnis jedoch nicht übertragen; die eigentliche Veröffentlichung wird verhindert.",
     "fr": "Le support et le sujet sont copiés, mais la destination et le secret ne sont pas transmis ; la publication proprement dite est bloquée."
   },
@@ -2969,16 +2862,16 @@
   "روند بازخورد کاربر": {
     "fa": "روند بازخورد کاربر",
     "en": "User feedback trend",
-    "tr": "Kullanıcı geri bildirimi süreci",
-    "ar": "عملية تقديم ملاحظات المستخدم",
-    "it": "Processo di feedback degli utenti",
-    "es": "proceso de retroalimentación del usuario",
-    "de": "Nutzer-Feedbackprozess",
-    "fr": "processus de retour d'information des utilisateurs"
+    "tr": "Kullanıcı geri bildirim eğilimi",
+    "ar": "اتجاه ملاحظات المستخدم",
+    "it": "Andamento del feedback degli utenti",
+    "es": "Tendencia de los comentarios de los usuarios",
+    "de": "Trend beim Nutzerfeedback",
+    "fr": "Tendance des retours des utilisateurs"
   },
   "روند ثبت بازخورد:": {
     "fa": "روند ثبت بازخورد:",
-    "en": "Feedback trend:",
+    "en": "Feedback submission process:",
     "tr": "Geri bildirim kayıt süreci:",
     "ar": "عملية تسجيل الملاحظات:",
     "it": "Procedura di registrazione del feedback:",
@@ -2993,38 +2886,38 @@
     "ar": "تم حفظ الجدول.",
     "it": "Programmazione salvata.",
     "es": "Horario guardado.",
-    "de": "Termin gespeichert.",
+    "de": "Zeitplan gespeichert.",
     "fr": "Planification enregistrée."
   },
   "زنجیره منبع و امتیاز": {
     "fa": "زنجیره منبع و امتیاز",
-    "en": "Evidence and score chain",
-    "tr": "Tedarik zinciri ve ayrıcalıklar",
-    "ar": "سلسلة التوريد والامتيازات",
-    "it": "Catena di approvvigionamento e privilegi",
-    "es": "Cadena de suministro y privilegios",
-    "de": "Lieferkette und Privilegien",
-    "fr": "Chaîne d'approvisionnement et privilèges"
+    "en": "Source and score chain",
+    "tr": "Kaynak ve puan zinciri",
+    "ar": "سلسلة المصدر والدرجة",
+    "it": "Catena di fonti e punteggi",
+    "es": "Cadena de fuentes y puntuaciones",
+    "de": "Quellen- und Bewertungskette",
+    "fr": "Chaîne des sources et des scores"
   },
   "ساخت Sandbox": {
     "fa": "ساخت Sandbox",
     "en": "Create sandbox",
-    "tr": "Kum havuzu yapımı",
-    "ar": "بناء صندوق الرمل",
-    "it": "Costruzione di una sabbiera",
-    "es": "Construcción de arenero",
-    "de": "Sandkastenbau",
-    "fr": "Construction de bac à sable"
+    "tr": "Sandbox oluştur",
+    "ar": "إنشاء بيئة اختبار معزولة",
+    "it": "Crea una sandbox",
+    "es": "Crear un sandbox",
+    "de": "Sandbox erstellen",
+    "fr": "Créer un bac à sable"
   },
   "ساخت پروژه آزمایشی": {
     "fa": "ساخت پروژه آزمایشی",
     "en": "Create sandbox project",
-    "tr": "Bir test projesi oluşturma",
-    "ar": "إنشاء مشروع اختبار",
-    "it": "Creazione di un progetto di prova",
-    "es": "Creación de un proyecto de prueba",
-    "de": "Erstellen eines Testprojekts",
-    "fr": "Création d'un projet de test"
+    "tr": "Bir test projesi oluştur",
+    "ar": "أنشئ مشروع اختبار",
+    "it": "Crea un progetto di prova",
+    "es": "Crear un proyecto de prueba",
+    "de": "Testprojekt erstellen",
+    "fr": "Créer un projet de test"
   },
   "سرویس فعال": {
     "fa": "سرویس فعال",
@@ -3059,12 +2952,12 @@
   "عملیات گروهی بازگردانی شد.": {
     "fa": "عملیات گروهی بازگردانی شد.",
     "en": "Bulk action restored.",
-    "tr": "Grup faaliyetleri yeniden başlatıldı.",
-    "ar": "تم استئناف عمليات المجموعة.",
-    "it": "Le attività del gruppo sono state ripristinate.",
-    "es": "Se restablecieron las operaciones del grupo.",
-    "de": "Der Konzernbetrieb wurde wieder aufgenommen.",
-    "fr": "Les opérations du groupe ont repris."
+    "tr": "Toplu işlem geri yüklendi.",
+    "ar": "تمت استعادة العملية الجماعية.",
+    "it": "L'operazione collettiva è stata ripristinata.",
+    "es": "Se restableció la operación en bloque.",
+    "de": "Die Sammelaktion wurde wiederhergestellt.",
+    "fr": "L'opération groupée a été restaurée."
   },
   "غیرفعال‌سازی": {
     "fa": "غیرفعال‌سازی",
@@ -3079,22 +2972,22 @@
   "قالب انتشار هر مقصد را فقط از این صفحه مدیریت کنین.": {
     "fa": "قالب انتشار هر مقصد را فقط از این صفحه مدیریت کنین.",
     "en": "Manage each destination’s publishing template from this page.",
-    "tr": "Her bir hedef sitenin yayın formatını yalnızca bu sayfadan yönetebilirsiniz.",
-    "ar": "يمكنك إدارة تنسيق النشر لكل وجهة فقط من هذه الصفحة.",
-    "it": "Da questa pagina è possibile gestire il formato di pubblicazione di ciascuna destinazione.",
-    "es": "Gestiona el formato de publicación de cada destino únicamente desde esta página.",
-    "de": "Das Veröffentlichungsformat jedes Ziels kann ausschließlich über diese Seite verwaltet werden.",
-    "fr": "Gérez le format de publication de chaque destination uniquement depuis cette page."
+    "tr": "Her hedefin yayın şablonunu yalnızca bu sayfadan yönetin.",
+    "ar": "يمكنك إدارة قالب النشر لكل وجهة من هذه الصفحة فقط.",
+    "it": "Gestisci il modello di pubblicazione di ogni destinazione solo da questa pagina.",
+    "es": "Gestiona la plantilla de publicación de cada destino únicamente desde esta página.",
+    "de": "Die Veröffentlichungsvorlage für jedes Ziel kann ausschließlich auf dieser Seite verwaltet werden.",
+    "fr": "Gérez le modèle de publication de chaque destination uniquement depuis cette page."
   },
   "قالب محتوا": {
     "fa": "قالب محتوا",
     "en": "Content template",
-    "tr": "İçerik formatı",
-    "ar": "تنسيق المحتوى",
-    "it": "Formato del contenuto",
-    "es": "Formato de contenido",
-    "de": "Inhaltsformat",
-    "fr": "Format du contenu"
+    "tr": "İçerik şablonu",
+    "ar": "قالب المحتوى",
+    "it": "Modello di contenuto",
+    "es": "Plantilla de contenido",
+    "de": "Inhaltsvorlage",
+    "fr": "Modèle de contenu"
   },
   "لینک گزارش محدود": {
     "fa": "لینک گزارش محدود",
@@ -3119,12 +3012,12 @@
   "مهلت بازگردانی تمام شده است.": {
     "fa": "مهلت بازگردانی تمام شده است.",
     "en": "The restore window has expired.",
-    "tr": "İade süresi sona erdi.",
-    "ar": "لقد انقضى الموعد النهائي للإرجاع.",
-    "it": "Il termine per la restituzione è scaduto.",
-    "es": "El plazo de devolución ha expirado.",
-    "de": "Die Rückgabefrist ist abgelaufen.",
-    "fr": "Le délai de retour est expiré."
+    "tr": "Geri yükleme süresi doldu.",
+    "ar": "انتهت مهلة الاستعادة.",
+    "it": "Il periodo per il ripristino è scaduto.",
+    "es": "Ha vencido el plazo para restaurar.",
+    "de": "Die Wiederherstellungsfrist ist abgelaufen.",
+    "fr": "Le délai de restauration a expiré."
   },
   "موضوع حذف شد": {
     "fa": "موضوع حذف شد",
@@ -3189,12 +3082,12 @@
   "نام نما": {
     "fa": "نام نما",
     "en": "View name",
-    "tr": "Sahnenin adı",
-    "ar": "اسم المشهد",
-    "it": "Nome della scena",
-    "es": "Nombre de la escena",
-    "de": "Name der Szene",
-    "fr": "Nom de la scène"
+    "tr": "Görünüm adı",
+    "ar": "اسم العرض",
+    "it": "Nome della vista",
+    "es": "Nombre de la vista",
+    "de": "Ansichtsname",
+    "fr": "Nom de la vue"
   },
   "نام نما را وارد کنین": {
     "fa": "نام نما را وارد کنین",
@@ -3219,22 +3112,22 @@
   "نشست لغو شد": {
     "fa": "نشست لغو شد",
     "en": "Session revoked",
-    "tr": "Toplantı iptal edildi.",
-    "ar": "تم إلغاء الاجتماع.",
-    "it": "La riunione è stata annullata.",
-    "es": "La reunión fue cancelada.",
-    "de": "Das Treffen wurde abgesagt.",
-    "fr": "La réunion a été annulée."
+    "tr": "Oturum iptal edildi.",
+    "ar": "تم إلغاء الجلسة.",
+    "it": "Sessione revocata.",
+    "es": "Sesión revocada.",
+    "de": "Sitzung widerrufen.",
+    "fr": "Session révoquée."
   },
   "نما اعمال شد": {
     "fa": "نما اعمال شد",
     "en": "View applied",
-    "tr": "Görüş uygulandı.",
-    "ar": "تم تطبيق وجهة النظر.",
+    "tr": "Görünüm uygulandı.",
+    "ar": "تم تطبيق العرض.",
     "it": "La vista è stata applicata.",
-    "es": "Se aplicó la opinión.",
+    "es": "Se aplicó la vista.",
     "de": "Die Ansicht wurde angewendet.",
-    "fr": "Le point de vue a été appliqué."
+    "fr": "Vue appliquée."
   },
   "نما حذف شد": {
     "fa": "نما حذف شد",
@@ -3260,7 +3153,7 @@
     "fa": "نمای فعلی",
     "en": "Current view",
     "tr": "Mevcut görünüm",
-    "ar": "الرأي الحالي",
+    "ar": "العرض الحالي",
     "it": "Vista attuale",
     "es": "Vista actual",
     "de": "Aktuelle Ansicht",
@@ -3268,17 +3161,17 @@
   },
   "نمایش شواهد": {
     "fa": "نمایش شواهد",
-    "en": "View evidence",
-    "tr": "Kanıt gösterin",
-    "ar": "أظهر الأدلة",
+    "en": "Show evidence",
+    "tr": "Kanıtları göster",
+    "ar": "اعرض الأدلة",
     "it": "Mostra le prove",
-    "es": "Muestre pruebas",
-    "de": "Belegen Sie Ihre Beweise.",
-    "fr": "Fournir des preuves"
+    "es": "Mostrar pruebas",
+    "de": "Belege anzeigen",
+    "fr": "Afficher les preuves"
   },
   "واقعیتی ثبت نشده است.": {
     "fa": "واقعیتی ثبت نشده است.",
-    "en": "No persisted facts.",
+    "en": "No facts recorded.",
     "tr": "Hiçbir bilgi kaydedilmedi.",
     "ar": "لم يتم تسجيل أي حقيقة.",
     "it": "Non è stato registrato alcun fatto.",
@@ -3301,7 +3194,7 @@
     "en": "Review status saved",
     "tr": "İnceleme durumu kaydedildi.",
     "ar": "تم حفظ حالة المراجعة.",
-    "it": "Stato della recensione salvato.",
+    "it": "Stato della revisione salvato.",
     "es": "Estado de la revisión guardado.",
     "de": "Überprüfungsstatus gespeichert.",
     "fr": "Statut de la révision enregistré."
@@ -3310,41 +3203,41 @@
     "fa": "وضعیت رسانه تغییر کرد",
     "en": "Media status updated",
     "tr": "Medya durumu değişti.",
-    "ar": "لقد تغير الوضع الإعلامي.",
-    "it": "Il panorama mediatico è cambiato.",
-    "es": "La situación de los medios de comunicación ha cambiado.",
-    "de": "Die Mediensituation hat sich verändert.",
-    "fr": "La situation médiatique a changé."
+    "ar": "تغيرت حالة الوسائط.",
+    "it": "Lo stato dei media è cambiato.",
+    "es": "El estado de los medios ha cambiado.",
+    "de": "Der Medienstatus hat sich geändert.",
+    "fr": "Le statut du média a changé."
   },
   "وضعیت موضوع تغییر کرد": {
     "fa": "وضعیت موضوع تغییر کرد",
     "en": "Topic status updated",
     "tr": "Konunun durumu değişti.",
-    "ar": "لقد تغيرت حالة المشكلة.",
-    "it": "Lo stato della questione è cambiato.",
-    "es": "El estado del asunto ha cambiado.",
-    "de": "Der Status des Problems hat sich geändert.",
-    "fr": "La situation a évolué."
+    "ar": "تغيرت حالة الموضوع.",
+    "it": "Lo stato dell'argomento è cambiato.",
+    "es": "El estado del tema ha cambiado.",
+    "de": "Der Themenstatus hat sich geändert.",
+    "fr": "Le statut du sujet a changé."
   },
   "ویرایش بیزینس": {
     "fa": "ویرایش بیزینس",
     "en": "Edit business",
-    "tr": "İşletme Editörlüğü",
-    "ar": "تحرير الأعمال",
-    "it": "Redazione aziendale",
-    "es": "Edición empresarial",
-    "de": "Geschäftsredaktion",
-    "fr": "Révision commerciale"
+    "tr": "İşletmeyi düzenle",
+    "ar": "تعديل النشاط التجاري",
+    "it": "Modifica l'azienda",
+    "es": "Editar la empresa",
+    "de": "Unternehmen bearbeiten",
+    "fr": "Modifier l'entreprise"
   },
   "ویرایش رسانه": {
     "fa": "ویرایش رسانه",
     "en": "Edit media",
     "tr": "Medya düzenleme",
     "ar": "تحرير الوسائط",
-    "it": "Montaggio multimediale",
+    "it": "Modifica il media",
     "es": "Edición de medios",
     "de": "Medienbearbeitung",
-    "fr": "montage multimédia"
+    "fr": "Modifier le média"
   },
   "ویرایش پروفایل بیزینس": {
     "fa": "ویرایش پروفایل بیزینس",
@@ -3399,12 +3292,12 @@
   "پروژه آزمایشی ساخته شد": {
     "fa": "پروژه آزمایشی ساخته شد",
     "en": "Sandbox project created",
-    "tr": "Bir pilot proje oluşturuldu.",
-    "ar": "تم إنشاء مشروع تجريبي.",
-    "it": "È stato creato un progetto pilota.",
-    "es": "Se creó un proyecto piloto.",
-    "de": "Es wurde ein Pilotprojekt ins Leben gerufen.",
-    "fr": "Un projet pilote a été créé."
+    "tr": "Sandbox projesi oluşturuldu.",
+    "ar": "تم إنشاء مشروع بيئة اختبارية.",
+    "it": "È stato creato un progetto sandbox.",
+    "es": "Se creó un proyecto sandbox.",
+    "de": "Ein Sandbox-Projekt wurde erstellt.",
+    "fr": "Un projet bac à sable a été créé."
   },
   "پروژه حذف شد": {
     "fa": "پروژه حذف شد",
@@ -3430,7 +3323,7 @@
     "fa": "پیش‌فرض",
     "en": "Default",
     "tr": "Varsayılan",
-    "ar": "تقصير",
+    "ar": "افتراضي",
     "it": "Predefinito",
     "es": "Por defecto",
     "de": "Standard",
@@ -3439,11 +3332,11 @@
   "پیش‌نمایش تغییرات": {
     "fa": "پیش‌نمایش تغییرات",
     "en": "Preview changes",
-    "tr": "Önizleme değişiklikleri",
+    "tr": "Değişiklikleri önizle",
     "ar": "معاينة التغييرات",
-    "it": "Modifiche dell'anteprima",
+    "it": "Visualizza l'anteprima delle modifiche",
     "es": "Previsualizar cambios",
-    "de": "Vorschauänderungen",
+    "de": "Änderungen in der Vorschau anzeigen",
     "fr": "Aperçu des modifications"
   },
   "پیش‌نمایش تنظیمات": {
@@ -3474,16 +3367,16 @@
     "it": "Bozza aziendale",
     "es": "Borrador comercial",
     "de": "Geschäftsentwurf",
-    "fr": "Projet d'entreprise"
+    "fr": "Brouillon d'entreprise"
   },
   "کاربر ساخته شد": {
     "fa": "کاربر ساخته شد",
     "en": "User created",
-    "tr": "Kullanıcı tarafından oluşturuldu.",
-    "ar": "تم إنشاء هذا بواسطة المستخدم.",
-    "it": "Creato dall'utente.",
-    "es": "Creado por el usuario.",
-    "de": "Vom Benutzer erstellt.",
+    "tr": "Kullanıcı oluşturuldu.",
+    "ar": "تم إنشاء المستخدم.",
+    "it": "Utente creato.",
+    "es": "Usuario creado.",
+    "de": "Benutzer erstellt.",
     "fr": "Utilisateur créé."
   },
   "کتابخانه دانش ذخیره شد": {
@@ -3499,12 +3392,12 @@
   "گردش بررسی": {
     "fa": "گردش بررسی",
     "en": "Review workflow",
-    "tr": "Dolaşımı gözden geçirin",
-    "ar": "مراجعة التوزيع",
-    "it": "Revisione della circolazione",
-    "es": "Revisar la circulación",
-    "de": "Rezensionsauflage",
-    "fr": "Circulation de la revue"
+    "tr": "İnceleme iş akışı",
+    "ar": "سير عمل المراجعة",
+    "it": "Flusso di lavoro della revisione",
+    "es": "Flujo de trabajo de revisión",
+    "de": "Prüfworkflow",
+    "fr": "Flux de travail de révision"
   },
   "گزارش هفتگی تولید شد": {
     "fa": "گزارش هفتگی تولید شد",
@@ -3513,7 +3406,7 @@
     "ar": "تم إعداد التقرير الأسبوعي.",
     "it": "È stato prodotto un rapporto settimanale.",
     "es": "Informe semanal elaborado.",
-    "de": "Wöchentlicher Bericht wird erstellt.",
+    "de": "Wochenbericht erstellt.",
     "fr": "Rapport hebdomadaire établi."
   }
 }

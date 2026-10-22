@@ -3,7 +3,7 @@ import json
 
 from app.analysis_lenses.schemas import Definition, Result
 
-COMPILER_VERSION = 'lens-1'
+COMPILER_VERSION = 'lens-4'
 
 
 def quote_choices(context: dict) -> list[tuple[str, list[str]]]:
@@ -16,7 +16,7 @@ def quote_choices(context: dict) -> list[tuple[str, list[str]]]:
     counts: dict[str, int] = {}
     choices = []
     for segment in context['segments']:
-        if segment.get('scope', 'published_report') not in {'published_report', 'selected_published_report'}:
+        if segment.get('scope', 'published_report') not in {'published_report', 'selected_published_report', 'selected_public_source_revision'}:
             continue
         group = str(segment.get('publication_id') or 'anchor')
         if group not in counts and len(counts) >= 5:
@@ -95,11 +95,20 @@ def instruction(context: dict, intent: str) -> str:
     if intent == 'lens_analysis':
         text += (' Return ONLY a valid JSON object, no markdown fence. All prose must be in the requested response language, '
                  'EXCEPT the quote field, which MUST retain the original source language. JSON field names are schema keys, not prose. '
+                 'Translate source headlines in prose fields too; an English headline is not a proper-name exception. Keep original headline wording only in the quote field. '
                  'Include exactly the enabled dimension keys, use not_applicable/insufficient honestly. '
                  'Each reported claim, supported finding and effect needs exact report-N citation identifiers from supplied segments. '
                  'Every reported claim must contain a short exact contiguous verbatim quote found in one of its cited segments: '
                  'never translate, normalize, paraphrase, or add ellipses to the quote. '
+                 'The claim text must be a faithful paraphrase of that exact quote, not merely related to the same article. '
+                 'Do not use a generic title or unrelated passage as evidence for a more specific assertion. '
+                 'Preserve source provenance: publisher excerpts are not AI-produced reports; AI reports are not original articles. '
                  'The native quotation menu binds exact public-report excerpts to one source each; choose from it unchanged. '
+                 'Read the full supplied segment text, not only the quotation menu. A short menu excerpt is not evidence that the source ended or omitted a statistic. '
+                 'Do not claim information is absent without checking all supplied text and metadata. Keep publication dates separate from event or image dates. '
+                 'Lack of independent verification does not mean no event occurred or no results were reported. Preserve any reported past milestone or counterexample before describing future plans. '
+                 'Avoid universal negative claims such as no prior missions, no evidence or no results unless every supplied source supports that specific absence. '
+                 'Never imply that you watched a video, inspected an image or heard audio when only text was supplied; any suggested media effect is conditional, not an observed fact. '
                  'It is bounded to four segments per publication with up to three excerpts per long segment; '
                  'the native format permits at most 200 citation identifiers; this is not exhaustive source recall. '
                  'do not treat private memory/business as a published reported claim. '

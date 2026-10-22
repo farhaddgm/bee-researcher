@@ -54,9 +54,13 @@
       let initialViewApplied=false;
       const applyInitialView=()=>{if(initialViewApplied||app.classList.contains('hidden')||!window.state?.currentUser)return false;if(initialView&&commands().some(item=>item.view===initialView)&&currentView()!==initialView){initialViewApplied=true;openView(initialView);return true}initialViewApplied=true;return false};
       if(initialView)setTimeout(applyInitialView,0);const appGate=new MutationObserver(applyInitialView);appGate.observe(app,{attributes:true,attributeFilter:['class']});
-      const baseSetView=window.setView;if(typeof baseSetView==='function'&&!baseSetView.__adminUxV325){const wrapped=function(name){const result=baseSetView.apply(this,arguments);persistView(name);setTimeout(()=>{syncHeader();animateActiveView()},0);return result};wrapped.__adminUxV325=true;window.setView=wrapped;try{setView=wrapped}catch(_){}}
-      const baseLanguage=window.setLanguage;if(typeof baseLanguage==='function'&&!baseLanguage.__adminUxV325){const wrapped=function(language){const result=baseLanguage.apply(this,arguments);setTimeout(()=>{renderCommands();syncHeader();markOwnerOnlyCards();clearRefreshLabels();filterConfigs.forEach(config=>enhanceFilter(...config));const paletteInput=doc.getElementById('adminUxCommandSearch');if(paletteInput){paletteInput.placeholder=text('جست‌وجوی صفحه و عملیات','Search pages and actions');paletteInput.setAttribute('aria-label',paletteInput.placeholder)}},0);return result};wrapped.__adminUxV325=true;window.setLanguage=wrapped;try{setLanguage=wrapped}catch(_){} }
-      const baseLoad=window.loadAll;if(typeof baseLoad==='function'&&!baseLoad.__adminUxV325){const wrapped=async function(){markLoading(true);try{return await baseLoad.apply(this,arguments)}finally{clearRefreshLabels();markOwnerOnlyCards();syncHeader();setTimeout(()=>markLoading(false),140)}};wrapped.__adminUxV325=true;window.loadAll=wrapped;try{loadAll=wrapped}catch(_){}}
+      window.BeeAdminLifecycle.register('shell-ux', ['setView','setLanguage','loadAll'], {
+        before:({name})=>{if(name==='loadAll')markLoading(true);},
+        settled:({name,args})=>{
+          if(name==='setView'){persistView(args[0]);syncHeader();animateActiveView();}
+          if(name==='setLanguage'){renderCommands();syncHeader();markOwnerOnlyCards();clearRefreshLabels();filterConfigs.forEach(config=>enhanceFilter(...config));const input=doc.getElementById('adminUxCommandSearch');if(input){input.placeholder=text('جست‌وجوی صفحه و عملیات','Search pages and actions');input.setAttribute('aria-label',input.placeholder);}}
+          if(name==='loadAll'){clearRefreshLabels();markOwnerOnlyCards();syncHeader();markLoading(false);}
+        }});
       /* Legacy appearance preferences are intentionally ignored here. */
       filterConfigs.forEach(config=>enhanceFilter(...config));createRefreshMeta();markOwnerOnlyCards();syncHeader();clearRefreshLabels();renderCommands();try{window.applyLucideIcons?.()}catch(_){ }
       window.__researchBeeAdminUxV325={openPalette,closePalette,setCollapsed,markLoading,markRefreshed};

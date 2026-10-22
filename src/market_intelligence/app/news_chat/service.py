@@ -306,11 +306,13 @@ async def send(cid: uuid.UUID, q: Question, user: AdminUser, token: str, *, audi
         if audience == 'reader':
             limits.append(admin._reader_nightly_expiry(session.created_at))
         deadline = min(limits)
+        from app.analysis_lenses.compiler import COMPILER_VERSION
         g = ChatGeneration(id=uuid.uuid4(), conversation_id=cid, user_id=user.id, assistant_id=c.assistant_id, idempotency_key=q.idempotency_key,
                            session_hash=session.token_hash, question=prepared_question, answer="", language=q.language, model=m.model_dump(mode="json"),
                            citations=[], status="queued", cancel_requested=False, audience=audience, reserved_usd=reserve, reserved_tokens=input_bound + m.max_output_tokens, usage={"input_bound": input_bound, "selected_segment": q.selected_segment, "intent": q.intent,
                            "voice_session_ids":[str(sid) for sid in q.voice_session_ids], "answer_length": answer_length.model_dump(),
-                           'target_generation_id': str(q.target_generation_id) if q.target_generation_id else None, 'analysis_hash': analysis_hash}, deadline=deadline, created_at=now())
+                           'target_generation_id': str(q.target_generation_id) if q.target_generation_id else None, 'analysis_hash': analysis_hash,
+                           'analysis_compiler_version': COMPILER_VERSION if profile else None}, deadline=deadline, created_at=now())
         s.add(g)
         if q.voice_session_ids:
             from app.news_voice.models import VoiceSession

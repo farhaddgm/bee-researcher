@@ -63,7 +63,27 @@ try {
     throw new Error('The original ticket description did not render as immutable conversation content.');
   }
   await dialog.locator('[data-support-v4-dialog-input]').fill(ownerReply);
-  await dialog.locator('[data-support-v4-dialog-send]').click();
+  // Freeze an actual pre-write SQL snapshot, then require a distinct fresh
+  // read after commit. Do not let a coalesced/cached old GET hide the reply.
+  let releaseOld,oldCaptured;
+  const held=new Promise(resolve=>releaseOld=resolve),captured=new Promise(resolve=>oldCaptured=resolve);
+  const supportPath='**/admin/api/support/tickets?limit=200';let holdOne=true;
+  const holdSnapshot=async route=>{
+    if(!holdOne){await route.continue();return;}
+    holdOne=false;const response=await route.fetch();oldCaptured();await held;await route.fulfill({response});
+  };
+  await page.route(supportPath,holdSnapshot);
+  await page.evaluate(()=>{window.__supportHeldRead=window.__supportTicketV4.load();});
+  await captured;
+  const saved=page.waitForResponse(r=>r.url().includes('/support/tickets/')&&r.url().endsWith('/messages')&&r.request().method()==='POST');
+  const fresh=page.waitForResponse(r=>r.url().endsWith('/admin/api/support/tickets?limit=200')&&r.request().method()==='GET');
+  try{
+    await dialog.locator('[data-support-v4-dialog-send]').click();
+    if(!(await saved).ok())throw Error('Owner reply was not committed');
+    if(!(await fresh).ok())throw Error('Post-commit ticket refresh failed');
+  }finally{releaseOld();}
+  await page.evaluate(async()=>{await window.__supportHeldRead;delete window.__supportHeldRead;});
+  await page.unroute(supportPath,holdSnapshot);
   await dialog.waitFor({ state: 'hidden' });
   const repliedTicketId = await ticket.getAttribute('data-support-v4-ticket');
   try {
@@ -91,6 +111,15 @@ try {
   if (!(await dialog.locator('[data-support-v4-thread] .support-v4-message.owner').filter({ hasText: ownerReply }).count())) {
     throw new Error('Owner reply is not identified as an owner-authored conversation message.');
   }
+  for(const locale of ['fa','fr','en']){
+    await page.evaluate(locale=>window.setLanguage(locale),locale);
+    await ticket.click();
+    if((await dialog.locator('[data-support-v4-original]').textContent())!==original)
+      throw Error('Locale reconciliation modified the original ticket body: '+locale);
+    const reply=dialog.locator('.support-v4-message.owner .support-v4-message-body').filter({hasText:ownerReply});
+    await reply.waitFor({state:'visible'});
+    if((await reply.textContent())!==ownerReply)throw Error('Locale reconciliation modified an authored reply: '+locale);
+  }
   await dialog.locator('[data-support-v4-dialog-close-ticket]').click();
   await dialog.waitFor({ state: 'hidden' });
 
@@ -101,6 +130,18 @@ try {
   }
   await dialog.locator('[data-support-v4-dialog-close]').click();
   await dialog.waitFor({ state: 'hidden' });
+  await page.evaluate(()=>{
+    window.__supportScopeOwner=window.__researchBeeState.currentUser;
+    window.__researchBeeState.currentUser={...window.__supportScopeOwner,is_owner:false};
+    window.applyRoleVisibility();
+  });
+  if(!(await page.locator('[data-support-v4-all-card]').isHidden()))throw Error('Owner inbox survived an actor/role change');
+  if((await dialog.locator('[data-support-v4-original]').textContent())?.trim())throw Error('Previous actor ticket body remained in the dialog');
+  await page.evaluate(()=>{
+    window.__researchBeeState.currentUser=window.__supportScopeOwner;delete window.__supportScopeOwner;
+    window.setView('support');
+  });
+  await ticket.waitFor({state:'visible'});
   await page.evaluate(() => window.setView?.('assistants'));
   const assistantCreateTrigger = page.locator('#newAssistantBtn');
   await assistantCreateTrigger.waitFor({ state: 'visible' });

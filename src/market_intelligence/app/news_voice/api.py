@@ -310,9 +310,23 @@ async def usage(assistant_id:uuid.UUID,token:str|None=Cookie(None,alias=COOKIE))
 @router.get('/admin/api/news-voice/policy')
 async def get_policy(token:str|None=Cookie(None,alias=ADMIN_SESSION_COOKIE)):
     await owner(token)
-    async with SessionLocal() as s:return {'policy':(await svc.policy(s)).model_dump(mode='json'),
-        'configured':svc.configured(),'server_enabled':get_settings().news_voice_enabled,
-        'credential':await asyncio.to_thread(credentials.status),'published_pricing':pricing.snapshot()}
+    from app.news_voice.readiness import checklist
+    async with SessionLocal() as s:
+        policy = await svc.policy(s)
+    configured = svc.configured()
+    server_enabled = get_settings().news_voice_enabled
+    credential = await asyncio.to_thread(credentials.status)
+    readiness = checklist(policy, configured=configured, server_enabled=server_enabled,
+        credential_revision=credential['revision'] if credential['source']=='owner' else None)
+    try:
+        svc.enabled(policy)
+        readiness['blocking_reason'] = None
+    except HTTPException as exc:
+        readiness['ready'] = False
+        readiness['blocking_reason'] = exc.detail
+    return {'policy':policy.model_dump(mode='json'), 'configured':configured, 'server_enabled':server_enabled,
+        'credential':credential,'published_pricing':pricing.snapshot(),
+        'readiness':readiness}
 
 
 @router.put('/admin/api/news-voice/credential')

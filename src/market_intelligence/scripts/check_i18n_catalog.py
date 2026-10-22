@@ -23,24 +23,29 @@ def _catalog_path(name: str) -> Path:
     return Path(__file__).resolve().parents[1] / "app" / name
 
 
+def unique_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate translation key: {key!r}")
+        result[key] = value
+    return result
+
+
 def audit() -> tuple[list[str], dict[str, int]]:
     errors: list[str] = []
     counts = {locale: 0 for locale in LOCALES}
     for name in CATALOGS:
-        seen: set[str] = set()
         path = _catalog_path(name)
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
+            data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+        except (OSError, ValueError) as exc:
             errors.append(f"{name}: cannot read valid JSON ({exc})")
             continue
         if not isinstance(data, dict):
             errors.append(f"{name}: root must be an object")
             continue
         for key, translations in data.items():
-            if key in seen:
-                errors.append(f"duplicate translation key: {key!r}")
-            seen.add(key)
             if not isinstance(translations, dict):
                 errors.append(f"{name}: {key!r} must map to a locale object")
                 continue

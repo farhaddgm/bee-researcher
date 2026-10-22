@@ -15,7 +15,6 @@
       // Appearance preferences are loaded once by MI-143.  Fetching them a
       // second time inside every full refresh added latency and competed with
       // the account panel's own render.
-      const oldLoad=loadAll;loadAll=async function(){const result=await oldLoad();ensureAccount();applyRoleVisibility();return result};
-      const oldLang=setLanguage;setLanguage=function(lang){oldLang(lang);if($('view-account')?.classList.contains('active'))renderAccount()};
+      window.BeeAdminLifecycle.register('account-appearance', ['loadAll','setLanguage'], {after:({name})=>{if(name==='loadAll'){ensureAccount();applyRoleVisibility();}else if($('view-account')?.classList.contains('active'))renderAccount();}});
       ensureAccount();applyRoleVisibility();
     })();
