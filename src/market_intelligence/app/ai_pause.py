@@ -1,12 +1,14 @@
 """Owner kill switch: when AI is paused for a project (or globally) no provider call is made."""
 from __future__ import annotations
 
+import logging
 import time
 import uuid
 from contextvars import ContextVar
 
 from sqlalchemy import select
 
+LOGGER = logging.getLogger(__name__)
 current_assistant: ContextVar[uuid.UUID | None] = ContextVar("ai_pause_assistant", default=None)
 _CACHE: dict[str, tuple[float, bool]] = {}
 TTL = 5.0
@@ -23,8 +25,12 @@ async def is_paused(assistant_id: uuid.UUID | None = None) -> bool:
         return hit[1]
     from app.database import SessionLocal
     from app.token_quotas import service
-    async with SessionLocal() as s:
-        value = await service.paused(s, assistant_id)
+    try:
+        async with SessionLocal() as s:
+            value = await service.paused(s, assistant_id)
+    except Exception:  # the database being unreachable must not take the pipeline's own error handling away
+        LOGGER.warning("ai_pause_lookup_failed")
+        return False
     _CACHE[ident] = (time.monotonic(), value)
     return value
 
