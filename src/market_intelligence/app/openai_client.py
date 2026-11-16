@@ -358,6 +358,8 @@ class OpenAIClient:
         # Process-local short circuit; no secrets/query text are retained.
         # Fake transports stay independent so tests never poison each other.
         if self.transport is None:
+            from app.ai_pause import ensure_active
+            await ensure_active()
             health = self.provider_health()
             if health["state"] == "cooldown":
                 raise AIProviderError(str(health["code"]))

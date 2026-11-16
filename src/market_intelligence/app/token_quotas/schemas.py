@@ -11,6 +11,8 @@ class Limits(BaseModel):
     daily: TokenCount | None = None
     monthly: TokenCount | None = None
     total: TokenCount | None = None
+    # Emergency stop: no model call (no tokens) while true in the default, project or user scope.
+    paused: bool = Field(default=False, strict=True)
 
 
 class SaveLimit(BaseModel):

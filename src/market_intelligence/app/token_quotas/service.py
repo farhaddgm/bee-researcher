@@ -50,6 +50,13 @@ async def effective(s, aid, uid):
     return result, origin
 
 
+async def paused(s, aid=None, uid=None):
+    """True when AI is stopped for this scope. Any scope's switch wins, regardless of inherit."""
+    ids = [key()] + ([key(aid)] if aid else []) + ([key(aid, uid)] if aid and uid else [])
+    rows = (await s.scalars(select(TokenLimit).where(TokenLimit.id.in_(ids)))).all()
+    return any(bool((r.limits or {}).get('paused')) for r in rows)
+
+
 def actual_usage(usage):
     values = (usage.get('quota_input_tokens', usage.get('input_tokens')), usage.get('output_tokens'))
     if all(type(v) is int and 0 <= v <= MAX_USAGE for v in values):
@@ -82,6 +89,8 @@ async def counters(s, aid, uid, at):
 
 
 async def admission(s, aid, uid, input_bound, max_output, at):
+    if await paused(s, aid, uid):
+        raise HTTPException(423, {'code': 'ai_paused'})
     limits, _ = await effective(s, aid, uid)
     if all(getattr(limits, window) is None for window in WINDOWS):
         return max_output

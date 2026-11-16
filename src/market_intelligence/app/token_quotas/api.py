@@ -93,6 +93,8 @@ async def save(payload: SaveLimit, request: Request,
         row.version += 1
         row.updated_by, row.updated_at = actor.id, datetime.now(timezone.utc)
         await s.commit()
+        from app.ai_pause import invalidate
+        invalidate()
         result = service.row_view(row, payload.assistant_id, payload.user_id)
     await admin._audit(actor.id, 'reader.token_limits', assistant_id=payload.assistant_id,
                        details={'user_id': str(payload.user_id) if payload.user_id else None,

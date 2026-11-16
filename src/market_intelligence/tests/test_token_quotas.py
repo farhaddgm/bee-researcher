@@ -60,7 +60,7 @@ class TokenQuotaAsyncTests(IsolatedAsyncioTestCase):
         for window in service.WINDOWS:
             counts={k:{'actual_tokens':20,'reserved_tokens':30} for k in service.WINDOWS}
             limits=Limits(**{window:500})
-            with patch.object(service,'effective',AsyncMock(return_value=(limits,'user'))),patch.object(service,'counters',AsyncMock(return_value=counts)):
+            with patch.object(service,'paused',AsyncMock(return_value=False)),patch.object(service,'effective',AsyncMock(return_value=(limits,'user'))),patch.object(service,'counters',AsyncMock(return_value=counts)):
                 self.assertEqual(await service.admission(None,None,None,100,1200,datetime.now(timezone.utc)),350)
                 with self.assertRaises(HTTPException) as exc:
                     await service.admission(None,None,None,300,1200,datetime.now(timezone.utc))
@@ -69,10 +69,10 @@ class TokenQuotaAsyncTests(IsolatedAsyncioTestCase):
 
     async def test_unlimited_skips_aggregate_but_zero_blocks(self):
         at=datetime.now(timezone.utc)
-        with patch.object(service,'effective',AsyncMock(return_value=(Limits(),'default'))),patch.object(service,'counters',AsyncMock()) as counts:
+        with patch.object(service,'paused',AsyncMock(return_value=False)),patch.object(service,'effective',AsyncMock(return_value=(Limits(),'default'))),patch.object(service,'counters',AsyncMock()) as counts:
             self.assertEqual(await service.admission(None,None,None,100,1200,at),1200)
             counts.assert_not_awaited()
-        with patch.object(service,'effective',AsyncMock(return_value=(Limits(total=0),'default'))),patch.object(service,'counters',AsyncMock(return_value={w:{'actual_tokens':0,'reserved_tokens':0} for w in service.WINDOWS})):
+        with patch.object(service,'paused',AsyncMock(return_value=False)),patch.object(service,'effective',AsyncMock(return_value=(Limits(total=0),'default'))),patch.object(service,'counters',AsyncMock(return_value={w:{'actual_tokens':0,'reserved_tokens':0} for w in service.WINDOWS})):
             with self.assertRaises(HTTPException):
                 await service.admission(None,None,None,1,1200,at)
 
@@ -90,3 +90,22 @@ class TokenQuotaAsyncTests(IsolatedAsyncioTestCase):
         rows[1].inherit=True
         limits,origin=await service.effective(session,aid,uid)
         self.assertEqual((limits.daily,origin),(10,'default'))
+
+
+class AiPauseTests(IsolatedAsyncioTestCase):
+    async def test_pause_in_any_scope_blocks_admission(self):
+        rows = [SimpleNamespace(limits={'paused': True})]
+        session = SimpleNamespace(scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: rows)))
+        self.assertTrue(await service.paused(session, uuid.uuid4(), uuid.uuid4()))
+        with self.assertRaises(HTTPException) as caught:
+            await service.admission(session, uuid.uuid4(), uuid.uuid4(), 10, 1000, datetime.now(timezone.utc))
+        self.assertEqual(caught.exception.status_code, 423)
+
+    async def test_unpaused_when_no_flag(self):
+        session = SimpleNamespace(scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [SimpleNamespace(limits={'daily': 5})])))
+        self.assertFalse(await service.paused(session, uuid.uuid4()))
+
+    def test_paused_field_is_strict_boolean(self):
+        self.assertTrue(Limits(paused=True).paused)
+        with self.assertRaises(ValidationError):
+            Limits(paused='yes')

@@ -35,7 +35,7 @@
   $('feedPage')?.prepend(panel);
   const nav=button('researchDesk',()=>{if(location.pathname.endsWith('/user/settings')){location.assign('/user?research=1');return}if($('sidebar')?.classList.contains('open'))$('mobileMenuButton')?.click();panel.open=true;panel.scrollIntoView({block:'start'})});nav.className='sidebar-item';$('sidebar')?.querySelector('.sidebar-spacer')?.before(nav);
 
-  function message(e){if(e?.code==='token_quota_exhausted')return window.BeeTokenI18n?.t('tokenExhausted')||t('budget');return t(e?.status===401?'expired':e?.status===403||e?.status===404?'denied':e?.code==='revision_conflict'||e?.code==='context_changed'?'revisionConflict':e?.code==='context_too_large'?'fewerSources':e?.status===429?'budget':'error')}
+  function message(e){if(e?.code==='ai_paused')return window.BeeTokenI18n?.t('aiPaused')||t('budget');if(e?.code==='token_quota_exhausted')return window.BeeTokenI18n?.t('tokenExhausted')||t('budget');return t(e?.status===401?'expired':e?.status===403||e?.status===404?'denied':e?.code==='revision_conflict'||e?.code==='context_changed'?'revisionConflict':e?.code==='context_too_large'?'fewerSources':e?.status===429?'budget':'error')}
   function error(e,stamp=epoch){if(stamp===epoch){status.className='research-status research-error';status.textContent=message(e)}}
   function note(key){status.className='research-status';status.textContent=key?t(key):''}
   async function api(path,options={}){
