@@ -90,3 +90,22 @@ class TokenQuotaAsyncTests(IsolatedAsyncioTestCase):
         rows[1].inherit=True
         limits,origin=await service.effective(session,aid,uid)
         self.assertEqual((limits.daily,origin),(10,'default'))
+
+
+class AiPauseTests(IsolatedAsyncioTestCase):
+    async def test_pause_in_any_scope_blocks_admission(self):
+        rows = [SimpleNamespace(limits={'paused': True})]
+        session = SimpleNamespace(scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: rows)))
+        self.assertTrue(await service.paused(session, uuid.uuid4(), uuid.uuid4()))
+        with self.assertRaises(HTTPException) as caught:
+            await service.admission(session, uuid.uuid4(), uuid.uuid4(), 10, 1000, datetime.now(timezone.utc))
+        self.assertEqual(caught.exception.status_code, 423)
+
+    async def test_unpaused_when_no_flag(self):
+        session = SimpleNamespace(scalars=AsyncMock(return_value=SimpleNamespace(all=lambda: [SimpleNamespace(limits={'daily': 5})])))
+        self.assertFalse(await service.paused(session, uuid.uuid4()))
+
+    def test_paused_field_is_strict_boolean(self):
+        self.assertTrue(Limits(paused=True).paused)
+        with self.assertRaises(ValidationError):
+            Limits(paused='yes')

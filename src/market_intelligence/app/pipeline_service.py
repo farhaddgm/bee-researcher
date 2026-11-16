@@ -188,6 +188,8 @@ async def settings_for_assistant(settings: Settings, assistant_id: uuid.UUID | N
     """
     if assistant_id is None:
         return settings
+    from app.ai_pause import current_assistant
+    current_assistant.set(assistant_id)
     async with SessionLocal() as session:
         assistant = await session.get(AssistantWorkspace, assistant_id)
         research = await resolve_context(session, assistant_id, settings) if isinstance(assistant, AssistantWorkspace) else None
